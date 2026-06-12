@@ -11,7 +11,6 @@ import pathlib
 
 import bpy
 
-# TODO: update to the real repository URL once the project is pushed to GitHub.
 DOC_URL = "https://github.com/rickpalo/AssetDoctor/tree/main/docs"
 
 _ADDON_VERSION = None

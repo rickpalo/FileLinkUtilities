@@ -6,7 +6,6 @@ version = "0.1.5"
 name = "AssetDoctor"
 tagline = "Map & clean linked assets, materials and orphan data"
 maintainer = "rickpalo <rap2010@comcast.net>"
-# TODO: update to the real repository URL once pushed to GitHub.
 website = "https://github.com/rickpalo/AssetDoctor"
 
 # "add-on" extensions register/unregister like classic add-ons.
