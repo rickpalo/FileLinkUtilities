@@ -49,9 +49,9 @@ them instead of duplicating work. Proposed build order:
      or `packed_file.size`). No per-ID byte API in Blender.
    - Texture VRAM: ESTIMATE only (`res×channels×~1.33` mipmaps); no per-datablock VRAM API.
    Label estimates clearly; granularity toggle for the GPU column.
-4. **(F5) "Profile Render" button** (user-requested add-on to the estimates): run a render
-   pass to capture the engine's real **peak memory** — whole-scene only (not per-object),
-   slow, engine-dependent. Optional, separate from the fast estimate path.
+4. **(F5) "Profile Render" button** ✅ DONE (v0.1.5). Renders the current frame and reports
+   real **peak process RAM** (OS-level). Real VRAM not attempted (no Python API); F5 estimates
+   cover VRAM. `core.resource.peak_process_ram_bytes` + `smoke_profile.py`.
 
 Note: the duplicate→instance detection is fully available from the **loaded** file (no
 load-time profiling) — it's the existing fingerprint engine plus `data.users` sharing checks.

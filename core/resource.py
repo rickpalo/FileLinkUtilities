@@ -14,6 +14,8 @@ Model (documented, deliberately simple — good for ranking the heavy hitters):
 
 from __future__ import annotations
 
+import sys
+
 # Rough per-element mesh RAM constants (bytes). Approximate by design.
 _MESH_VERT_B = 40
 _MESH_EDGE_B = 16
@@ -39,6 +41,55 @@ def mesh_estimate(info: dict) -> dict:
         + info.get("polys", 0) * _MESH_POLY_B
     )
     return {"ram": ram, "vram": info.get("loops", 0) * _MESH_GPU_STRIDE}
+
+
+def peak_process_ram_bytes() -> int:
+    """Best-effort REAL peak resident memory of this process, in bytes (0 if
+    unknown). Used by F5 'Profile Render' to report actual peak RAM after a
+    render, complementing the estimates. OS-level; no bpy."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _PMC(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            psapi.GetProcessMemoryInfo.argtypes = [
+                wintypes.HANDLE, ctypes.POINTER(_PMC), wintypes.DWORD
+            ]
+            psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+
+            counters = _PMC()
+            counters.cb = ctypes.sizeof(_PMC)
+            handle = kernel32.GetCurrentProcess()
+            if psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+                return int(counters.PeakWorkingSetSize)
+        except Exception:
+            return 0
+        return 0
+    try:
+        import resource as _res
+
+        maxrss = _res.getrusage(_res.RUSAGE_SELF).ru_maxrss
+        # Linux reports KB, macOS reports bytes.
+        return int(maxrss * (1024 if sys.platform.startswith("linux") else 1))
+    except Exception:
+        return 0
 
 
 def human_bytes(n: int) -> str:

@@ -10,7 +10,7 @@ from .make_local import ASSETDOCTOR_OT_make_local
 from .material_dedup import ASSETDOCTOR_OT_material_dedup
 from .orphans import ASSETDOCTOR_OT_scan_orphans
 from .instance_dedup import ASSETDOCTOR_OT_instance_geometry
-from .resource import ASSETDOCTOR_OT_analyze_resources
+from .resource import ASSETDOCTOR_OT_analyze_resources, ASSETDOCTOR_OT_profile_render
 from .report_store import (
     ASSETDOCTOR_OT_export_report,
     ASSETDOCTOR_OT_report_clear,
@@ -27,6 +27,7 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_scan_orphans,
     ASSETDOCTOR_OT_instance_geometry,
     ASSETDOCTOR_OT_analyze_resources,
+    ASSETDOCTOR_OT_profile_render,
     ASSETDOCTOR_OT_report_toggle,
     ASSETDOCTOR_OT_report_select,
     ASSETDOCTOR_OT_report_clear,

@@ -71,6 +71,8 @@ def register() -> None:
     # F5 resource tree (JSON) + its expanded node keys.
     bpy.types.WindowManager.assetdoctor_resource_tree = bpy.props.StringProperty(default="")
     bpy.types.WindowManager.assetdoctor_resource_expanded = bpy.props.StringProperty(default="")
+    # Real peak RAM from the last Profile Render (human-readable string).
+    bpy.types.WindowManager.assetdoctor_profiled_ram = bpy.props.StringProperty(default="")
 
 
 def unregister() -> None:
@@ -83,7 +85,7 @@ def unregister() -> None:
 
     wm_attrs = ["assetdoctor_scan_active", "assetdoctor_scan_progress", "assetdoctor_scan_status",
                 "assetdoctor_active_report", "assetdoctor_resource_tree",
-                "assetdoctor_resource_expanded"]
+                "assetdoctor_resource_expanded", "assetdoctor_profiled_ram"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]
     for attr in wm_attrs:

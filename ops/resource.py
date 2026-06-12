@@ -9,7 +9,12 @@ import os
 
 import bpy
 
-from ..core.resource import human_bytes, image_estimate, mesh_estimate
+from ..core.resource import (
+    human_bytes,
+    image_estimate,
+    mesh_estimate,
+    peak_process_ram_bytes,
+)
 from ..core.resource_tree import build_resource_tree
 from ..core.tree import nodes_to_json, top_level_keys
 
@@ -72,4 +77,35 @@ class ASSETDOCTOR_OT_analyze_resources(bpy.types.Operator):
                f"VRAM {human_bytes(totals['vram'])}, disk {human_bytes(totals['disk'])}")
         log.info("F5 %s", msg)
         self.report({"INFO"}, msg + " (estimates; see Resource panel)")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_profile_render(bpy.types.Operator):
+    bl_idname = "assetdoctor.profile_render"
+    bl_label = "Profile Render (real RAM)"
+    bl_description = (
+        "Render the current frame and report Blender's REAL peak system RAM "
+        "(whole process), to complement the estimates. Slow on heavy scenes. "
+        "Note: real VRAM is not exposed by Blender's Python API"
+    )
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        from ..log import get_logger
+
+        log = get_logger()
+        if context.scene.camera is None:
+            self.report({"ERROR"}, "Scene has no camera to render from")
+            return {"CANCELLED"}
+        try:
+            bpy.ops.render.render(write_still=False)
+        except RuntimeError as exc:
+            self.report({"ERROR"}, f"Render failed: {exc}")
+            return {"CANCELLED"}
+
+        peak = peak_process_ram_bytes()
+        text = human_bytes(peak) if peak else "unavailable"
+        context.window_manager.assetdoctor_profiled_ram = text
+        log.info("F5 profile render: peak process RAM = %s", text)
+        self.report({"INFO"}, f"Render done — real peak RAM: {text} (whole process)")
         return {"FINISHED"}

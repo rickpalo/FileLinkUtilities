@@ -1,6 +1,11 @@
 """Unit tests for core.resource estimation + formatting."""
 
-from core.resource import human_bytes, image_estimate, mesh_estimate
+from core.resource import (
+    human_bytes,
+    image_estimate,
+    mesh_estimate,
+    peak_process_ram_bytes,
+)
 
 
 def test_image_estimate_8bit_rgba():
@@ -25,6 +30,12 @@ def test_mesh_estimate_scales_with_counts():
     big = mesh_estimate({"verts": 1000, "edges": 1000, "loops": 1000, "polys": 500})
     assert big["ram"] > small["ram"] > 0
     assert big["vram"] == 1000 * 32
+
+
+def test_peak_process_ram_is_positive():
+    # This process is using memory, so the OS query should return a positive value
+    # on supported platforms (Windows/Linux/macOS).
+    assert peak_process_ram_bytes() > 0
 
 
 def test_human_bytes():

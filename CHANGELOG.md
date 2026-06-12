@@ -107,6 +107,18 @@ flagged as major.
 - 60 pytest tests pass. In Blender 5.1: a 1K+2K material pair clusters, the 2K wins canonical,
   Apply removes the 1K and repoints its object's slot to the 2K; whitelist override works.
 
+## [0.1.5] — M7 step 4: Profile Render (real peak RAM)
+
+### Added
+- **Profile Render** button (Resource Analyzer): renders the current frame and reports
+  Blender's **real peak system RAM** (whole process, via OS — Windows `GetProcessMemoryInfo`
+  / Unix `getrusage`), shown in the Resource panel to complement the estimates.
+  Real VRAM is intentionally not attempted (not exposed by Blender's Python API); F5's
+  VRAM estimate covers that side.
+- `core.resource.peak_process_ram_bytes()` (bpy-free) + test; `tests/smoke_profile.py`.
+
+This completes **F5 / M7**.
+
 ## [0.1.4] — M8: Report system v2
 
 ### Added / changed (TODOs)

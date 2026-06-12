@@ -132,6 +132,7 @@ class ASSETDOCTOR_PT_main(bpy.types.Panel):
         box = layout.box()
         box.label(text="Resource Analyzer", icon="DISK_DRIVE")
         box.operator("assetdoctor.analyze_resources", text="Analyze Memory/Disk", icon="VIEWZOOM")
+        box.operator("assetdoctor.profile_render", text="Profile Render (real RAM)", icon="RENDER_STILL")
 
         layout.label(text="Lists/backups: Add-on Preferences", icon="PREFERENCES")
 
@@ -214,6 +215,9 @@ class ASSETDOCTOR_PT_resources(bpy.types.Panel):
             return
 
         layout.label(text="RAM / VRAM estimated; disk accurate", icon="INFO")
+        if wm.assetdoctor_profiled_ram:
+            layout.label(text=f"Profiled real peak RAM: {wm.assetdoctor_profiled_ram}",
+                         icon="RENDER_STILL")
         layout.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "resource"
         rows = flatten_visible(nodes, get_expanded(wm, "assetdoctor_resource_expanded"))
         _draw_tree(layout, rows, "assetdoctor_resource_expanded")
