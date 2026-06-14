@@ -1,5 +1,17 @@
 # AssetDoctor — TODO / backlog
 
+## Open decisions
+- [ ] **Debug log: fresh-per-open vs continuous.** Today the handler opens `AssetDoctorDebugLog.txt`
+  in **append** mode and only attaches when the user ticks the toggle in a session.
+  **Recommendation: start a fresh log per file-open** (truncate on enable), because the log's
+  purpose is to be reproduced and sent for one bug — a clean, small, single-session file is
+  easier to read than an ever-growing multi-session append (which also grows unbounded).
+  Implementation: open the handler in `mode="w"`, and add a `bpy.app.handlers.load_post` handler
+  that re-arms/truncates the log when a file opens with the toggle on (Scene-prop `update`
+  callbacks don't fire on load, so today an enabled toggle doesn't reactivate after open — fix
+  this at the same time). If cross-session history is ever wanted instead, use a
+  `RotatingFileHandler` with a size cap rather than plain append.
+
 ## Done
 - [x] **(5) Split Project section** into a folder path field (`Scene.assetdoctor_scan_dir`)
   + a separate **Scan Link Map** button. Picking a folder no longer auto-runs.
