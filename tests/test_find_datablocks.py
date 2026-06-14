@@ -1,9 +1,10 @@
-"""Tests for tools/find_objects.py.
+"""Tests for tools/find_datablocks.py.
 
 The module lives in tools/ (a standalone utility, not the importable package), so
 it is loaded by file path. conftest already puts the BAT wheel on sys.path, which
-the module reuses. Mesh detection is exercised against the committed linkproj
-fixtures: libB defines mesh "Rock", libA defines mesh "Tree".
+the module reuses. Exercised against the committed linkproj fixtures: libB defines
+mesh "Rock" + material "Stone" + action "WalkCycle"; libA defines mesh "Tree" +
+material "Bark_2k".
 """
 
 import importlib.util
@@ -16,8 +17,8 @@ LINKPROJ = REPO_ROOT / "tests" / "fixtures" / "linkproj"
 
 
 def _load_module():
-    path = REPO_ROOT / "tools" / "find_objects.py"
-    spec = importlib.util.spec_from_file_location("find_objects", path)
+    path = REPO_ROOT / "tools" / "find_datablocks.py"
+    spec = importlib.util.spec_from_file_location("find_datablocks", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -141,4 +142,49 @@ def test_type_is_case_insensitive():
     for bad in ("action", "NLA", "material"):
         with pytest.raises(argparse.ArgumentTypeError) as exc:
             fb._object_type_arg(bad)
-        assert "not a Blender object type" in str(exc.value)
+        assert "not a Blender object sub-type" in str(exc.value)
+
+
+# --- datablock kinds (actions, materials, ...) --------------------------------
+@needs_bat
+def test_find_material_kind():
+    assert fb.find_in_blend(LINKPROJ / "libB.blend", "stone", kind="material") == ["Stone"]
+    assert fb.find_in_blend(LINKPROJ / "libA.blend", "bark*", kind="material") == ["Bark_2k"]
+    assert fb.find_in_blend(LINKPROJ / "libB.blend", "stone", kind="mesh") == []  # no mesh named stone
+
+
+@needs_bat
+def test_find_action_kind():
+    # libB carries a fake-user action "WalkCycle" (see build_linkproj.py).
+    assert fb.find_in_blend(LINKPROJ / "libB.blend", "walk", kind="action") == ["WalkCycle"]
+    assert fb.find_in_blend(LINKPROJ / "libB.blend", "*cycle", kind="action") == ["WalkCycle"]
+
+
+@needs_bat
+def test_find_in_blend_object_dispatch_matches_find_objects():
+    a = fb.find_in_blend(LINKPROJ / "libA.blend", "tree", kind="object")
+    assert a == fb.find_objects(LINKPROJ / "libA.blend", "tree")
+
+
+def test_find_in_blend_unknown_kind_raises():
+    with pytest.raises(ValueError):
+        fb.find_in_blend(LINKPROJ / "libB.blend", "x", kind="bogus")
+
+
+def test_kind_arg_case_insensitive_and_validation():
+    import argparse
+
+    assert fb._kind_arg("ACTION") == "action"
+    assert fb._kind_arg("Material") == "material"
+    with pytest.raises(argparse.ArgumentTypeError) as exc:
+        fb._kind_arg("notakind")
+    assert "not a searchable datablock kind" in str(exc.value)
+
+
+def test_parser_kind_default_and_value():
+    p = fb.build_parser()
+    assert p.parse_args(["dir", "x"]).kind == "object"  # default
+    ns = p.parse_args(["dir", "walk", "--kind", "Action"])
+    assert ns.kind == "action"
+    with pytest.raises(SystemExit):
+        p.parse_args(["dir", "x", "--kind", "bogus"])

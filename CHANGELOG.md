@@ -208,7 +208,7 @@ This completes **F5 / M7**.
   the pin would have made the extension Windows-only. Package is platform-independent again
   and back to ~135 KB (was ~645 KB).
 - **Excluded `tools/` from the shipped extension** (kept in the repo as a dev utility).
-  `tools/find_objects.py` (originally find_billboards.py) is a host-Python offline object search; on host Python it
+  `tools/find_datablocks.py` (originally find_billboards.py) is a host-Python offline search; on host Python it
   needs `pip install zstandard` for compressed files (Blender's bundle doesn't apply there).
 
 ## [0.1.0] — Responsive scan + doc link (TODO 4 + doc icon) — unreleased

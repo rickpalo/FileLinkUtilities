@@ -57,9 +57,11 @@ def _save(path):
 
 
 def main():
-    # libB - leaf
+    # libB - leaf: object Rock + material Stone + a fake-user action (for the
+    # find_datablocks "action" search test; fake user keeps it without an animated user).
     _reset_empty()
     _new_object("Rock", "Stone")
+    bpy.data.actions.new("WalkCycle").use_fake_user = True
     _save(LIBB)
 
     # libA - own Tree + link Rock from libB

@@ -26,7 +26,7 @@ license = ["SPDX:GPL-3.0-or-later"]
 #    because Blender 5.x already ships it in its own Python (verified: zstandard
 #    0.25.0 present in Blender 5.1, BAT reads compressed files — tests/smoke_compressed.py).
 #    Bundling it would force a platform/ABI pin for no benefit. NOTE: the host-Python
-#    dev tool tools/find_objects.py DOES need `pip install zstandard` separately.
+#    dev tool tools/find_datablocks.py DOES need `pip install zstandard` separately.
 wheels = ["./wheels/blender_asset_tracer-1.20-py3-none-any.whl"]
 
 # No `platforms` pin: BAT is pure-Python and we bundle no compiled wheels, so the

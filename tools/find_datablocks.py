@@ -1,23 +1,28 @@
-"""Find objects across .blend files by name phrase, optional type, offline.
+"""Find datablocks across .blend files by name, offline.
 
-Scans every ``*.blend`` under a directory, newest file first, reading each one
-OFFLINE via Blender Asset Tracer (BAT) -- no Blender launch needed. Objects live
-in the DNA as ``OB`` blocks; the name is ``id.name`` (with a 2-char "OB" prefix)
-and the ``type`` field encodes the object kind (mesh, curve, camera, ...).
+Scans every ``*.blend`` under a directory (newest first), reading each one
+OFFLINE via Blender Asset Tracer (BAT) -- no Blender launch needed. Searches one
+datablock KIND (objects, actions, materials, meshes, images, ...) by name; for
+objects you can further narrow by object type (mesh, camera, ...).
 
 Matching:
-  * a plain phrase matches as a case-insensitive SUBSTRING ("tree" -> "Treetop");
-  * a phrase containing wildcards (* ? [ ]) matches as a case-insensitive GLOB
-    ("tree*", "*billboard*", "chair_??").
+  * a plain phrase matches as a case-insensitive SUBSTRING ("walk" -> "WalkCycle");
+  * a phrase with wildcards (* ? [ ]) matches as a case-insensitive GLOB.
 
-Object types for --type: empty, mesh, curve, surface, text, metaball, lamp/light,
-camera, speaker, lightprobe, lattice, armature, grease_pencil, curves/hair,
-pointcloud, volume (default: any).
+--kind  datablock kind to search, case-insensitive (default: object): object,
+        action, material, mesh, image, world, collection, scene, texture,
+        node_group, armature, curve, camera, light/lamp, speaker, lattice,
+        metaball, sound.
+--type  object SUB-type filter, only with --kind object (default: any): empty,
+        mesh, curve, surface, text, metaball, lamp/light, camera, speaker,
+        lightprobe, lattice, armature, grease_pencil, curves/hair, pointcloud,
+        volume.
 
 Examples:
-    python tools/find_objects.py "E:/BlenderSync" billboard
-    python tools/find_objects.py "E:/assets" "tree*" --type mesh
-    python tools/find_objects.py "E:/assets" "*cam*" --type camera --first
+    python tools/find_datablocks.py "E:/proj" walk --kind action
+    python tools/find_datablocks.py "E:/proj" "wood*" --kind material
+    python tools/find_datablocks.py "E:/proj" "tree*" --type mesh
+    python tools/find_datablocks.py "E:/proj" "*cam*" --type camera --first
 """
 
 from __future__ import annotations
@@ -27,6 +32,15 @@ import fnmatch
 import glob
 import pathlib
 import sys
+
+# Friendly datablock-kind name -> Blender DNA ID block code (DNA_ID.h ID_* codes).
+KIND_CODES = {
+    "object": b"OB", "action": b"AC", "material": b"MA", "mesh": b"ME",
+    "image": b"IM", "world": b"WO", "collection": b"GR", "scene": b"SC",
+    "texture": b"TE", "node_group": b"NT", "armature": b"AR", "curve": b"CU",
+    "camera": b"CA", "light": b"LA", "lamp": b"LA", "speaker": b"SK",
+    "lattice": b"LT", "metaball": b"MB", "sound": b"SO",
+}
 
 # Friendly object-type name -> Blender DNA object 'type' code (DNA_object_types.h).
 TYPE_CODES = {
@@ -73,7 +87,7 @@ def _is_zstd_error(exc: Exception) -> bool:
 
 
 def type_code_for(obj_type: str | None) -> int | None:
-    """Resolve a friendly type name to its DNA code, or None for 'any'."""
+    """Resolve a friendly object-type name to its DNA code, or None for 'any'."""
     if obj_type is None or obj_type.lower() in _ANY_TYPE:
         return None
     try:
@@ -104,9 +118,29 @@ def iter_blend_files_newest_first(root: pathlib.Path):
     return files
 
 
+def _find_by_code(blend: pathlib.Path, pattern: str, code: bytes) -> list[str]:
+    """Names of datablocks of DNA ``code`` in ``blend`` matching ``pattern``.
+    The 2-char ID code prefix (e.g. 'AC', 'MA') is stripped from each name."""
+    from blender_asset_tracer import blendfile
+
+    matches = _make_matcher(pattern)
+    prefix = code.decode("ascii")
+    hits: list[str] = []
+    bfile = blendfile.BlendFile(blend)
+    try:
+        for block in bfile.find_blocks_from_code(code):
+            raw = block.get((b"id", b"name"), as_str=True, default="")
+            name = raw[len(prefix):] if raw.startswith(prefix) else raw
+            if matches(name):
+                hits.append(name)
+    finally:
+        bfile.close()
+    return hits
+
+
 def find_objects(blend: pathlib.Path, pattern: str, obj_type: str | None = None) -> list[str]:
-    """Return names of objects in ``blend`` matching ``pattern`` (and ``obj_type``
-    if given). Reads the file offline via BAT."""
+    """Names of OBJECTS in ``blend`` matching ``pattern`` (and ``obj_type`` if
+    given). Object-specific because it can filter on the OB 'type' field."""
     from blender_asset_tracer import blendfile
 
     type_code = type_code_for(obj_type)
@@ -131,25 +165,46 @@ def find_mesh_objects(blend: pathlib.Path, keyword: str) -> list[str]:
     return find_objects(blend, keyword, obj_type="mesh")
 
 
+def find_in_blend(blend: pathlib.Path, pattern: str, kind: str = "object",
+                  obj_type: str | None = None) -> list[str]:
+    """Dispatch: objects (with optional sub-type) or any other datablock KIND."""
+    if kind == "object":
+        return find_objects(blend, pattern, obj_type)
+    try:
+        code = KIND_CODES[kind]
+    except KeyError:
+        raise ValueError(f"unknown datablock kind {kind!r}; known: {', '.join(sorted(KIND_CODES))}")
+    return _find_by_code(blend, pattern, code)
+
+
+def _kind_arg(value: str) -> str:
+    """argparse `type` for --kind: case-insensitive, validated datablock kind."""
+    v = value.strip().lower()
+    if v in KIND_CODES:
+        return v
+    valid = ", ".join(sorted(set(KIND_CODES)))
+    raise argparse.ArgumentTypeError(
+        f"'{value}' is not a searchable datablock kind.\n  Valid kinds: {valid}."
+    )
+
+
 def _object_type_arg(value: str) -> str:
-    """argparse `type` for --type: case-insensitive, validated against Blender's
-    object types, with a helpful message for non-object terms (action, NLA, …)."""
+    """argparse `type` for --type: case-insensitive, validated object sub-type."""
     v = value.strip().lower()
     if v in _ANY_TYPE or v in TYPE_CODES:
         return v
     valid = ", ".join(sorted(set(TYPE_CODES) | {"any"}))
     raise argparse.ArgumentTypeError(
-        f"'{value}' is not a Blender object type.\n"
+        f"'{value}' is not a Blender object sub-type.\n"
         f"  Valid object types: {valid}.\n"
-        "  (Note: 'action'/'NLA' are animation data, and materials/images are other "
-        "datablock kinds, not object types, so they can't be filtered here.)"
+        "  (To search non-objects like actions or materials, use --kind instead.)"
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
     """The argparse CLI parser (also gives `-h/--help` for free)."""
     parser = argparse.ArgumentParser(
-        prog="find_objects.py",
+        prog="find_datablocks.py",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -160,9 +215,15 @@ def build_parser() -> argparse.ArgumentParser:
         "or use wildcards (* ? [ ]) for a glob match",
     )
     parser.add_argument(
+        "--kind", "-k", dest="kind", metavar="KIND", default="object",
+        type=_kind_arg,
+        help="datablock kind to search, case-insensitive (default: object). "
+        "e.g. object, action, material, mesh, image, ...",
+    )
+    parser.add_argument(
         "--type", "-t", dest="obj_type", metavar="TYPE", default=None,
         type=_object_type_arg,
-        help="restrict to an object type, case-insensitive (default: any)",
+        help="object SUB-type filter, only with --kind object (default: any)",
     )
     parser.add_argument(
         "--first", "-1", action="store_true",
@@ -175,12 +236,16 @@ def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)  # handles -h/--help and bad input
     root = pathlib.Path(args.directory)
     phrase = args.phrase
+    kind = args.kind
     obj_type = args.obj_type
     stop_first = args.first
 
     if not root.is_dir():
         print(f"Not a directory: {root}")
         return 2
+    if kind != "object" and obj_type:
+        print(f"Note: --type {obj_type!r} only applies to --kind object; ignoring it.\n")
+        obj_type = None
 
     _ensure_bat_importable()
     if not _zstandard_available():
@@ -191,13 +256,13 @@ def main(argv: list[str]) -> int:
         )
 
     type_label = f" of type {obj_type}" if obj_type and obj_type.lower() not in _ANY_TYPE else ""
-    print(f"Searching for objects{type_label} matching {phrase!r} ...\n")
+    print(f"Searching for {kind} datablocks{type_label} matching {phrase!r} ...\n")
 
     total_files = matched_files = 0
     for blend in iter_blend_files_newest_first(root):
         total_files += 1
         try:
-            hits = find_objects(blend, phrase, obj_type)
+            hits = find_in_blend(blend, phrase, kind, obj_type)
         except Exception as exc:  # corrupt/unreadable -> note and keep going
             if _is_zstd_error(exc):
                 print(f"\nERROR reading {blend}\n    {ZSTD_HINT}")
@@ -214,8 +279,8 @@ def main(argv: list[str]) -> int:
                 return 0
 
     print(
-        f"\nScanned {total_files} .blend file(s); "
-        f"{matched_files} contained an object matching {phrase!r}{type_label}."
+        f"\nScanned {total_files} .blend file(s); matched {phrase!r} "
+        f"({kind}{type_label}) in {matched_files}."
     )
     return 0
 
