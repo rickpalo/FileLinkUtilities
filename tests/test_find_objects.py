@@ -123,6 +123,22 @@ def test_parser_help_exits_zero():
 
 def test_parser_rejects_unknown_type_and_missing_phrase():
     with pytest.raises(SystemExit):
-        fb.build_parser().parse_args(["dir", "x", "--type", "bogus"])  # bad choice
+        fb.build_parser().parse_args(["dir", "x", "--type", "bogus"])  # not an object type
     with pytest.raises(SystemExit):
         fb.build_parser().parse_args(["dir"])  # phrase is required
+
+
+def test_type_is_case_insensitive():
+    import argparse
+
+    assert fb._object_type_arg("MESH") == "mesh"
+    assert fb._object_type_arg("Camera") == "camera"
+    assert fb._object_type_arg("Any") == "any"
+    # the parser normalises case too
+    ns = fb.build_parser().parse_args(["dir", "x", "--type", "Mesh"])
+    assert ns.obj_type == "mesh"
+    # non-object terms (action / NLA / material) are rejected with a clear message
+    for bad in ("action", "NLA", "material"):
+        with pytest.raises(argparse.ArgumentTypeError) as exc:
+            fb._object_type_arg(bad)
+        assert "not a Blender object type" in str(exc.value)

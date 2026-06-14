@@ -22,6 +22,7 @@ Examples:
 
 from __future__ import annotations
 
+import argparse
 import fnmatch
 import glob
 import pathlib
@@ -130,10 +131,23 @@ def find_mesh_objects(blend: pathlib.Path, keyword: str) -> list[str]:
     return find_objects(blend, keyword, obj_type="mesh")
 
 
-def build_parser() -> "argparse.ArgumentParser":
-    """The argparse CLI parser (also gives `-h/--help` for free)."""
-    import argparse
+def _object_type_arg(value: str) -> str:
+    """argparse `type` for --type: case-insensitive, validated against Blender's
+    object types, with a helpful message for non-object terms (action, NLA, …)."""
+    v = value.strip().lower()
+    if v in _ANY_TYPE or v in TYPE_CODES:
+        return v
+    valid = ", ".join(sorted(set(TYPE_CODES) | {"any"}))
+    raise argparse.ArgumentTypeError(
+        f"'{value}' is not a Blender object type.\n"
+        f"  Valid object types: {valid}.\n"
+        "  (Note: 'action'/'NLA' are animation data, and materials/images are other "
+        "datablock kinds, not object types, so they can't be filtered here.)"
+    )
 
+
+def build_parser() -> argparse.ArgumentParser:
+    """The argparse CLI parser (also gives `-h/--help` for free)."""
     parser = argparse.ArgumentParser(
         prog="find_objects.py",
         description=__doc__,
@@ -147,8 +161,8 @@ def build_parser() -> "argparse.ArgumentParser":
     )
     parser.add_argument(
         "--type", "-t", dest="obj_type", metavar="TYPE", default=None,
-        choices=sorted(TYPE_CODES) + ["any"],
-        help="restrict to an object type (default: any)",
+        type=_object_type_arg,
+        help="restrict to an object type, case-insensitive (default: any)",
     )
     parser.add_argument(
         "--first", "-1", action="store_true",
