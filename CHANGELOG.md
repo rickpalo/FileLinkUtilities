@@ -107,6 +107,19 @@ flagged as major.
 - 60 pytest tests pass. In Blender 5.1: a 1K+2K material pair clusters, the 2K wins canonical,
   Apply removes the 1K and repoints its object's slot to the 2K; whitelist override works.
 
+## [0.1.6] — report drawing fix
+
+### Fixed
+- **Reports no longer show blank rows** on large projects. The N-panel doesn't virtualize
+  manually-drawn rows, so a report with hundreds of findings left rows blank past a point
+  (data was fine — the Export was complete). Now: **categories start collapsed**, each shows a
+  **count**, and the tree draw is **capped (200 rows)** with an "use Export… for the full list"
+  hint. Affects every report (Link Map, Materials, etc.). The full fix (a virtualized `UIList`)
+  is tracked in docs/TODO.md "Report UI v2".
+
+### Changed
+- Duplicate-materials report category title capitalized ("Duplicate Materials").
+
 ## Unreleased — auto-update repository
 
 - Published a self-hosted **extension repository** so Blender auto-updates: `gh-pages` branch

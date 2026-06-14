@@ -24,7 +24,7 @@ _CATEGORY_TITLES = {
     "orphan": "Orphans",
     "fake_only": "Fake-user only",
     "identical": "Identical datablocks",
-    "duplicate_group": "Duplicate materials",
+    "duplicate_group": "Duplicate Materials",
     "linked_victim": "Linked duplicates",
     "summary": "Summary",
 }
@@ -106,6 +106,7 @@ def report_to_tree(report: Report) -> list[TreeNode]:
             key=cat_key,
             label=_CATEGORY_TITLES.get(cat, cat),
             severity=_max_severity(f.severity for f in findings),
+            detail=str(len(findings)),  # count shown on the (collapsed) category row
         )
         for i, f in enumerate(findings):
             f_key = f"{cat_key}:{i}"

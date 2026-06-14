@@ -73,6 +73,16 @@ def test_top_level_keys():
     assert top_level_keys(tree) == [n.key for n in tree]
 
 
+def test_category_detail_is_finding_count():
+    r = Report(title="x", feature="F1")
+    r.add(Finding("orphan", "a"))
+    r.add(Finding("orphan", "b"))
+    r.add(Finding("summary", "done", severity="info"))
+    tree = report_to_tree(r)
+    assert tree[0].detail == "2"  # two orphan findings
+    assert tree[1].detail == "1"  # one summary finding
+
+
 def test_all_keys_covers_every_node():
     tree = report_to_tree(_report())
     keys = all_keys(tree)

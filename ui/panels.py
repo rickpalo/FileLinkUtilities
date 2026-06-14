@@ -33,11 +33,15 @@ def _addon_version() -> str:
 _SEVERITY_ICON = {"info": "NONE", "warning": "ERROR", "error": "CANCEL"}
 
 
-def _draw_tree(layout, rows, expanded_prop):
+def _draw_tree(layout, rows, expanded_prop, max_rows=200):
     """Render flattened tree Rows: indent + expand toggle + label + right-aligned
-    detail + optional select button. Shared by the Report and Resource panels."""
+    detail + optional select button. Shared by the Report and Resource panels.
+
+    Capped at ``max_rows`` because the N-panel doesn't virtualize manually-drawn
+    rows — a huge expansion can otherwise leave rows blank. Beyond the cap we show
+    a hint to use Export for the full list."""
     col = layout.column(align=True)
-    for r in rows:
+    for r in rows[:max_rows]:
         row = col.row(align=True)
         if r.indent:
             row.separator(factor=r.indent * 1.4)
@@ -64,6 +68,9 @@ def _draw_tree(layout, rows, expanded_prop):
             sub = row.row()
             sub.alignment = "RIGHT"
             sub.label(text=r.detail)
+    if len(rows) > max_rows:
+        col.label(text=f"+{len(rows) - max_rows} more — use Export… for the full list",
+                  icon="INFO")
 
 
 class ASSETDOCTOR_PT_main(bpy.types.Panel):

@@ -1,5 +1,41 @@
 # AssetDoctor — TODO / backlog
 
+## Report UI v2 (from real-project testing)
+
+**Root cause noted:** the N-panel doesn't virtualize manually-drawn rows, so a large report
+(hundreds of findings) leaves rows blank past a point. **Mitigated now** (v0.1.6) by
+collapsing categories by default + a 200-row draw cap + Export hint. **Real fix = convert the
+Report and Resource panels to a `UIList`** (virtualized, scrollable), which also unlocks most
+items below.
+
+- [ ] **UIList rework** for Report + Resource panels (fixes blank rows definitively for any size).
+- [ ] **Collapsible "Report" master heading** with a **section per report**, and a *"run a
+  scan above"* hint when none has been run.
+- [ ] **Report selector → toggle**: the per-report button should toggle the report contents
+  visible/hidden.
+- [ ] **Resource Usage:** default the Image/Mesh type groups **collapsed**; put **column
+  headers at the top** (RAM | VRAM | disk) instead of repeating units on every row; make the
+  **columns sortable** by clicking the header.
+- [ ] **Duplicate Materials report:**
+  - summary line (e.g. "50 duplicated materials; est. ~X savings" — file-size savings is
+    cheap/accurate from datablock sizes; live-memory savings is an estimate).
+  - **interactive include/omit + choose-which-to-keep** without busy per-row checkboxes.
+    Options to weigh: a UIList with a single **"keep" radio/icon column** per group + an
+    **include** toggle; or set the canonical by clicking a row; or drive it from the existing
+    white/black-list prefs (name-based) surfaced in the panel. (`title` capitalized in v0.1.6.)
+- [ ] **Export filename:** suggest a sensible name **with extension** (currently pre-fills the
+  `.blend` name including its `.blend` extension); default to e.g. `AssetDoctor_<feature>.txt`.
+- [x] **Click-to-select in Outliner** — already implemented (click a finding → selects the user
+  object(s); Outliner follows the active object). Note: F1 link-map items are **file paths**, not
+  datablocks, so those aren't selectable (expected); F3/F4 datablock findings are.
+
+## Dedup preferences (global)
+- [ ] **Keep-local vs keep-linked preference**, in **Add-on Preferences** (global options),
+  **separate for materials and for meshes** (e.g. two enums: Materials → {prefer local, prefer
+  linked}; Meshes → {prefer local, prefer linked}). These set the canonical tie-break for F3
+  (materials) and the geometry-instancing dedup; the white/black lists still override. Today
+  both hardcode "prefer local" — this makes it configurable per data type.
+
 ## Decided — to implement (batch)
 - [ ] **Debug log: fresh per file-open** (decision made; not a continuous append). The log
   captures one reproduction to send for diagnosis, so each session should be a clean,

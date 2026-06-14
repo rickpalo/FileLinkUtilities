@@ -15,7 +15,6 @@ from ..core.tree import (
     flatten_visible,
     nodes_from_json,
     report_to_tree,
-    top_level_keys,
 )
 
 # (key, label) for each feature that produces a report. F5 resource is separate.
@@ -37,10 +36,13 @@ def exp_prop(feature: str) -> str:
 
 
 def stash_report(context, report, feature: str) -> None:
-    """Persist a feature's report (and auto-expand its categories)."""
+    """Persist a feature's report. Categories start COLLAPSED so a large report
+    (hundreds of findings) doesn't draw as one giant column — the N-panel doesn't
+    virtualize manual rows, which can leave rows blank. The user expands one
+    category at a time."""
     wm = context.window_manager
     setattr(wm, data_prop(feature), report.to_json())
-    setattr(wm, exp_prop(feature), "\n".join(top_level_keys(report_to_tree(report))))
+    setattr(wm, exp_prop(feature), "")  # collapsed
     wm.assetdoctor_active_report = feature
 
 
