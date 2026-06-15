@@ -101,6 +101,13 @@ collapsing categories by default + a 200-row draw cap + Export hint. **Real fix 
 Report and Resource panels to a `UIList`** (virtualized, scrollable), which also unlocks most
 items below.
 
+- [ ] **Focus the Outliner on a clicked finding** (requested 2026-06-15). Clicking a finding
+  already selects + activates the object, but the Outliner doesn't scroll to it. Feasible & small:
+  after setting `view_layer.objects.active`, loop open Outliner areas and call
+  `bpy.ops.outliner.show_active()` under `context.temp_override(area=outliner, region=WINDOW)`
+  (expands parents + scrolls to the active object). No-op if no Outliner is open; wrap in
+  try/except. Add a `_focus_outliner(context)` helper in `ops/report_store.py`, called from
+  `ASSETDOCTOR_OT_select_datablock.execute`. UI-only → verify interactively.
 - [ ] **UIList rework** for Report + Resource panels (fixes blank rows definitively for any size).
 - [ ] **Collapsible "Report" master heading** with a **section per report**, and a *"run a
   scan above"* hint when none has been run.
