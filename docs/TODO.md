@@ -45,6 +45,29 @@ that both the manual op and the automated op call.
 - (b) **Apply & Report offers to save the file afterwards** so disk savings are real (prompt/option).
 - (c) **Automated open by default, Manual collapsed by default** — confirmed.
 
+## Bugs found in v0.1.8 testing (2026-06-15)
+- [ ] **F2 progress bar not visible for Make Local (report + apply In Place).** On a huge file
+  (human_bundle.blend, ~8 GB) the user saw no progress bar. Causes: (1) the **report/dry-run path
+  has no modal** (invoke→execute) by design — add one; (2) for **apply**, the heavy phases run
+  *synchronously in `invoke()` before the modal starts* — `_prepare` (gather all linked) and
+  `auto_backup` (saving an **8 GB** copy = the long freeze) — and then the bulk
+  `make_local(type='ALL')` is one blocking call. So the bar only animates during the minor per-ID
+  passes. Fix: move gather + backup into the generator/`run_steps` so a "Backing up…/Making all
+  local…" status shows first; force a redraw before each big blocking step. (Consider migrating F2
+  to `ModalProgressMixin`.)
+- [ ] **Make Local "In Place" does NOT fully localize a complex file.** Forensic diff of
+  human_bundle.blend before/after (offline BAT): it purged ~100k datablocks (MA 609→312, IM
+  1903→1315, NT 796→678, ~99k DATA) — good cleanup — **but left `materialMaster.blend` still
+  linked** (1 LI block remains; the lib exists and is resolvable, path just re-stored relative to
+  the new file location). Objects/meshes unchanged (OB 6371, ME 5832 — identical). So the localize
+  loop stops before removing the last library (likely the no-progress safety break or a remaining
+  user/override). Needs investigation: why does one library survive, and should In Place guarantee
+  zero libraries or report what it couldn't localize.
+- [ ] **Guard against running mutate-in-place on a shared LIBRARY file.** human_bundle.blend is a
+  library other scenes link thousands of datablocks from; make-local+purge renamed/removed its
+  datablocks, which can break links from dependent files. Consider detecting "this file is likely a
+  linked library / asset source" and warning before In-Place mutation (or steering to New File).
+
 ## Link Map v2 — single-file scan + visual report (requested 2026-06-15)
 - [ ] **Scan mode: whole folder OR a single file.** Today F1 (`scan_folder`) only takes a
   directory. Add a **single-file** mode that scans one `.blend` (the current file or a picked one),
