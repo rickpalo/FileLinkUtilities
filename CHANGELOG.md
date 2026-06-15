@@ -3,7 +3,7 @@
 All notable changes to AssetDoctor. Versioning is patch-only (0.1.x) until a change is
 flagged as major.
 
-## [0.1.8] — progress bars for every scan/apply — unreleased
+## [0.1.8] — progress bars for every scan/apply
 
 ### Added
 - **Modal progress bar + ESC for F3, F4, Geometry, and Resource Analyzer.** Find Duplicate

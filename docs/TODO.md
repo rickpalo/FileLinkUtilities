@@ -39,9 +39,26 @@ cancels between steps; cancel after the single start-of-run backup is safe). To 
 logic, refactor each function's core work into shared helpers returning `(report, apply-counts)`
 that both the manual op and the automated op call.
 
-**Open questions for the user:** (a) exact include-set + whether Make Local is offered; (b) should
-Apply offer "save the file afterwards" so disk savings are real; (c) is Automated open-by-default
-and Manual collapsed-by-default the right emphasis.
+**Decisions (locked 2026-06-15):**
+- (a) **Make Local IS offered** in the pipeline but **off by default**, and runs **In Place only**
+  when ticked (per recommendation).
+- (b) **Apply & Report offers to save the file afterwards** so disk savings are real (prompt/option).
+- (c) **Automated open by default, Manual collapsed by default** — confirmed.
+
+## Link Map v2 — single-file scan + visual report (requested 2026-06-15)
+- [ ] **Scan mode: whole folder OR a single file.** Today F1 (`scan_folder`) only takes a
+  directory. Add a **single-file** mode that scans one `.blend` (the current file or a picked one),
+  identifies its links and their **status**, and **recursively follows dependent files** to build
+  that file's dependency tree. Reuse `core.blendscan.scan_file` (already exists) + a recursive
+  walk; the folder mode stays as-is. UI: a mode toggle (Folder / Single File) + a file field
+  (default = current file) in the Project section.
+- [ ] **Visual link/status report.** Show the dependency graph **visually** with per-link status
+  (OK / missing / absolute-path / outside-root, etc.). Options to weigh:
+  - **In-panel:** reuse the expandable tree widget with severity icons/colors (cheap, no deps).
+  - **Graphviz DOT → SVG/PNG:** already export `.dot`; enhance it with **status colors** (red =
+    missing, amber = absolute, green = OK) and node labels, render to SVG for a real graph.
+  - **Standalone HTML report:** self-contained interactive graph (e.g. embedded vis/d3) written
+    next to the file — best "visual" but heaviest. Decide rendering target with the user.
 
 ## Progress & responsiveness — ALL actions
 - [x] **Progress bar + status text for every action** — DONE for **F1, F2, F3, F4, Geometry, and
