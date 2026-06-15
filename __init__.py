@@ -98,6 +98,19 @@ def register() -> None:
     # Real peak RAM from the last Profile Render (human-readable string).
     bpy.types.WindowManager.assetdoctor_profiled_ram = bpy.props.StringProperty(default="")
 
+    # Materialised, flattened tree rows that the Report/Resource UILists draw
+    # (virtualized + scrollable — fixes blank rows on large reports). Rebuilt by
+    # ops.report_store from the JSON above whenever a report or its expansion
+    # changes. WM-scoped (ephemeral), matching the report JSON's lifetime.
+    from .ui.panels import ASSETDOCTOR_PG_tree_row
+
+    bpy.types.WindowManager.assetdoctor_report_rows = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_tree_row)
+    bpy.types.WindowManager.assetdoctor_report_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_resource_rows = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_tree_row)
+    bpy.types.WindowManager.assetdoctor_resource_index = bpy.props.IntProperty(default=0)
+
 
 def unregister() -> None:
     import bpy
@@ -114,7 +127,9 @@ def unregister() -> None:
 
     wm_attrs = ["assetdoctor_op_active", "assetdoctor_op_progress", "assetdoctor_op_status",
                 "assetdoctor_active_report", "assetdoctor_resource_tree",
-                "assetdoctor_resource_expanded", "assetdoctor_profiled_ram"]
+                "assetdoctor_resource_expanded", "assetdoctor_profiled_ram",
+                "assetdoctor_report_rows", "assetdoctor_report_index",
+                "assetdoctor_resource_rows", "assetdoctor_resource_index"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]
     for attr in wm_attrs:

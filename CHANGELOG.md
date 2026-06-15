@@ -3,6 +3,22 @@
 All notable changes to AssetDoctor. Versioning is patch-only (0.1.x) until a change is
 flagged as major.
 
+## [0.1.10] — Report/Resource panels: virtualized UIList (fixes blank rows)
+
+### Fixed
+- **Blank rows in large reports.** The Report and Resource trees were drawn as manually-built
+  rows, which the N-panel doesn't virtualize — so expanding a big category (e.g. an F1 link map
+  with dozens of broken-link findings) left every row past ~13 blank (only the expand triangle
+  drew). Both panels now use a real **`UIList`** (`template_list`), which virtualizes and scrolls,
+  rendering correctly for any size. The 200-row draw cap and its "+N more — use Export…" hint are
+  gone (no longer needed).
+
+### Changed
+- The flattened tree rows (`core.tree.flatten_visible`) are now materialised into a
+  `WindowManager` `CollectionProperty` (`ASSETDOCTOR_PG_tree_row`) that the new `ASSETDOCTOR_UL_tree`
+  draws; `ops.report_store` rebuilds it whenever the shown report, the selected feature, or its
+  expansion changes. The report JSON stays the source of truth (export/title unchanged).
+
 ## [0.1.9] — Duplicate Materials report (local/linked)
 
 ### Changed

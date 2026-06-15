@@ -44,6 +44,7 @@ def stash_report(context, report, feature: str) -> None:
     setattr(wm, data_prop(feature), report.to_json())
     setattr(wm, exp_prop(feature), "")  # collapsed
     wm.assetdoctor_active_report = feature
+    rebuild_report_rows(wm)
 
 
 def available_features(wm):
@@ -67,6 +68,72 @@ def set_expanded(wm, keys: set[str], prop: str) -> None:
     setattr(wm, prop, "\n".join(sorted(keys)))
 
 
+# --- UIList materialisation -------------------------------------------------
+# The Report/Resource panels draw a UIList over a CollectionProperty of rows
+# (virtualized + scrollable, so large reports no longer blank out). The JSON on
+# the WindowManager stays the source of truth; these helpers re-flatten it into
+# the collection whenever the shown report or its expansion changes.
+
+RESOURCE_EXP_PROP = "assetdoctor_resource_expanded"
+
+
+def _fill_rows(coll, rows, prop: str) -> None:
+    coll.clear()
+    for r in rows:
+        item = coll.add()
+        item.indent = r.indent
+        item.key = r.key
+        item.label = r.label
+        item.severity = r.severity
+        item.has_children = r.has_children
+        item.expanded = r.expanded
+        item.detail = r.detail
+        item.prop = prop
+        if r.ref:
+            item.ref_type = r.ref.get("type", "")
+            item.ref_name = r.ref.get("name", "")
+
+
+def rebuild_report_rows(wm) -> None:
+    """Refill ``assetdoctor_report_rows`` from the active feature's report JSON."""
+    coll = wm.assetdoctor_report_rows
+    active = active_feature(wm)
+    if not active:
+        coll.clear()
+        return
+    try:
+        report = Report.from_json(getattr(wm, data_prop(active)))
+    except Exception:
+        coll.clear()
+        return
+    rows = flatten_visible(report_to_tree(report), get_expanded(wm, exp_prop(active)))
+    _fill_rows(coll, rows, exp_prop(active))
+
+
+def rebuild_resource_rows(wm) -> None:
+    """Refill ``assetdoctor_resource_rows`` from the resource tree JSON."""
+    coll = wm.assetdoctor_resource_rows
+    raw = getattr(wm, "assetdoctor_resource_tree", "")
+    if not raw:
+        coll.clear()
+        return
+    try:
+        nodes = nodes_from_json(raw)
+    except Exception:
+        coll.clear()
+        return
+    rows = flatten_visible(nodes, get_expanded(wm, RESOURCE_EXP_PROP))
+    _fill_rows(coll, rows, RESOURCE_EXP_PROP)
+
+
+def rebuild_rows_for_prop(wm, prop: str) -> None:
+    """Rebuild whichever collection a toggle on ``prop`` affects."""
+    if prop == RESOURCE_EXP_PROP:
+        rebuild_resource_rows(wm)
+    else:
+        rebuild_report_rows(wm)
+
+
 class ASSETDOCTOR_OT_report_toggle(bpy.types.Operator):
     bl_idname = "assetdoctor.report_toggle"
     bl_label = "Expand/Collapse"
@@ -80,6 +147,7 @@ class ASSETDOCTOR_OT_report_toggle(bpy.types.Operator):
         keys = get_expanded(wm, self.prop)
         keys.discard(self.key) if self.key in keys else keys.add(self.key)
         set_expanded(wm, keys, self.prop)
+        rebuild_rows_for_prop(wm, self.prop)
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}
@@ -98,7 +166,9 @@ class ASSETDOCTOR_OT_report_select(bpy.types.Operator):
         return f"Show the {label} report"
 
     def execute(self, context):
-        context.window_manager.assetdoctor_active_report = self.feature
+        wm = context.window_manager
+        wm.assetdoctor_active_report = self.feature
+        rebuild_report_rows(wm)
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}
@@ -118,6 +188,7 @@ class ASSETDOCTOR_OT_report_clear(bpy.types.Operator):
             setattr(wm, exp_prop(active), "")
         remaining = available_features(wm)
         wm.assetdoctor_active_report = remaining[0][0] if remaining else ""
+        rebuild_report_rows(wm)
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}
@@ -149,6 +220,7 @@ class ASSETDOCTOR_OT_row_label(bpy.types.Operator):
             keys = get_expanded(wm, self.prop)
             keys.discard(self.key) if self.key in keys else keys.add(self.key)
             set_expanded(wm, keys, self.prop)
+            rebuild_rows_for_prop(wm, self.prop)
             if context.area:
                 context.area.tag_redraw()
         elif self.ref_type:

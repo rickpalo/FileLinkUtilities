@@ -133,10 +133,12 @@ that both the manual op and the automated op call.
 ## Report UI v2 (from real-project testing)
 
 **Root cause noted:** the N-panel doesn't virtualize manually-drawn rows, so a large report
-(hundreds of findings) leaves rows blank past a point. **Mitigated now** (v0.1.6) by
-collapsing categories by default + a 200-row draw cap + Export hint. **Real fix = convert the
-Report and Resource panels to a `UIList`** (virtualized, scrollable), which also unlocks most
-items below.
+(hundreds of findings) leaves rows blank past a point. **Mitigated** (v0.1.6) by collapsing
+categories by default + a 200-row draw cap + Export hint. **FIXED (v0.1.10):** Report and Resource
+panels now use a real `UIList` (`ASSETDOCTOR_UL_tree` over a `CollectionProperty` rebuilt from
+`flatten_visible`) — virtualized + scrollable, so rows render for any size; the 200-cap/hint were
+removed. Data path verified by `smoke_report`; **UIList draw still needs interactive UI confirm.**
+See docs/images/BUG-blank-report-lines.png for the pre-fix bug.
 
 - [ ] **Focus the Outliner on a clicked finding** (requested 2026-06-15). Clicking a finding
   already selects + activates the object, but the Outliner doesn't scroll to it. Feasible & small:
@@ -145,7 +147,8 @@ items below.
   (expands parents + scrolls to the active object). No-op if no Outliner is open; wrap in
   try/except. Add a `_focus_outliner(context)` helper in `ops/report_store.py`, called from
   `ASSETDOCTOR_OT_select_datablock.execute`. UI-only → verify interactively.
-- [ ] **UIList rework** for Report + Resource panels (fixes blank rows definitively for any size).
+- [x] **UIList rework** for Report + Resource panels (fixes blank rows definitively for any size).
+  **DONE (v0.1.10)** — `ASSETDOCTOR_UL_tree` + `ASSETDOCTOR_PG_tree_row`; pending live-UI confirm.
 - [ ] **Collapsible "Report" master heading** with a **section per report**, and a *"run a
   scan above"* hint when none has been run.
 - [ ] **Report selector → toggle**: the per-report button should toggle the report contents

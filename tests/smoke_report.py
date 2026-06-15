@@ -49,15 +49,30 @@ def main():
         checks.append(("active is last run (f3)", store.active_feature(wm) == "f3"))
         checks.append(("both selectable", {k for k, _ in store.available_features(wm)} >= {"f3", "f4"}))
 
+        def expected_rows(feature):
+            rep = Report.from_json(getattr(wm, store.data_prop(feature)))
+            exp = store.get_expanded(wm, store.exp_prop(feature))
+            return len(tree_mod.flatten_visible(tree_mod.report_to_tree(rep), exp))
+
+        # Regression (blank report rows): the UIList collection is materialised
+        # for the active report and tracks the active feature + its expansion.
+        checks.append(("rows materialised for active (f3)",
+                       len(wm.assetdoctor_report_rows) == expected_rows("f3") > 0))
+
         bpy.ops.assetdoctor.report_select(feature="f4")
         checks.append(("selector switches active", store.active_feature(wm) == "f4"))
+        checks.append(("rows rebuilt on selector switch",
+                       len(wm.assetdoctor_report_rows) == expected_rows("f4")))
 
         rep = Report.from_json(getattr(wm, "assetdoctor_rep_f4"))
         first = tree_mod.report_to_tree(rep)[0].key
+        rows_collapsed = len(wm.assetdoctor_report_rows)
         before = first in store.get_expanded(wm, store.exp_prop("f4"))
         bpy.ops.assetdoctor.report_toggle(key=first, prop=store.exp_prop("f4"))
         after = first in store.get_expanded(wm, store.exp_prop("f4"))
         checks.append(("toggle flips active feature's expand", before != after))
+        checks.append(("expanding a category grows the row collection",
+                       len(wm.assetdoctor_report_rows) == expected_rows("f4") > rows_collapsed))
 
         out = os.path.join(tempfile.mkdtemp(), "rep.txt")
         bpy.ops.assetdoctor.export_report("EXEC_DEFAULT", source="report", filepath=out)
@@ -70,6 +85,18 @@ def main():
         bpy.ops.assetdoctor.report_clear()  # clears active (f4)
         checks.append(("clear removes active but keeps the other",
                        not getattr(wm, "assetdoctor_rep_f4") and bool(getattr(wm, "assetdoctor_rep_f3"))))
+        checks.append(("rows rebuilt to remaining report after clear",
+                       store.active_feature(wm) == "f3"
+                       and len(wm.assetdoctor_report_rows) == expected_rows("f3")))
+
+        # Resource UIList shares the same materialisation path.
+        rnodes = [tree_mod.TreeNode(key="g", label="Group",
+                                    children=[tree_mod.TreeNode(key="g:0", label="img.png")])]
+        wm.assetdoctor_resource_tree = tree_mod.nodes_to_json(rnodes)
+        wm.assetdoctor_resource_expanded = "g"
+        store.rebuild_resource_rows(wm)
+        checks.append(("resource rows materialised (parent + child)",
+                       len(wm.assetdoctor_resource_rows) == 2))
 
         ok = all(p for _, p in checks)
         for label, p in checks:

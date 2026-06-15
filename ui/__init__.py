@@ -1,6 +1,8 @@
 """Sidebar (N-panel) UI for AssetDoctor."""
 
 from .panels import (
+    ASSETDOCTOR_PG_tree_row,
+    ASSETDOCTOR_UL_tree,
     ASSETDOCTOR_PT_main,
     ASSETDOCTOR_PT_project,
     ASSETDOCTOR_PT_make_local,
@@ -13,8 +15,12 @@ from .panels import (
     ASSETDOCTOR_PT_resources,
 )
 
-# Parent first, then its collapsible child panels, then the report/resource panels.
+# PropertyGroup + UIList first (panels' template_list draws them, and the WM
+# CollectionProperty in register() needs the PropertyGroup to exist), then the
+# parent panel, its collapsible children, and the report/resource panels.
 REGISTER_CLASSES = (
+    ASSETDOCTOR_PG_tree_row,
+    ASSETDOCTOR_UL_tree,
     ASSETDOCTOR_PT_main,
     ASSETDOCTOR_PT_project,
     ASSETDOCTOR_PT_make_local,

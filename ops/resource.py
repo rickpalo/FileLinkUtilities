@@ -103,6 +103,8 @@ class ASSETDOCTOR_OT_analyze_resources(ModalProgressMixin, bpy.types.Operator):
         wm = context.window_manager
         setattr(wm, RESOURCE_PROP, nodes_to_json(nodes))
         setattr(wm, RESOURCE_EXPANDED, "\n".join(top_level_keys(nodes)))
+        from .report_store import rebuild_resource_rows
+        rebuild_resource_rows(wm)
 
         msg = (f"Estimated totals — RAM {human_bytes(totals['ram'])}, "
                f"VRAM {human_bytes(totals['vram'])}, disk {human_bytes(totals['disk'])}")

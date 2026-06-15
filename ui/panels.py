@@ -33,44 +33,64 @@ def _addon_version() -> str:
 _SEVERITY_ICON = {"info": "NONE", "warning": "ERROR", "error": "CANCEL"}
 
 
-def _draw_tree(layout, rows, expanded_prop, max_rows=200):
-    """Render flattened tree Rows: indent + expand toggle + label + right-aligned
-    detail + optional select button. Shared by the Report and Resource panels.
+class ASSETDOCTOR_PG_tree_row(bpy.types.PropertyGroup):
+    """One flattened, indented tree row, materialised so a ``UIList`` can draw it.
 
-    Capped at ``max_rows`` because the N-panel doesn't virtualize manually-drawn
-    rows — a huge expansion can otherwise leave rows blank. Beyond the cap we show
-    a hint to use Export for the full list."""
-    col = layout.column(align=True)
-    for r in rows[:max_rows]:
-        row = col.row(align=True)
-        if r.indent:
-            row.separator(factor=r.indent * 1.4)
-        if r.has_children:
-            icon = "TRIA_DOWN" if r.expanded else "TRIA_RIGHT"
-            op = row.operator("assetdoctor.report_toggle", text="", icon=icon, emboss=False)
-            op.key = r.key
-            op.prop = expanded_prop
+    The Report/Resource trees used to be drawn as manual rows, but the N-panel
+    doesn't virtualize those, so a large expansion left rows blank past a point.
+    A ``UIList`` virtualizes (only visible rows are realised) and scrolls, fixing
+    that for any size. ``ops.report_store`` rebuilds the collection from
+    ``core.tree.flatten_visible`` whenever the report or its expansion changes."""
+
+    indent: bpy.props.IntProperty()  # type: ignore[valid-type]
+    key: bpy.props.StringProperty()  # type: ignore[valid-type]
+    label: bpy.props.StringProperty()  # type: ignore[valid-type]
+    severity: bpy.props.StringProperty(default="info")  # type: ignore[valid-type]
+    has_children: bpy.props.BoolProperty()  # type: ignore[valid-type]
+    expanded: bpy.props.BoolProperty()  # type: ignore[valid-type]
+    detail: bpy.props.StringProperty()  # type: ignore[valid-type]
+    ref_type: bpy.props.StringProperty()  # type: ignore[valid-type]
+    ref_name: bpy.props.StringProperty()  # type: ignore[valid-type]
+    prop: bpy.props.StringProperty()  # expanded-keys WM prop this row belongs to
+
+
+class ASSETDOCTOR_UL_tree(bpy.types.UIList):
+    """Virtualized, scrollable tree for the Report and Resource panels: indent +
+    expand toggle + tooltip-bearing label + right-aligned detail. Shared by both."""
+
+    bl_idname = "ASSETDOCTOR_UL_tree"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.label)
+            return
+        row = layout.row(align=True)
+        if item.indent:
+            row.separator(factor=item.indent * 1.4)
+        if item.has_children:
+            tri = "TRIA_DOWN" if item.expanded else "TRIA_RIGHT"
+            op = row.operator("assetdoctor.report_toggle", text="", icon=tri, emboss=False)
+            op.key = item.key
+            op.prop = item.prop
         else:
             row.label(text="", icon="BLANK1")
         # Label as a tooltip-bearing button: tooltip shows the full text (full path,
         # full message + size) even when the narrow panel truncates the display.
-        full = r.label + (f"   [{r.detail}]" if r.detail else "")
-        op = row.operator("assetdoctor.row_label", text=r.label,
-                          icon=_SEVERITY_ICON.get(r.severity, "NONE"), emboss=False)
+        full = item.label + (f"   [{item.detail}]" if item.detail else "")
+        op = row.operator("assetdoctor.row_label", text=item.label,
+                          icon=_SEVERITY_ICON.get(item.severity, "NONE"), emboss=False)
         op.text = full
-        op.key = r.key
-        op.prop = expanded_prop
-        op.has_children = r.has_children
-        if r.ref:
-            op.ref_type = r.ref["type"]
-            op.ref_name = r.ref["name"]
-        if r.detail:
+        op.key = item.key
+        op.prop = item.prop
+        op.has_children = item.has_children
+        if item.ref_type:
+            op.ref_type = item.ref_type
+            op.ref_name = item.ref_name
+        if item.detail:
             sub = row.row()
             sub.alignment = "RIGHT"
-            sub.label(text=r.detail)
-    if len(rows) > max_rows:
-        col.label(text=f"+{len(rows) - max_rows} more — use Export… for the full list",
-                  icon="INFO")
+            sub.label(text=item.detail)
 
 
 class ASSETDOCTOR_PT_main(bpy.types.Panel):
@@ -222,9 +242,8 @@ class ASSETDOCTOR_PT_report(bpy.types.Panel):
 
     def draw(self, context):
         from ..core.report import Report
-        from ..core.tree import flatten_visible, report_to_tree
         from ..ops.report_store import (
-            active_feature, available_features, data_prop, exp_prop, get_expanded,
+            active_feature, available_features, data_prop,
         )
 
         layout = self.layout
@@ -246,8 +265,12 @@ class ASSETDOCTOR_PT_report(bpy.types.Panel):
             return
 
         layout.label(text=report.title, icon="PRESET")
-        rows = flatten_visible(report_to_tree(report), get_expanded(wm, exp_prop(active)))
-        _draw_tree(layout, rows, exp_prop(active))
+        layout.template_list(
+            "ASSETDOCTOR_UL_tree", "report",
+            wm, "assetdoctor_report_rows",
+            wm, "assetdoctor_report_index",
+            rows=12, sort_lock=True,
+        )
 
 
 class ASSETDOCTOR_PT_resources(bpy.types.Panel):
@@ -264,21 +287,17 @@ class ASSETDOCTOR_PT_resources(bpy.types.Panel):
         return bool(context.window_manager.assetdoctor_resource_tree)
 
     def draw(self, context):
-        from ..core.tree import flatten_visible, nodes_from_json
-        from ..ops.report_store import get_expanded
-
         layout = self.layout
         wm = context.window_manager
-        try:
-            nodes = nodes_from_json(wm.assetdoctor_resource_tree)
-        except Exception:
-            layout.label(text="(could not read resource data)", icon="ERROR")
-            return
 
         layout.label(text="RAM / VRAM estimated; disk accurate", icon="INFO")
         if wm.assetdoctor_profiled_ram:
             layout.label(text=f"Profiled real peak RAM: {wm.assetdoctor_profiled_ram}",
                          icon="RENDER_STILL")
         layout.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "resource"
-        rows = flatten_visible(nodes, get_expanded(wm, "assetdoctor_resource_expanded"))
-        _draw_tree(layout, rows, "assetdoctor_resource_expanded")
+        layout.template_list(
+            "ASSETDOCTOR_UL_tree", "resource",
+            wm, "assetdoctor_resource_rows",
+            wm, "assetdoctor_resource_index",
+            rows=12, sort_lock=True,
+        )
