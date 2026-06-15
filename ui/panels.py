@@ -90,10 +90,10 @@ class ASSETDOCTOR_PT_main(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        scene = context.scene
         wm = context.window_manager
 
         # Shared live progress (shown only while a modal op — scan, make-local… — runs).
+        # Kept on the parent panel so it stays visible above every (collapsible) section.
         if getattr(wm, "assetdoctor_op_active", False):
             col = layout.column()
             col.progress(
@@ -103,16 +103,40 @@ class ASSETDOCTOR_PT_main(bpy.types.Panel):
             )
             col.label(text="Press ESC to cancel", icon="CANCEL")
 
-        box = layout.box()
-        box.label(text="Project (folder)", icon="FILE_FOLDER")
-        box.prop(scene, "assetdoctor_scan_dir", text="")
-        op = box.operator("assetdoctor.scan_folder", text="Scan Link Map", icon="VIEWZOOM")
+
+class _FeaturePanel:
+    """Shared bl_* attributes for the collapsible feature sub-panels.
+
+    Each feature is a child panel of ASSETDOCTOR_PT_main so Blender gives it a
+    native collapse triangle and remembers its open/closed state per-file."""
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "AssetDoctor"
+    bl_parent_id = "ASSETDOCTOR_PT_main"
+
+
+class ASSETDOCTOR_PT_project(_FeaturePanel, bpy.types.Panel):
+    bl_label = "Project (folder)"
+    bl_idname = "ASSETDOCTOR_PT_project"
+    bl_order = 0
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        layout.prop(scene, "assetdoctor_scan_dir", text="")
+        op = layout.operator("assetdoctor.scan_folder", text="Scan Link Map", icon="VIEWZOOM")
         op.directory = scene.assetdoctor_scan_dir
 
-        box = layout.box()
-        box.label(text="Make Local", icon="LINKED")
-        box.operator("assetdoctor.make_local", text="Report (dry run)").apply = False
-        row = box.row(align=True)
+
+class ASSETDOCTOR_PT_make_local(_FeaturePanel, bpy.types.Panel):
+    bl_label = "Make Local"
+    bl_idname = "ASSETDOCTOR_PT_make_local"
+    bl_order = 1
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("assetdoctor.make_local", text="Report (dry run)").apply = False
+        row = layout.row(align=True)
         op = row.operator("assetdoctor.make_local", text="→ New File")
         op.apply = True
         op.mode = "NEW_FILE"
@@ -120,31 +144,62 @@ class ASSETDOCTOR_PT_main(bpy.types.Panel):
         op.apply = True
         op.mode = "IN_PLACE"
 
-        box = layout.box()
-        box.label(text="Duplicate Materials", icon="MATERIAL")
-        box.operator("assetdoctor.material_dedup", text="Find Duplicates (report)").apply = False
-        box.operator("assetdoctor.material_dedup", text="Dedup & Remap (apply)").apply = True
 
-        box = layout.box()
-        box.label(text="Orphans & Fake Users", icon="ORPHAN_DATA")
-        box.operator("assetdoctor.scan_orphans", text="Scan (report)").purge_orphans = False
-        box.operator("assetdoctor.scan_orphans", text="Scan + Purge Orphans").purge_orphans = True
+class ASSETDOCTOR_PT_materials(_FeaturePanel, bpy.types.Panel):
+    bl_label = "Duplicate Materials"
+    bl_idname = "ASSETDOCTOR_PT_materials"
+    bl_order = 2
 
-        box = layout.box()
-        box.label(text="Duplicate Geometry", icon="MESH_DATA")
-        box.operator("assetdoctor.instance_geometry", text="Find Duplicates (report)").apply = False
-        box.operator("assetdoctor.instance_geometry", text="Instance & Merge (apply)").apply = True
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("assetdoctor.material_dedup", text="Find Duplicates (report)").apply = False
+        layout.operator("assetdoctor.material_dedup", text="Dedup & Remap (apply)").apply = True
 
-        box = layout.box()
-        box.label(text="Resource Analyzer", icon="DISK_DRIVE")
-        box.operator("assetdoctor.analyze_resources", text="Analyze Memory/Disk", icon="VIEWZOOM")
-        box.operator("assetdoctor.profile_render", text="Profile Render (real RAM)", icon="RENDER_STILL")
 
-        layout.label(text="Lists/backups: Add-on Preferences", icon="PREFERENCES")
+class ASSETDOCTOR_PT_orphans(_FeaturePanel, bpy.types.Panel):
+    bl_label = "Orphans & Fake Users"
+    bl_idname = "ASSETDOCTOR_PT_orphans"
+    bl_order = 3
 
-        box = layout.box()
-        box.label(text="Utilities", icon="TOOL_SETTINGS")
-        box.prop(scene, "assetdoctor_debug_log")
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("assetdoctor.scan_orphans", text="Scan (report)").purge_orphans = False
+        layout.operator("assetdoctor.scan_orphans", text="Scan + Purge Orphans").purge_orphans = True
+
+
+class ASSETDOCTOR_PT_geometry(_FeaturePanel, bpy.types.Panel):
+    bl_label = "Duplicate Geometry"
+    bl_idname = "ASSETDOCTOR_PT_geometry"
+    bl_order = 4
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("assetdoctor.instance_geometry", text="Find Duplicates (report)").apply = False
+        layout.operator("assetdoctor.instance_geometry", text="Instance & Merge (apply)").apply = True
+
+
+class ASSETDOCTOR_PT_resource_tools(_FeaturePanel, bpy.types.Panel):
+    bl_label = "Resource Analyzer"
+    bl_idname = "ASSETDOCTOR_PT_resource_tools"
+    bl_order = 5
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("assetdoctor.analyze_resources", text="Analyze Memory/Disk", icon="VIEWZOOM")
+        layout.operator("assetdoctor.profile_render", text="Profile Render (real RAM)", icon="RENDER_STILL")
+
+
+class ASSETDOCTOR_PT_utilities(_FeaturePanel, bpy.types.Panel):
+    bl_label = "Utilities"
+    bl_idname = "ASSETDOCTOR_PT_utilities"
+    bl_order = 6
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(context.scene, "assetdoctor_debug_log")
+        layout.operator("assetdoctor.open_preferences",
+                        text="Lists & Backups: Add-on Preferences…", icon="PREFERENCES")
 
 
 class ASSETDOCTOR_PT_report(bpy.types.Panel):

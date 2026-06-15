@@ -60,6 +60,22 @@ def main():
                        all(isinstance(d, str) and d for d in (d1, d2, d3, d4, d5))
                        and d1 != d2))
 
+        # Open-preferences operator registered + reachable.
+        checks.append(("open_preferences op registered",
+                       hasattr(bpy.types, "ASSETDOCTOR_OT_open_preferences")
+                       and hasattr(bpy.ops.assetdoctor, "open_preferences")))
+
+        # Collapsible feature sub-panels registered + parented to the main panel.
+        sub_ids = ["ASSETDOCTOR_PT_project", "ASSETDOCTOR_PT_make_local",
+                   "ASSETDOCTOR_PT_materials", "ASSETDOCTOR_PT_orphans",
+                   "ASSETDOCTOR_PT_geometry", "ASSETDOCTOR_PT_resource_tools",
+                   "ASSETDOCTOR_PT_utilities"]
+        panels_ok = all(
+            getattr(getattr(bpy.types, pid, None), "bl_parent_id", None) == "ASSETDOCTOR_PT_main"
+            for pid in sub_ids
+        )
+        checks.append((f"{len(sub_ids)} collapsible sub-panels parented to main", panels_ok))
+
         ok = all(p for _, p in checks)
         for label, p in checks:
             print(f"  [{'OK' if p else 'FAIL'}] {label}")

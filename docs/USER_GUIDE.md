@@ -66,7 +66,8 @@ Open the 3D viewport sidebar (**press `N`**) and pick the **AssetDoctor** tab.
 
 ![The AssetDoctor N-panel](images/panel-overview.png)
 
-The header shows the **version** and a **? documentation icon** (opens this repo). Sections:
+The header shows the **version** and a **? documentation icon** (opens this repo). Each section
+is **collapsible** — click its header to expand/collapse it; Blender remembers the state.
 
 | Section | Buttons |
 |---|---|
@@ -76,7 +77,7 @@ The header shows the **version** and a **? documentation icon** (opens this repo
 | **Orphans & Fake Users** | **Scan (report)**, **Scan + Purge Orphans** (F4) |
 | **Duplicate Geometry** | **Find Duplicates (report)**, **Instance & Merge (apply)** |
 | **Resource Analyzer** | **Analyze Memory/Disk**, **Profile Render (real RAM)** (F5) |
-| **Utilities** | **Enable Debug Log** |
+| **Utilities** | **Enable Debug Log**, **Lists & Backups: Add-on Preferences…** (opens Preferences) |
 
 Every button has a tooltip describing exactly what it does (and, for the apply variants, that
 it backs up first).

@@ -82,6 +82,11 @@ items below.
     `RotatingFileHandler` rather than plain append.)
 
 ## Done
+- [x] **Collapsible panel sections** — each feature is a native child panel of the main panel
+  (own collapse triangle + Blender-persisted open/closed state); Utilities defaults closed.
+- [x] **Clickable Add-on Preferences** — the static "Lists/backups" hint became an
+  `assetdoctor.open_preferences` button inside Utilities that opens Preferences with the add-on
+  expanded (`preferences.addon_show`, with a userpref-show fallback).
 - [x] **(5) Split Project section** into a folder path field (`Scene.assetdoctor_scan_dir`)
   + a separate **Scan Link Map** button. Picking a folder no longer auto-runs.
 - [x] **(1) Tooltips** — every operator has a `bl_description`; the multi-variant buttons

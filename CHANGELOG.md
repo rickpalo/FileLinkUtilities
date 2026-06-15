@@ -131,6 +131,13 @@ flagged as major.
   the pure per-ID path. Verified by `smoke_f2` (New File + In Place still fully local).
 
 ### Added
+- **Collapsible panel sections.** Each feature (Project, Make Local, Duplicate Materials, Orphans,
+  Duplicate Geometry, Resource Analyzer, Utilities) is now a native child panel of the main
+  AssetDoctor panel, so each has its own collapse triangle and Blender remembers its open/closed
+  state. Utilities defaults closed.
+- **Clickable "Add-on Preferences" in Utilities.** The old static "Lists/backups: Add-on
+  Preferences" hint is now a button (`assetdoctor.open_preferences`) inside the Utilities section
+  that opens Preferences with AssetDoctor expanded (`preferences.addon_show`, with a fallback).
 - **Make Local progress bar + cancel.** Apply now runs as a **modal** operator with a live
   progress bar and status text in the panel (and the OS task-bar), and **ESC to cancel** —
   mirroring the F1 folder scan. New File reverts cleanly on cancel; In Place reports it's
