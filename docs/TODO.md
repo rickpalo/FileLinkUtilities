@@ -63,6 +63,13 @@ that both the manual op and the automated op call.
   loop stops before removing the last library (likely the no-progress safety break or a remaining
   user/override). Needs investigation: why does one library survive, and should In Place guarantee
   zero libraries or report what it couldn't localize.
+  - **Strong lead (2026-06-15):** re-running on the same file **after making everything visible**
+    fully localized (0 libraries). `bpy.ops.object.make_local(type='ALL')` works on the **view
+    layer**, so objects in **hidden/excluded collections** are likely skipped, leaving their data +
+    library linked. Fix: before the bulk pass, temporarily un-exclude/reveal all collections (or
+    don't rely on the operator for completeness — the per-ID passes already iterate `bpy.data`
+    directly, so make sure they aren't stopped early by the no-progress break on this case).
+    Restore the original visibility/exclusion afterward so we don't perturb the user's scene.
 - [ ] **Guard against running mutate-in-place on a shared LIBRARY file.** human_bundle.blend is a
   library other scenes link thousands of datablocks from; make-local+purge renamed/removed its
   datablocks, which can break links from dependent files. Consider detecting "this file is likely a
