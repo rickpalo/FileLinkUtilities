@@ -116,11 +116,17 @@ render-farm submission, or handoff).
 - **Report (dry run)** — lists everything linked, grouped by source library, flagging
   *indirect* (transitively-linked) data. No changes.
 - **→ New File** *(recommended)* — writes a fully-local copy `<name>_local.blend` beside your
-  file and **leaves your working file's links untouched**. Requires the file be saved first.
-- **→ In Place** — flattens the **current** file to local. Takes an auto-backup first; supports Undo.
+  file and **leaves your working file's links untouched** (the session is reverted afterward).
+  Requires the file be saved first.
+- **→ In Place** — flattens the **current** file to local. Takes an auto-backup first; restore
+  from that backup if you need to undo.
+
+Apply shows a **progress bar + status** while it works and can be cancelled with **ESC**
+(New File reverts cleanly; In Place leaves the file partially localized and points at the backup).
 
 Both modes resolve **library overrides**, repeat until nothing is linked, then purge the
-emptied libraries.
+emptied libraries. On large/complex projects the heavy work is done in one batched pass, so it
+finishes in seconds/minutes rather than grinding per-datablock.
 
 ### F3 — Duplicate Materials
 

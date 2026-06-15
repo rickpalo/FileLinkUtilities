@@ -73,12 +73,13 @@ def register() -> None:
     _load_post_handler = persistent(_debug_log_on_load)
     bpy.app.handlers.load_post.append(_load_post_handler)
 
-    # Live progress for the modal folder scan (shown in the panel).
-    bpy.types.WindowManager.assetdoctor_scan_active = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_scan_progress = bpy.props.FloatProperty(
+    # Live progress for any modal operation (folder scan, make-local, …) shown as
+    # one shared progress bar at the top of the panel. See ops.progress.
+    bpy.types.WindowManager.assetdoctor_op_active = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.assetdoctor_op_progress = bpy.props.FloatProperty(
         default=0.0, min=0.0, max=1.0
     )
-    bpy.types.WindowManager.assetdoctor_scan_status = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.assetdoctor_op_status = bpy.props.StringProperty(default="")
 
     # Persistent per-feature reports: data JSON + expanded keys per feature, plus
     # the currently-shown feature key. See ops/report_store.FEATURES.
@@ -111,7 +112,7 @@ def unregister() -> None:
             delattr(bpy.types.Scene, attr)
     from .ops.report_store import FEATURES
 
-    wm_attrs = ["assetdoctor_scan_active", "assetdoctor_scan_progress", "assetdoctor_scan_status",
+    wm_attrs = ["assetdoctor_op_active", "assetdoctor_op_progress", "assetdoctor_op_status",
                 "assetdoctor_active_report", "assetdoctor_resource_tree",
                 "assetdoctor_resource_expanded", "assetdoctor_profiled_ram"]
     for key, _label in FEATURES:

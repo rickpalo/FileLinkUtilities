@@ -1,20 +1,22 @@
 # AssetDoctor — TODO / backlog
 
 ## Progress & responsiveness — ALL actions
-- [ ] **Progress bar + status text for every action** (F2/F3/F4/geometry/resource/Profile Render),
-  like the F1 modal scan. In-session ops run synchronously and freeze the UI; on complex files
-  this looks hung. Proper fix: run them as **modal operators** that process work in chunks per
-  timer tick, update a progress bar + status, and allow **Esc** to cancel.
-- [ ] **F2 (Make Local) performance on complex files.** Reported: a complex file (circular links
-  + library overrides + botaniq/engon assets) ran **~4 hours** and stopped logging. Root cause:
-  per-id `make_local(clear_liboverride=True)` over thousands of override/indirect datablocks ×
-  multiple passes is pathologically slow, and there was **no logging inside the loop** (so it
-  looked dead). **Mitigated (v0.1.7):** per-pass + per-100 heartbeat logging, `log.debug` of each
-  datablock name (so the debug log's last line pinpoints a hanging call), a **no-progress safety
-  break**, and bounded purge loops; also fixed a latent bug where the library-purge user-check was
-  reversed (could force-remove still-used libraries). **Still TODO:** make it actually fast +
-  modal — evaluate `bpy.ops.object.make_local(type='ALL')` for the bulk, smarter override
-  handling, and chunked progress with cancel.
+- [ ] **Progress bar + status text for every action** — DONE for **F1** (scan) and **F2** (Make
+  Local). Still TODO: **F3/F4/geometry/resource/Profile Render**. The plumbing now exists: shared
+  `assetdoctor_op_*` WM props + `ops/progress.py` (`set_progress`/`clear_progress`) draw one bar
+  at the top of the panel; copy the F2 modal pattern (a `*_steps` generator drained by `execute`
+  and stepped one chunk per timer tick by `modal`, ESC to cancel).
+- [x] **F2 (Make Local) performance on complex files.** Was: per-id
+  `make_local(clear_liboverride=True)` over thousands of override/indirect datablocks × multiple
+  passes ran **~hours** and stopped logging. **Fixed (v0.1.7):** one bulk
+  `bpy.ops.object.make_local(type='ALL')` (internally batched) does most of the work, then bounded
+  per-ID passes only mop up what it can't reach (linked collections, node groups, un-resolved
+  overrides). Bulk pass is `poll()`-guarded and falls back to per-ID on RuntimeError. Plus the
+  earlier observability/safety work: per-pass + per-100 heartbeat logging, `log.debug` of each
+  datablock (debug log's last line = the hanging call), no-progress safety break, bounded purge,
+  and the reversed library-purge user-check fixed. Now **modal** with a progress bar + ESC.
+  Verified by `smoke_f2` (both modes still end fully local). **Remaining:** confirm on the real
+  botaniq/engon file (user to re-run with the new build).
 
 ## New requirement — smart missing-file relinker (F6)
 - [ ] **Follow the dependency chain and find/replace missing files.** Beyond F1's *detection* of

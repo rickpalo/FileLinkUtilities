@@ -36,10 +36,10 @@ def main():
         wm = bpy.context.window_manager
         checks.append(("scan_dir prop registered", hasattr(sc, "assetdoctor_scan_dir")))
         checks.append(("debug_log prop registered", hasattr(sc, "assetdoctor_debug_log")))
-        checks.append(("scan progress props registered",
-                       hasattr(wm, "assetdoctor_scan_active")
-                       and hasattr(wm, "assetdoctor_scan_progress")
-                       and hasattr(wm, "assetdoctor_scan_status")))
+        checks.append(("op progress props registered",
+                       hasattr(wm, "assetdoctor_op_active")
+                       and hasattr(wm, "assetdoctor_op_progress")
+                       and hasattr(wm, "assetdoctor_op_status")))
 
         # Toggle debug on (unsaved file -> temp dir) and confirm the file appears.
         sc.assetdoctor_debug_log = True

@@ -121,7 +121,24 @@ flagged as major.
   Also fixed a latent **library-purge** bug (the user check was reversed and could force-remove
   still-used libraries).
 
+### Changed
+- **Make Local performance.** The apply path now does one **bulk**
+  `bpy.ops.object.make_local(type='ALL')` call (internally batched) before the per-ID passes,
+  instead of localizing thousands of datablocks one at a time. The per-ID passes only mop up
+  what the bulk op can't reach (linked collections, node groups, un-resolved overrides), so the
+  pathological ~hours run on complex files (botaniq/engon, circular links + overrides) collapses
+  to seconds/minutes. Bulk pass is guarded by `poll()` + RuntimeError and degrades gracefully to
+  the pure per-ID path. Verified by `smoke_f2` (New File + In Place still fully local).
+
 ### Added
+- **Make Local progress bar + cancel.** Apply now runs as a **modal** operator with a live
+  progress bar and status text in the panel (and the OS task-bar), and **ESC to cancel** —
+  mirroring the F1 folder scan. New File reverts cleanly on cancel; In Place reports it's
+  partially localized and points at the backup. Core work is a `localize_steps` generator that
+  `execute` (scripting/tests) drains synchronously and the modal steps one chunk per timer tick.
+- **Shared progress widget.** The folder-scan's progress props were generalized to one
+  `assetdoctor_op_*` WindowManager trio + `ops/progress.py` helpers, drawn once at the top of
+  the panel, so every modal action reuses a single progress bar.
 - **Debug log starts fresh** on each enable and on each **file open** (`load_post` handler;
   the Scene-prop update didn't fire on load before). File is `AssetDoctorDebugLog.txt`.
 

@@ -93,13 +93,13 @@ class ASSETDOCTOR_PT_main(bpy.types.Panel):
         scene = context.scene
         wm = context.window_manager
 
-        # Live scan progress (shown only while the modal folder scan runs).
-        if getattr(wm, "assetdoctor_scan_active", False):
+        # Shared live progress (shown only while a modal op — scan, make-local… — runs).
+        if getattr(wm, "assetdoctor_op_active", False):
             col = layout.column()
             col.progress(
-                factor=wm.assetdoctor_scan_progress,
+                factor=wm.assetdoctor_op_progress,
                 type="BAR",
-                text=wm.assetdoctor_scan_status or "Scanning…",
+                text=wm.assetdoctor_op_status or "Working…",
             )
             col.label(text="Press ESC to cancel", icon="CANCEL")
 

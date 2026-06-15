@@ -72,9 +72,11 @@ Build/validate the extension with:
   characteristics. (This is about *how many copies of the same thing exist*, not about
   proving they share an append origin — origin metadata does not survive an append.)
   Export JSON / CSV / Graphviz DOT.
-- **F2** — dry-run lists linked IDs + library overrides; on Apply resolve overrides, then
-  `ID.make_local()` in dependency order, iterating until none remain; offer purge.
-  Watch: multi-user linked data, partial overrides, packed vs external images.
+- **F2** — dry-run lists linked IDs + library overrides; on Apply one bulk
+  `bpy.ops.object.make_local(type='ALL')` does most of the work, then per-ID
+  `ID.make_local(clear_liboverride=True)` passes mop up the rest (collections / node groups /
+  overrides), iterating until none remain; offer purge. Runs **modal** (progress + ESC) via the
+  `localize_steps` generator. Watch: multi-user linked data, partial overrides, packed vs external.
 - **F3** — fingerprint every material (local + linked), cluster by fingerprint + image
   base-name (the 1K/2K rule), pick a canonical per white/black list, `user_remap` victims,
   purge. Linked materials can be remapped *away from* but not deleted from their library —

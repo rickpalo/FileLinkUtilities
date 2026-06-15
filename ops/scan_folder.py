@@ -47,16 +47,6 @@ def _emit(operator, context, scan, root):
     )
 
 
-def _set_progress(context, active, fraction=0.0, status=""):
-    wm = context.window_manager
-    wm.assetdoctor_scan_active = active
-    wm.assetdoctor_scan_progress = fraction
-    wm.assetdoctor_scan_status = status
-    # Nudge the sidebar to repaint so the bar updates live.
-    if context.area is not None:
-        context.area.tag_redraw()
-
-
 class ASSETDOCTOR_OT_scan_folder(bpy.types.Operator):
     bl_idname = "assetdoctor.scan_folder"
     bl_label = "Scan Folder (Link Map)"
@@ -111,9 +101,11 @@ class ASSETDOCTOR_OT_scan_folder(bpy.types.Operator):
         self._result = new_scan_result()
         self._root = root
 
+        from .progress import set_progress
+
         wm = context.window_manager
         wm.progress_begin(0, len(self._files))
-        _set_progress(context, True, 0.0, f"0 / {len(self._files)} files")
+        set_progress(context, 0.0, f"0 / {len(self._files)} files")
         context.workspace.status_text_set("AssetDoctor: scanning… (ESC to cancel)")
         self._timer = wm.event_timer_add(0.01, window=context.window)
         wm.modal_handler_add(self)
@@ -134,8 +126,10 @@ class ASSETDOCTOR_OT_scan_folder(bpy.types.Operator):
             scan_into(self._result, self._files[self._index])
             self._index += 1
 
+        from .progress import set_progress
+
         context.window_manager.progress_update(self._index)
-        _set_progress(context, True, self._index / total, f"{self._index} / {total} files")
+        set_progress(context, self._index / total, f"{self._index} / {total} files")
 
         if self._index >= total:
             return self._finish(context, cancelled=False)
@@ -146,8 +140,10 @@ class ASSETDOCTOR_OT_scan_folder(bpy.types.Operator):
         if self._timer is not None:
             wm.event_timer_remove(self._timer)
             self._timer = None
+        from .progress import clear_progress
+
         wm.progress_end()
-        _set_progress(context, False, 0.0, "")
+        clear_progress(context)
         context.workspace.status_text_set(None)
 
         if cancelled:
