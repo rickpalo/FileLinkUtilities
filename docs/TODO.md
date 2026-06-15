@@ -72,8 +72,15 @@ that both the manual op and the automated op call.
     Restore the original visibility/exclusion afterward so we don't perturb the user's scene.
 - [ ] **Guard against running mutate-in-place on a shared LIBRARY file.** human_bundle.blend is a
   library other scenes link thousands of datablocks from; make-local+purge renamed/removed its
-  datablocks, which can break links from dependent files. Consider detecting "this file is likely a
-  linked library / asset source" and warning before In-Place mutation (or steering to New File).
+  datablocks, which can break links from dependent files (and downstream library overrides — e.g.
+  posed characters reverting to rest pose). Consider detecting "this file is likely a linked library
+  / asset source" and warning before In-Place mutation (or steering to New File).
+  - **Warning-gating (user, 2026-06-15):** the warning should fire **unless** the user has **scanned
+    the project folder (F1 link map) to identify all links and is working top-down** (cleaning the
+    leaf/source files in dependency order). If they've mapped the project and are working top-down,
+    suppress it — they know the impact. So the guard is tied to the link-map workflow: a recent F1
+    scan of the containing project + a notion of "this file's place in the dependency order". Flesh
+    out the design when this item reaches the queue (pairs with Link Map v2).
 
 ## Link Map v2 — single-file scan + visual report (requested 2026-06-15)
 - [ ] **Scan mode: whole folder OR a single file.** Today F1 (`scan_folder`) only takes a

@@ -3,7 +3,7 @@
 All notable changes to AssetDoctor. Versioning is patch-only (0.1.x) until a change is
 flagged as major.
 
-## [0.1.9] — unreleased
+## [0.1.9] — Duplicate Materials report (local/linked)
 
 ### Changed
 - **Duplicate Materials report restructured.** The top row now shows the headline
