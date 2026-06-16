@@ -21,19 +21,19 @@ def test_report_json_roundtrip():
 
 def test_report_to_tree_structure():
     tree = report_to_tree(_report())
-    # one node per category, in first-seen order
-    assert [n.label for n in tree] == ["Orphans", "Identical datablocks", "Summary"]
+    # Summary hoisted to the top, then categories in first-seen order.
+    assert [n.label for n in tree] == ["Summary", "Orphans", "Identical datablocks"]
     # category severity rolls up from its findings
-    assert tree[0].severity == "warning"
-    assert tree[2].severity == "info"
+    assert tree[0].severity == "info"  # summary
+    assert tree[1].severity == "warning"  # orphans
     # finding -> item leaves
-    orphan_finding = tree[0].children[0]
+    orphan_finding = tree[1].children[0]
     assert [c.label for c in orphan_finding.children] == ["Material/Wood", "Mesh/Cube"]
 
 
 def test_item_ref_parsing():
     tree = report_to_tree(_report())
-    leaf = tree[0].children[0].children[0]  # Material/Wood
+    leaf = tree[1].children[0].children[0]  # Material/Wood (tree[0] is Summary)
     assert leaf.ref == {"type": "Material", "name": "Wood"}
 
 
@@ -56,13 +56,13 @@ def test_flatten_collapsed_shows_only_roots():
 
 def test_flatten_expand_category_then_finding():
     tree = report_to_tree(_report())
-    cat_key = tree[0].key
+    cat_key = tree[1].key  # Orphans (tree[0] is Summary)
     rows = flatten_visible(tree, expanded={cat_key})
     labels = [r.label for r in rows]
     assert "2 orphaned datablocks" in labels  # finding now visible
     assert "Material/Wood" not in labels  # but items still hidden
 
-    finding_key = tree[0].children[0].key
+    finding_key = tree[1].children[0].key
     rows2 = flatten_visible(tree, expanded={cat_key, finding_key})
     labels2 = [(r.indent, r.label) for r in rows2]
     assert (2, "Material/Wood") in labels2  # items at indent 2
@@ -79,8 +79,8 @@ def test_category_detail_is_finding_count():
     r.add(Finding("orphan", "b"))
     r.add(Finding("summary", "done", severity="info"))
     tree = report_to_tree(r)
-    assert tree[0].detail == "2"  # two orphan findings
-    assert tree[1].detail == "1"  # one summary finding
+    assert tree[0].detail == "1"  # summary finding, hoisted to the top
+    assert tree[1].detail == "2"  # two orphan findings
 
 
 def test_category_detail_override_and_finding_detail():

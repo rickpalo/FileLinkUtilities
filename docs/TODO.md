@@ -13,7 +13,103 @@
   which Properties tab. Some of that "Scene Debug" functionality (list users for a datablock, empty
   material slots, materials-by-shader) overlaps AssetDoctor's diagnostics — fold into the roadmap.
 
-## Automated Cleanup (NEXT major feature — requested 2026-06-15)
+## Design session outcome (2026-06-16) — three pillars + F7 is the new lead
+
+Driven by a real problem: `PSM_Stage_v5.1.blend` + `v2.0_PSM_Final_SoundStage.blend` in
+`…\2018\November - Canaletto` use too much memory and crash on load with thousands of
+`lib.override.resync | WARNING Levels of indirect usages of libraries is suspiciously too high,
+there are most likely dependency loops` (KEKey.553 in People1_v5.1 ↔ MECC_Base_Body.008 in
+human_bundle).
+
+**Offline recursive scan (BAT, via `tools/scan_recursive.py`) of the SoundStage file found:**
+- 227 MB file with a **60 GB+ dependency closure** — the "low-poly stage" link transitively drags
+  in the full `ThePiazzaSanMarco.blend` (19 GB) + `People1_v5.1` (15 GB).
+- **Same library referenced via different paths** → duplicate library blocks → the indirect-usage
+  explosion. human_bundle linked both `//..\..\..\libraries\human_bundle.blend` and absolute
+  `E:\…\libraries\human_bundle.blend`; **People1_v5.1 references materialMaster two ways in one
+  file** (`//materialMaster.blend` ✅ and `//..\..\..\materialMaster.blend` ❌ MISSING); botaniq libs
+  via **three** roots (dead `D:\BlenderLibraries\…`, two Geo-Scatter paths).
+- **6 file-level circular library links** (already caught by `core/graph.find_cycles()`):
+  PSM_Stage⇄ThePiazzaSanMarco, asset_bundle⇄LS, Structure⇄People, Structure⇄People1,
+  ThePiazzaSanMarco⇄PSM_Awnings, asset_bundle→LS→ladyShallott_human→asset_bundle.
+- Link-count census: materialMaster 11×, human_bundle 9×, bq_Library_Materials 9×, asset_bundle 7×;
+  + a missing materialMaster and ~18 missing botaniq plant libs; mixed slashes nearly everywhere.
+
+**Project structure (user):** stage = buildings; ~50 background people/animals (being merged into
+stage); main characters in a library; a low-poly stage is linked into the SoundStage file, main
+characters appended + animated there; background chars from a library; a material library was linked
+to both char files then onward — i.e. a **multi-hop indirect-link chain**
+(`materialMaster → char/people files → PSM_Stage → SoundStage`) that inflates indirect-usage levels.
+
+**Three pillars (reprioritized):**
+1. **Link & Dependency Doctor (F7) — THE LEAD** (the actual crash/loop/bloat fire). Below.
+2. **Footprint reduction** (memsaver-like) — **ANALYZE-ONLY for now** (user, 2026-06-16): identify
+   oversized-texture downscale candidates + high-poly mesh-decimate candidates (background-first).
+   No lossy mutation yet; user may later have us review memsaver's code to decide build-vs-handoff.
+   Keep clearly separated from lossless cleanups (it changes the render).
+3. **Before/after diff** — cross-cutting; the "see the difference" requirement (Phase 5 below).
+
+**Cross-cutting requirements (apply to all of F7 and retrofit to F2/F3):**
+- **Tailorable make-local & dedup**: selectable by **type** (all materials), by **scope** (one
+  collection), and by **individual item** — not all-or-nothing.
+- **Inspector UI** modeled on the "Scene Debug"-style panels the user likes (image 2 = gold
+  standard): count badges (`[2]`), `[L]` linked markers, `[Not in Scene]` flags, per-row checkboxes,
+  type-dropdown + datablock-picker; group + group/individual selection, varying by function.
+  Build the selection model **once** and reuse (pairs with the check-registry idea).
+- **UI/UX performance is a hard constraint** — Blender's built-in path editor is too heavy and
+  crashes these files. Virtualized `UIList` (v0.1.10) is the right direction; keep it light.
+- **Progress + status + PAUSE for BOTH offline and live diagnosis** (user, 2026-06-16). Not just a
+  progress bar + ESC-cancel — the modal must support **pause/resume** (recursive scans over multi-GB
+  files take minutes). Design: `core/depscan` exposes a **step-generator** so the modal drives it,
+  shows per-file status, and can hold between steps. Extend `ops/progress.ModalProgressMixin` with a
+  PAUSE state (a WM `assetdoctor_op_paused` bool + a Pause/Resume button beside the ESC hint; while
+  paused the timer tick yields without advancing the generator).
+- **Project *folder* scan is dropped** — the need is **single-file + recursive link-following**
+  (default = current file). Supersedes the old Link Map v2 folder mode.
+- **UI placement DECIDED (user, 2026-06-16): the MAJORITY lives in the Properties editor > Scene
+  tab**, not the N-panel — this is scene-data hygiene, not a 3D/render/texture activity. Some
+  aspects may stay in the N-panel (TBD as we build). Tech: Scene-tab panels set
+  `bl_space_type="PROPERTIES"`, `bl_region_type="WINDOW"`, `bl_context="scene"` (no `bl_category`);
+  sub-panels nest via `bl_parent_id`. **Implications to handle:** the shared modal progress bar (now
+  drawn on the N-panel parent `ASSETDOCTOR_PT_main`) and the Report/Resource `UIList`s must render in
+  the Scene-properties parent too — likely a new `ASSETDOCTOR_PT_scene_root` (Properties/WINDOW/scene)
+  hosting the progress bar + F7 inspectors + reports, with the N-panel kept only for whatever we
+  explicitly decide belongs there. Revisit the v0.1.x panel registration accordingly.
+
+### F7 — Link & Dependency Doctor — phased plan
+Two analysis engines: **offline file-graph** (BAT — works on any file unopened; prototyped in
+`tools/scan_recursive.py`, reuses `core/blendscan` + `core/graph`) and **live datablock graph**
+(bpy `user_map()` on the current file, for per-datablock users/overrides/retargeting).
+
+- [ ] **Phase 1 — Diagnose: recursive dependency scan (offline, read-only).** Productionize the
+  prototype into `core/depscan.py`: recursive single-file walk; per-link classification (missing,
+  absolute, mixed-slash, outside-root, **drive-root mismatch**, **duplicate ref to same resolved
+  lib**, **same lib via different paths** across files); file-level cycles (have it); library
+  link-count census. UI: single-file picker (default = current file) + "Scan Dependencies" → the
+  inspector tree grouped by issue/file with badges + severity + `[L]`/missing flags. Unit-test
+  classification + cycles on fixtures. **Shippable alone; helps the two files immediately, no render
+  risk.**
+- [ ] **Phase 2 — Diagnose: live datablock link map (current file).** Walk `bpy.data` via
+  `user_map()`: per-datablock library source + users (which meshes/objects) + override status.
+  **Override dependency-loop detection** (datablock-level cycle search — the KEKey↔MECC case).
+  **Duplicate-datablock census** (the `.NNN` families). UI: "List Users for Datablock" inspector
+  (type dropdown + datablock picker + users list), per the screenshot.
+- [ ] **Phase 3 — Treat: path normalization & remap (lossless, batch, tailorable).** Make-relative,
+  fix mixed slashes, **drive-root prefix remap** (D:\→E:\ rules), **dedupe duplicate library blocks**
+  (merge two LIs → same resolved file). Report-first + backup; in-session `library.filepath` +
+  reload, or offline BAT rewrite. Select which libs/rules apply. Pairs with the F6 relinker item.
+- [ ] **Phase 4 — Treat: datablock link retargeting (HEADLINE — user's explicit ask).** Per
+  datablock/selection: **make local** OR **repoint to a more direct library** (collapse multi-hop
+  chains, e.g. material → link directly from materialMaster). Granular make-local by
+  type/collection/item (the tailorable requirement; retrofit F2). Break override loops by localizing
+  the offending override. Report-first + backup + before/after.
+- [ ] **Phase 5 — Before/after diff (cross-cutting).** Snapshot library count, per-type datablock
+  counts, duplicate-family counts, est. RAM, resync-warning count → apply → re-snapshot → diff
+  report. Generalizes the Automated Cleanup savings summary.
+
+(Prototype + raw scan output live in `tools/scan_recursive.py` / `tools/_scan_soundstage.txt`.)
+
+## Automated Cleanup (was NEXT major feature — requested 2026-06-15; now behind F7)
 
 Goal: a one-click pipeline that runs the chosen cleanups together, with a combined report and a
 before/after/savings summary. Gated on the individual modal sections being verified in the UI.

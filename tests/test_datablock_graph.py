@@ -1,0 +1,74 @@
+"""Unit tests for F7 Phase 2 core: core.datablock_graph."""
+
+from core import datablock_graph as dg
+from core.datablock_graph import LiveExtract
+
+
+def test_strip_dup_suffix():
+    assert dg.strip_dup_suffix("MECC_Base_Body.008") == "MECC_Base_Body"
+    assert dg.strip_dup_suffix("KEKey.553") == "KEKey"
+    assert dg.strip_dup_suffix("Body") == "Body"
+    assert dg.strip_dup_suffix("Mat.2") == "Mat.2"  # single digit: not a dup suffix
+
+
+def test_duplicate_families():
+    names = ["Body", "Body.001", "Body.002", "Hair", "Stone.010"]
+    fams = dg.duplicate_families(names)
+    assert fams == {"Body": ["Body", "Body.001", "Body.002"]}  # Hair unique, Stone.010 alone
+
+
+def test_duplicate_families_copies_without_base():
+    # The original may be gone; the numbered copies still form a family.
+    fams = dg.duplicate_families(["KEKey.551", "KEKey.552", "KEKey.553"])
+    assert fams == {"KEKey": ["KEKey.551", "KEKey.552", "KEKey.553"]}
+
+
+def test_find_datablock_loops():
+    edges = [("Object/Body", "Mesh/Body"), ("Mesh/Body", "Key/KEKey"),
+             ("Key/KEKey", "Object/Body")]  # cycle
+    loops = dg.find_datablock_loops(edges)
+    assert any({"Object/Body", "Mesh/Body", "Key/KEKey"} <= set(c) for c in loops)
+
+
+def test_find_datablock_loops_acyclic():
+    edges = [("a", "b"), ("b", "c")]
+    assert dg.find_datablock_loops(edges) == []
+
+
+def test_find_datablock_loops_ignores_self_edges():
+    # an id that is its own user (modifier/driver/constraint) is not a real loop
+    assert dg.find_datablock_loops([("Object/Rig", "Object/Rig")]) == []
+    # but a genuine 2-datablock loop is still reported
+    assert dg.find_datablock_loops([("a", "b"), ("b", "a")])
+
+
+def test_wasted_copies():
+    dups = {"Material": {"Body": ["Body", "Body.001", "Body.002"]},
+            "Mesh": {"Rock": ["Rock", "Rock.001"]}}
+    assert dg.wasted_copies(dups) == 3  # (3-1) + (2-1)
+
+
+def test_build_live_report():
+    extract = LiveExtract(
+        totals={"Material": 10},
+        duplicates={"Material": {"Body": ["Body", "Body.001", "Body.002"]}},
+        library_counts=[("human_bundle.blend", 42)],
+        override_count=5,
+        loops=[["Object/Body", "Mesh/Body", "Object/Body"]],
+    )
+    report = dg.build_live_report(extract, "test.blend")
+    assert report.feature == "f7live"
+    cats = {f.category for f in report.findings}
+    assert {"override_loop", "duplicate_family", "library_block",
+            "override_summary", "summary"} <= cats
+    dup = [f for f in report.findings if f.category == "duplicate_family"][0]
+    assert dup.detail == "3"
+    assert dup.items == ["Body", "Body.001", "Body.002"]
+
+
+def test_build_live_report_loops_skipped():
+    extract = LiveExtract(loops_skipped="graph too large (250000 nodes)")
+    report = dg.build_live_report(extract)
+    warn = [f for f in report.findings
+            if f.category == "override_loop" and f.severity == "warning"]
+    assert warn and "skipped" in warn[0].message.lower()

@@ -80,6 +80,10 @@ def register() -> None:
         default=0.0, min=0.0, max=1.0
     )
     bpy.types.WindowManager.assetdoctor_op_status = bpy.props.StringProperty(default="")
+    # Pause flag for the running modal op (held between steps; ESC still cancels).
+    bpy.types.WindowManager.assetdoctor_op_paused = bpy.props.BoolProperty(default=False)
+    # Cancel flag, set by the panel's Cancel button; the modal stops at the next step.
+    bpy.types.WindowManager.assetdoctor_op_cancel = bpy.props.BoolProperty(default=False)
 
     # Persistent per-feature reports: data JSON + expanded keys per feature, plus
     # the currently-shown feature key. See ops/report_store.FEATURES.
@@ -126,6 +130,7 @@ def unregister() -> None:
     from .ops.report_store import FEATURES
 
     wm_attrs = ["assetdoctor_op_active", "assetdoctor_op_progress", "assetdoctor_op_status",
+                "assetdoctor_op_paused", "assetdoctor_op_cancel",
                 "assetdoctor_active_report", "assetdoctor_resource_tree",
                 "assetdoctor_resource_expanded", "assetdoctor_profiled_ram",
                 "assetdoctor_report_rows", "assetdoctor_report_index",

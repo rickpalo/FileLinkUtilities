@@ -14,7 +14,9 @@ from ..core.tree import (
     all_keys,
     flatten_visible,
     nodes_from_json,
+    nodes_to_json,
     report_to_tree,
+    top_level_keys,
 )
 
 # (key, label) for each feature that produces a report. F5 resource is separate.
@@ -24,7 +26,15 @@ FEATURES = [
     ("f3", "Materials"),
     ("f4", "Orphans"),
     ("geo", "Geometry"),
+    ("f7", "Dependencies"),
+    ("f7live", "Overrides & Dups"),
+    ("f7fix", "Path Fixes"),
 ]
+
+
+# Features whose stored JSON is a TreeNode list (not a flat Report). The F7
+# dependency view needs arbitrary hierarchy (the file map), which Report can't hold.
+TREE_FEATURES = {"f7"}
 
 
 def data_prop(feature: str) -> str:
@@ -43,6 +53,16 @@ def stash_report(context, report, feature: str) -> None:
     wm = context.window_manager
     setattr(wm, data_prop(feature), report.to_json())
     setattr(wm, exp_prop(feature), "")  # collapsed
+    wm.assetdoctor_active_report = feature
+    rebuild_report_rows(wm)
+
+
+def stash_tree(context, nodes, feature: str) -> None:
+    """Persist a feature whose data is a TreeNode tree (vs a flat Report). Opens
+    the top-level sections (e.g. Summary / File map / Errors) by default."""
+    wm = context.window_manager
+    setattr(wm, data_prop(feature), nodes_to_json(nodes))
+    setattr(wm, exp_prop(feature), "\n".join(top_level_keys(nodes)))
     wm.assetdoctor_active_report = feature
     rebuild_report_rows(wm)
 
@@ -81,6 +101,7 @@ def _fill_rows(coll, rows, prop: str) -> None:
     coll.clear()
     for r in rows:
         item = coll.add()
+        item.name = r.label  # so the UIList's built-in search box filters on it
         item.indent = r.indent
         item.key = r.key
         item.label = r.label
@@ -101,12 +122,16 @@ def rebuild_report_rows(wm) -> None:
     if not active:
         coll.clear()
         return
+    raw = getattr(wm, data_prop(active), "")
     try:
-        report = Report.from_json(getattr(wm, data_prop(active)))
+        if active in TREE_FEATURES:
+            nodes = nodes_from_json(raw)
+        else:
+            nodes = report_to_tree(Report.from_json(raw))
     except Exception:
         coll.clear()
         return
-    rows = flatten_visible(report_to_tree(report), get_expanded(wm, exp_prop(active)))
+    rows = flatten_visible(nodes, get_expanded(wm, exp_prop(active)))
     _fill_rows(coll, rows, exp_prop(active))
 
 
@@ -350,10 +375,12 @@ class ASSETDOCTOR_OT_export_report(bpy.types.Operator):
             if not raw:
                 self.report({"ERROR"}, "No report to export")
                 return {"CANCELLED"}
-            report = Report.from_json(raw)
-            if self.filepath.lower().endswith(".csv"):
-                text = report.to_csv()
+            if feature in TREE_FEATURES:
+                text = _tree_to_text(nodes_from_json(raw), f"AssetDoctor — {feature}")
+            elif self.filepath.lower().endswith(".csv"):
+                text = Report.from_json(raw).to_csv()
             else:
+                report = Report.from_json(raw)
                 text = _tree_to_text(report_to_tree(report), report.title)
 
         try:

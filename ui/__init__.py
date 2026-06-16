@@ -13,6 +13,7 @@ from .panels import (
     ASSETDOCTOR_PT_utilities,
     ASSETDOCTOR_PT_report,
     ASSETDOCTOR_PT_resources,
+    ASSETDOCTOR_PT_scene_deps,
 )
 
 # PropertyGroup + UIList first (panels' template_list draws them, and the WM
@@ -31,4 +32,5 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_PT_utilities,
     ASSETDOCTOR_PT_report,
     ASSETDOCTOR_PT_resources,
+    ASSETDOCTOR_PT_scene_deps,
 )

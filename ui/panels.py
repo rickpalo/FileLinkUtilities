@@ -77,9 +77,10 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
             row.label(text="", icon="BLANK1")
         # Label as a tooltip-bearing button: tooltip shows the full text (full path,
         # full message + size) even when the narrow panel truncates the display.
+        # No severity icon — they added clutter without clear value (user, 2026-06-16).
         full = item.label + (f"   [{item.detail}]" if item.detail else "")
         op = row.operator("assetdoctor.row_label", text=item.label,
-                          icon=_SEVERITY_ICON.get(item.severity, "NONE"), emboss=False)
+                          icon="NONE", emboss=False)
         op.text = full
         op.key = item.key
         op.prop = item.prop
@@ -109,19 +110,9 @@ class ASSETDOCTOR_PT_main(bpy.types.Panel):
         sub.operator("wm.url_open", text="", icon="HELP", emboss=False).url = DOC_URL
 
     def draw(self, context):
-        layout = self.layout
-        wm = context.window_manager
-
-        # Shared live progress (shown only while a modal op — scan, make-local… — runs).
-        # Kept on the parent panel so it stays visible above every (collapsible) section.
-        if getattr(wm, "assetdoctor_op_active", False):
-            col = layout.column()
-            col.progress(
-                factor=wm.assetdoctor_op_progress,
-                type="BAR",
-                text=wm.assetdoctor_op_status or "Working…",
-            )
-            col.label(text="Press ESC to cancel", icon="CANCEL")
+        # Shared live progress (shown only while a modal op — scan, make-local… —
+        # runs). Kept on the parent panel so it stays visible above every section.
+        _draw_progress(self.layout, context.window_manager)
 
 
 class _FeaturePanel:
@@ -270,6 +261,129 @@ class ASSETDOCTOR_PT_report(bpy.types.Panel):
             wm, "assetdoctor_report_rows",
             wm, "assetdoctor_report_index",
             rows=12, sort_lock=True,
+        )
+
+
+def _libraries_at_a_glance():
+    """Instant linked-library health from ``bpy.data`` (in memory, no scan):
+    (total, missing, absolute) over ``bpy.data.libraries``."""
+    total = missing = absolute = 0
+    for lib in bpy.data.libraries:
+        fp = lib.filepath
+        if not fp:
+            continue
+        total += 1
+        if not fp.startswith("//"):
+            absolute += 1
+        try:
+            if not pathlib.Path(bpy.path.abspath(fp)).is_file():
+                missing += 1
+        except Exception:
+            missing += 1
+    return total, missing, absolute
+
+
+def _draw_progress(layout, wm):
+    """Shared progress bar + Pause/Resume + ESC hint, drawn while a modal runs."""
+    if not getattr(wm, "assetdoctor_op_active", False):
+        return False
+    col = layout.column()
+    col.progress(
+        factor=wm.assetdoctor_op_progress,
+        type="BAR",
+        text=wm.assetdoctor_op_status or "Working…",
+    )
+    row = col.row(align=True)
+    paused = getattr(wm, "assetdoctor_op_paused", False)
+    row.operator("assetdoctor.toggle_pause",
+                 text="Resume" if paused else "Pause",
+                 icon="PLAY" if paused else "PAUSE")
+    row.operator("assetdoctor.request_cancel", text="Cancel (or ESC)", icon="X")
+    return True
+
+
+class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
+    """F7 Link & Dependency Doctor, in Properties > Scene (this is scene-data
+    hygiene, not a 3D/render activity). The N-panel keeps the legacy tools for now;
+    features migrate here one at a time."""
+
+    bl_label = "AssetDoctor — Dependencies"
+    bl_idname = "ASSETDOCTOR_PT_scene_deps"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "scene"
+
+    def draw_header(self, context):
+        self.layout.label(text=f"v{_addon_version()}", icon="LINKED")
+
+    # The F7 reports this panel can show (offline scan, live analysis, path fixes).
+    _F7_FEATURES = (("f7", "Dependencies"), ("f7live", "Overrides & Dups"),
+                    ("f7fix", "Path Fixes"))
+
+    def draw(self, context):
+        from ..core.report import Report
+        from ..ops.report_store import TREE_FEATURES, active_feature, data_prop
+
+        layout = self.layout
+        wm = context.window_manager
+
+        # Instant "at a glance" from bpy.data (already in memory — no scan needed):
+        # the current file + its linked-library health, so the panel is useful the
+        # moment it opens; the deep scan/analyze are compact opt-in buttons.
+        fname = bpy.path.basename(bpy.data.filepath) or "(unsaved)"
+        layout.label(text=f"{fname}  ·  v{_addon_version()}", icon="FILE_BLEND")
+        total, missing, absolute = _libraries_at_a_glance()
+        bits = [f"{total} linked librar{'y' if total == 1 else 'ies'}"]
+        if missing:
+            bits.append(f"{missing} missing")
+        if absolute:
+            bits.append(f"{absolute} absolute")
+        layout.label(text="   ·   ".join(bits), icon="LIBRARY_DATA_DIRECT")
+
+        # Compact one-row actions (both operate on the CURRENT file).
+        row = layout.row(align=True)
+        row.operator("assetdoctor.scan_dependencies", text="Scan deps", icon="VIEWZOOM")
+        row.operator("assetdoctor.analyze_overrides", text="Analyze", icon="LIBRARY_DATA_OVERRIDE")
+        # Phase 3a: path fixes (report-first / apply). UI to be polished in the batch.
+        fix = layout.row(align=True)
+        fix.operator("assetdoctor.fix_library_paths", text="Check Paths", icon="FILE_REFRESH").apply = False
+        fix.operator("assetdoctor.fix_library_paths", text="Fix Paths (creates backup)",
+                     icon="CHECKMARK").apply = True
+
+        # While a scan runs, show only the progress (avoids the cramped overlap
+        # of progress + empty-state hint the user reported).
+        if _draw_progress(layout, wm):
+            return
+
+        # Which F7 reports exist; a small selector when more than one.
+        present = [(k, lbl) for k, lbl in self._F7_FEATURES if getattr(wm, data_prop(k), "")]
+        if not present:
+            layout.separator()
+            layout.label(text="Run a scan or analysis to see results.", icon="INFO")
+            return
+
+        active = active_feature(wm)
+        if active not in dict(present):
+            active = present[0][0]
+        layout.separator()
+        selrow = layout.row(align=True)
+        for key, lbl in present:
+            selrow.operator("assetdoctor.report_select", text=lbl,
+                            depress=(key == active)).feature = key
+        selrow.operator("assetdoctor.export_report", text="", icon="EXPORT").source = "report"
+
+        if active not in TREE_FEATURES:
+            try:
+                report = Report.from_json(getattr(wm, data_prop(active)))
+            except Exception:
+                layout.label(text="(could not read report)", icon="ERROR")
+                return
+            layout.label(text=report.title, icon="PRESET")
+        layout.template_list(
+            "ASSETDOCTOR_UL_tree", "f7report",
+            wm, "assetdoctor_report_rows",
+            wm, "assetdoctor_report_index",
+            rows=14, sort_lock=True,
         )
 
 

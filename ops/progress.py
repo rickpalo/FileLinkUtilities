@@ -32,6 +32,8 @@ def clear_progress(context) -> None:
     wm.assetdoctor_op_active = False
     wm.assetdoctor_op_progress = 0.0
     wm.assetdoctor_op_status = ""
+    wm.assetdoctor_op_paused = False
+    wm.assetdoctor_op_cancel = False
     if context.area is not None:
         context.area.tag_redraw()
 
@@ -56,6 +58,8 @@ class ModalProgressMixin:
 
     _timer = None
     _gen = None
+    _last = (0.0, "")  # most recent (fraction, status), shown while paused
+    _was_paused = False  # true for one tick after resume, to clear the paused text
 
     def run_steps(self, context):  # pragma: no cover - subclass responsibility
         raise NotImplementedError
@@ -71,7 +75,11 @@ class ModalProgressMixin:
 
     def invoke(self, context, event):
         self._gen = self.run_steps(context)
+        self._last = (0.0, "Starting…")
+        self._was_paused = False
         wm = context.window_manager
+        wm.assetdoctor_op_paused = False
+        wm.assetdoctor_op_cancel = False
         wm.progress_begin(0, 100)
         set_progress(context, 0.0, "Starting…")
         context.workspace.status_text_set(f"AssetDoctor: {self.bl_label}… (ESC to cancel)")
@@ -87,6 +95,27 @@ class ModalProgressMixin:
         if event.type != "TIMER":
             return {"PASS_THROUGH"}
 
+        # Cancel requested from the panel's Cancel button (works even while paused).
+        if context.window_manager.assetdoctor_op_cancel:
+            self._teardown(context)
+            self.report({"WARNING"}, self.cancel_message())
+            return {"CANCELLED"}
+
+        # Paused: hold here without advancing the generator (ESC still cancels).
+        if context.window_manager.assetdoctor_op_paused:
+            frac, status = self._last
+            set_progress(context, frac, f"⏸ Paused — {status}")
+            self._was_paused = True
+            return {"RUNNING_MODAL"}
+
+        # Just resumed: repaint the clean status this tick BEFORE the next step,
+        # which may block (a multi-GB read), so "Paused…" doesn't linger.
+        if self._was_paused:
+            self._was_paused = False
+            frac, status = self._last
+            set_progress(context, frac, status)
+            return {"RUNNING_MODAL"}
+
         latest = None
         start = time.perf_counter()
         try:
@@ -99,6 +128,7 @@ class ModalProgressMixin:
             return {"FINISHED"}
 
         fraction, status = latest
+        self._last = latest
         context.window_manager.progress_update(int(fraction * 100))
         set_progress(context, fraction, status)
         return {"RUNNING_MODAL"}
@@ -111,3 +141,38 @@ class ModalProgressMixin:
         wm.progress_end()
         clear_progress(context)
         context.workspace.status_text_set(None)
+
+
+import bpy  # noqa: E402 - operators below need bpy; helpers above stay bpy-light
+
+
+class ASSETDOCTOR_OT_toggle_pause(bpy.types.Operator):
+    """Pause or resume the running AssetDoctor operation (it holds between steps;
+    ESC still cancels). Useful for long recursive scans over multi-GB files."""
+
+    bl_idname = "assetdoctor.toggle_pause"
+    bl_label = "Pause/Resume"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        wm = context.window_manager
+        wm.assetdoctor_op_paused = not wm.assetdoctor_op_paused
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_request_cancel(bpy.types.Operator):
+    """Cancel the running AssetDoctor operation (same as pressing ESC). The modal
+    stops at the next step boundary — a step already in progress (e.g. reading a
+    large file) finishes first."""
+
+    bl_idname = "assetdoctor.request_cancel"
+    bl_label = "Cancel"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        context.window_manager.assetdoctor_op_cancel = True
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}

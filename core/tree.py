@@ -27,6 +27,10 @@ _CATEGORY_TITLES = {
     "duplicate_group": "Duplicate Materials",
     "duplicate_material": "Duplicate Materials",
     "linked_victim": "Linked duplicates",
+    "relink_missing": "Relink missing libraries",
+    "normalize_path": "Normalize paths",
+    "duplicate_library": "Duplicate library blocks",
+    "clean": "Status",
     "summary": "Summary",
 }
 
@@ -100,8 +104,13 @@ def report_to_tree(report: Report) -> list[TreeNode]:
     for f in report.findings:
         groups.setdefault(f.category, []).append(f)
 
+    # Summary first, then the rest in their original order (user: summary on top).
+    ordered = ([c for c in groups if c == "summary"]
+               + [c for c in groups if c != "summary"])
+
     nodes: list[TreeNode] = []
-    for cat, findings in groups.items():
+    for cat in ordered:
+        findings = groups[cat]
         cat_key = f"{report.feature}:{cat}"
         # Category row detail: a feature-supplied override (e.g. F3's local/linked
         # breakdown) or, by default, the number of findings in the category.
