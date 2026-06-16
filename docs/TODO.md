@@ -1,5 +1,18 @@
 # AssetDoctor — TODO / backlog
 
+## Scope/design expansion — DISCUSS 2026-06-16
+- [ ] **Expand the add-on's design & purpose** — user wants a broader conversation about where
+  AssetDoctor is headed (next session). Capture goals before building.
+- [ ] **UI placement: Properties editor vs N-panel.** User likes the layout of a "Scene Debug"
+  panel that lives in the **Properties editor > Scene tab** (image-blocks count, list materials by
+  shader, missing node links, empty material slots, list users for a datablock). Feasible: a panel
+  moves to the Properties editor by setting `bl_space_type="PROPERTIES"`, `bl_region_type="WINDOW"`,
+  and `bl_context` (e.g. "scene"/"object"/"render"/"material"); `bl_category` (N-panel tab) no
+  longer applies there. Parent/child collapsible sub-panels still work via `bl_parent_id`. Decide:
+  move entirely, or offer both locations (a prefs toggle re-registering the panels' parent), and
+  which Properties tab. Some of that "Scene Debug" functionality (list users for a datablock, empty
+  material slots, materials-by-shader) overlaps AssetDoctor's diagnostics — fold into the roadmap.
+
 ## Automated Cleanup (NEXT major feature — requested 2026-06-15)
 
 Goal: a one-click pipeline that runs the chosen cleanups together, with a combined report and a
