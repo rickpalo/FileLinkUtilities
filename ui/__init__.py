@@ -2,7 +2,10 @@
 
 from .panels import (
     ASSETDOCTOR_PG_tree_row,
+    ASSETDOCTOR_PG_broken_lib,
     ASSETDOCTOR_UL_tree,
+    ASSETDOCTOR_UL_broken_libs,
+    ASSETDOCTOR_UL_broken_imgs,
     ASSETDOCTOR_PT_main,
     ASSETDOCTOR_PT_project,
     ASSETDOCTOR_PT_make_local,
@@ -21,7 +24,10 @@ from .panels import (
 # parent panel, its collapsible children, and the report/resource panels.
 REGISTER_CLASSES = (
     ASSETDOCTOR_PG_tree_row,
+    ASSETDOCTOR_PG_broken_lib,
     ASSETDOCTOR_UL_tree,
+    ASSETDOCTOR_UL_broken_libs,
+    ASSETDOCTOR_UL_broken_imgs,
     ASSETDOCTOR_PT_main,
     ASSETDOCTOR_PT_project,
     ASSETDOCTOR_PT_make_local,

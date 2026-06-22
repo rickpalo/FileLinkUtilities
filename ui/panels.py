@@ -7,6 +7,7 @@ redo panel. Detailed findings print to the system console
 debugLog.txt. Button tooltips come from each operator's ``description()``.
 """
 
+import os
 import pathlib
 
 import bpy
@@ -92,6 +93,73 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
             sub = row.row()
             sub.alignment = "RIGHT"
             sub.label(text=item.detail)
+
+
+class ASSETDOCTOR_PG_broken_lib(bpy.types.PropertyGroup):
+    """One broken/missing library link, for the per-link relink list (F7).
+
+    ``ops.relink._populate_broken_links`` fills the collection from the current
+    file's missing libraries; ``target`` is the auto-found same-name candidate (or
+    a file the user picked). ``selected`` is the per-row checkbox so the user
+    relinks only the links they choose — e.g. one broken material library."""
+
+    # `name` (PropertyGroup built-in) holds the library datablock name.
+    stored: bpy.props.StringProperty()  # type: ignore[valid-type]
+    target: bpy.props.StringProperty()  # type: ignore[valid-type]
+    has_candidate: bpy.props.BoolProperty()  # type: ignore[valid-type]
+    selected: bpy.props.BoolProperty(
+        default=False, name="",
+        description="Include this link when you Relink Selected")  # type: ignore[valid-type]
+
+
+class ASSETDOCTOR_UL_broken_libs(bpy.types.UIList):
+    """Per-link relink list: checkbox + broken library name + its target file (or
+    a 'pick a file' hint) + a file-picker button. Lets the user fix one specific
+    broken link without running a bulk pass."""
+
+    bl_idname = "ASSETDOCTOR_UL_broken_libs"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.name)
+            return
+        row = layout.row(align=True)
+        row.prop(item, "selected", text="")
+        row.label(text=item.name, icon="LIBRARY_DATA_BROKEN")
+        target = row.row()
+        target.alignment = "RIGHT"
+        if item.target:
+            target.label(text=os.path.basename(item.target) or item.target,
+                         icon="CHECKMARK" if item.has_candidate else "QUESTION")
+        else:
+            target.label(text="no match — pick a file", icon="QUESTION")
+        row.operator("assetdoctor.relink_pick_file", text="", icon="FILEBROWSER").index = index
+
+
+class ASSETDOCTOR_UL_broken_imgs(bpy.types.UIList):
+    """Per-texture relink list (F6): checkbox + missing image name + its target
+    file (or a 'pick a file' hint) + a file-picker button. Same shape as the
+    broken-library list, reusing ASSETDOCTOR_PG_broken_lib for the rows."""
+
+    bl_idname = "ASSETDOCTOR_UL_broken_imgs"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.name)
+            return
+        row = layout.row(align=True)
+        row.prop(item, "selected", text="")
+        row.label(text=item.name, icon="IMAGE_DATA")
+        target = row.row()
+        target.alignment = "RIGHT"
+        if item.target:
+            target.label(text=os.path.basename(item.target) or item.target,
+                         icon="CHECKMARK" if item.has_candidate else "QUESTION")
+        else:
+            target.label(text="no match — pick a file", icon="QUESTION")
+        row.operator("assetdoctor.relink_pick_texture", text="", icon="FILEBROWSER").index = index
 
 
 class ASSETDOCTOR_PT_main(bpy.types.Panel):
@@ -340,15 +408,54 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
             bits.append(f"{absolute} absolute")
         layout.label(text="   ·   ".join(bits), icon="LIBRARY_DATA_DIRECT")
 
+        # Scan Dependencies reads the .blend FROM DISK (offline BAT), so it reflects
+        # the last SAVED state — unsaved relinks/fixes won't show until you save.
+        # Warn when the file is dirty so a stale "missing link" isn't confusing.
+        if bpy.data.filepath and bpy.data.is_dirty:
+            warn = layout.row()
+            warn.alert = True
+            warn.label(text="Unsaved changes — save before Scan deps (it reads from disk)",
+                       icon="ERROR")
+
         # Compact one-row actions (both operate on the CURRENT file).
         row = layout.row(align=True)
         row.operator("assetdoctor.scan_dependencies", text="Scan deps", icon="VIEWZOOM")
         row.operator("assetdoctor.analyze_overrides", text="Analyze", icon="LIBRARY_DATA_OVERRIDE")
-        # Phase 3a: path fixes (report-first / apply). UI to be polished in the batch.
-        fix = layout.row(align=True)
-        fix.operator("assetdoctor.fix_library_paths", text="Check Paths", icon="FILE_REFRESH").apply = False
-        fix.operator("assetdoctor.fix_library_paths", text="Fix Paths (creates backup)",
-                     icon="CHECKMARK").apply = True
+
+        # Phase 3 path fixes are TWO independent jobs (user, 2026-06-21):
+        #  (1) relink broken/missing library links — per-link + pick-a-file, so you
+        #      can fix one specific link (e.g. a broken material library);
+        #  (2) normalize the paths of libraries that already resolve.
+        links = layout.box().column(align=True)
+        links.label(text="Broken links", icon="LIBRARY_DATA_BROKEN")
+        links.operator("assetdoctor.scan_broken_links", text="Find Broken Links", icon="VIEWZOOM")
+        if len(wm.assetdoctor_broken_libs):
+            links.template_list(
+                "ASSETDOCTOR_UL_broken_libs", "brokenlibs",
+                wm, "assetdoctor_broken_libs",
+                wm, "assetdoctor_broken_index", rows=4)
+            links.operator("assetdoctor.relink_selected",
+                           text="Relink Selected (creates backup)", icon="FILE_REFRESH")
+
+        norm = layout.box().column(align=True)
+        norm.label(text="Path normalization", icon="FILE_REFRESH")
+        nr = norm.row(align=True)
+        nr.operator("assetdoctor.normalize_library_paths", text="Check").apply = False
+        nr.operator("assetdoctor.normalize_library_paths",
+                    text="Normalize (creates backup)", icon="CHECKMARK").apply = True
+
+        # F6 Layer 1: relink missing image textures (the magenta) — per-texture,
+        # auto-fixing doubled path segments / finding files by name, pick-a-file.
+        tex = layout.box().column(align=True)
+        tex.label(text="Missing textures", icon="IMAGE_DATA")
+        tex.operator("assetdoctor.scan_broken_textures", text="Find Missing Textures", icon="VIEWZOOM")
+        if len(wm.assetdoctor_broken_imgs):
+            tex.template_list(
+                "ASSETDOCTOR_UL_broken_imgs", "brokenimgs",
+                wm, "assetdoctor_broken_imgs",
+                wm, "assetdoctor_broken_imgs_index", rows=4)
+            tex.operator("assetdoctor.relink_textures_selected",
+                         text="Relink Selected (creates backup)", icon="FILE_REFRESH")
 
         # While a scan runs, show only the progress (avoids the cramped overlap
         # of progress + empty-state hint the user reported).

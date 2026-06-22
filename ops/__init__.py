@@ -8,7 +8,17 @@ are scaffold stubs that register cleanly; feature logic arrives per-milestone.
 from .scan_folder import ASSETDOCTOR_OT_scan_folder
 from .dep_scan import ASSETDOCTOR_OT_scan_dependencies
 from .datablock_inspect import ASSETDOCTOR_OT_analyze_overrides
-from .relink import ASSETDOCTOR_OT_fix_library_paths
+from .relink import (
+    ASSETDOCTOR_OT_normalize_library_paths,
+    ASSETDOCTOR_OT_relink_pick_file,
+    ASSETDOCTOR_OT_relink_selected,
+    ASSETDOCTOR_OT_scan_broken_links,
+)
+from .image_relink import (
+    ASSETDOCTOR_OT_scan_broken_textures,
+    ASSETDOCTOR_OT_relink_pick_texture,
+    ASSETDOCTOR_OT_relink_textures_selected,
+)
 from .progress import ASSETDOCTOR_OT_toggle_pause, ASSETDOCTOR_OT_request_cancel
 from .make_local import ASSETDOCTOR_OT_make_local
 from .material_dedup import ASSETDOCTOR_OT_material_dedup
@@ -29,7 +39,13 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_scan_folder,
     ASSETDOCTOR_OT_scan_dependencies,
     ASSETDOCTOR_OT_analyze_overrides,
-    ASSETDOCTOR_OT_fix_library_paths,
+    ASSETDOCTOR_OT_scan_broken_links,
+    ASSETDOCTOR_OT_relink_pick_file,
+    ASSETDOCTOR_OT_relink_selected,
+    ASSETDOCTOR_OT_normalize_library_paths,
+    ASSETDOCTOR_OT_scan_broken_textures,
+    ASSETDOCTOR_OT_relink_pick_texture,
+    ASSETDOCTOR_OT_relink_textures_selected,
     ASSETDOCTOR_OT_toggle_pause,
     ASSETDOCTOR_OT_request_cancel,
     ASSETDOCTOR_OT_make_local,

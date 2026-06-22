@@ -106,7 +106,7 @@ def register() -> None:
     # (virtualized + scrollable — fixes blank rows on large reports). Rebuilt by
     # ops.report_store from the JSON above whenever a report or its expansion
     # changes. WM-scoped (ephemeral), matching the report JSON's lifetime.
-    from .ui.panels import ASSETDOCTOR_PG_tree_row
+    from .ui.panels import ASSETDOCTOR_PG_broken_lib, ASSETDOCTOR_PG_tree_row
 
     bpy.types.WindowManager.assetdoctor_report_rows = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_tree_row)
@@ -114,6 +114,17 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_resource_rows = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_tree_row)
     bpy.types.WindowManager.assetdoctor_resource_index = bpy.props.IntProperty(default=0)
+
+    # F7 per-link relink list: the current file's broken/missing library links,
+    # each with a relink target + a per-row checkbox. See ops.relink.
+    bpy.types.WindowManager.assetdoctor_broken_libs = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_broken_lib)
+    bpy.types.WindowManager.assetdoctor_broken_index = bpy.props.IntProperty(default=0)
+    # F6 per-texture relink list: the current file's missing image textures (same
+    # row shape, reusing ASSETDOCTOR_PG_broken_lib). See ops.image_relink.
+    bpy.types.WindowManager.assetdoctor_broken_imgs = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_broken_lib)
+    bpy.types.WindowManager.assetdoctor_broken_imgs_index = bpy.props.IntProperty(default=0)
 
 
 def unregister() -> None:
@@ -134,7 +145,9 @@ def unregister() -> None:
                 "assetdoctor_active_report", "assetdoctor_resource_tree",
                 "assetdoctor_resource_expanded", "assetdoctor_profiled_ram",
                 "assetdoctor_report_rows", "assetdoctor_report_index",
-                "assetdoctor_resource_rows", "assetdoctor_resource_index"]
+                "assetdoctor_resource_rows", "assetdoctor_resource_index",
+                "assetdoctor_broken_libs", "assetdoctor_broken_index",
+                "assetdoctor_broken_imgs", "assetdoctor_broken_imgs_index"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]
     for attr in wm_attrs:

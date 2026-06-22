@@ -1,5 +1,149 @@
 # AssetDoctor — TODO / backlog
 
+## TOP PRIORITY — separate "fix folders" from "fix paths/links"; per-link targeted fix (2026-06-21)
+
+**STATUS: BUILT @ v0.2.5, VERIFIED IN BLENDER (user, 2026-06-21) — feature works end-to-end.** On the
+user's real file: Find Broken Links listed the broken material library; the auto-match failed for one
+lib so the user PICKED a file manually (pick-a-file path) — worked; Relink Selected fixed it; Normalize
+worked. Feature done. The combined `Fix Paths` button is gone; the Scene panel now has two separate
+sections: **Broken links** ("Find Broken Links" → per-link list with checkboxes, auto-found candidate
+or "pick a file" per row, "Relink Selected (creates backup)") and **Path normalization** ("Check" /
+"Normalize (creates backup)"). Ops in `ops/relink.py`: `scan_broken_links`, `relink_pick_file`,
+`relink_selected`, `normalize_library_paths` (replaced `fix_library_paths`). `core.relink.relink_stored_path`
+(bpy-free, tested). `ASSETDOCTOR_PG_broken_lib` + `ASSETDOCTOR_UL_broken_libs` + WM `assetdoctor_broken_libs`.
+
+### Follow-ups from the 2026-06-21 verify session
+- [x] **Caution when Scan Deps runs with unsaved changes (DONE @ v0.2.6, code).** User saw Scan Deps
+  flag a "missing link" AFTER relinking but BEFORE saving, then clean after saving — because Scan Deps
+  is the OFFLINE BAT scan that reads the file FROM DISK (last-saved state), not the in-memory fix.
+  Added a red panel hint in `ASSETDOCTOR_PT_scene_deps.draw` above the Scan/Analyze row, shown when
+  `bpy.data.is_dirty`: "Unsaved changes — save before Scan deps (it reads from disk)". UI-only.
+- [~] **Magenta materials after a successful library relink → likely MISSING TEXTURES, not libraries.**
+  **LAYER 1 (relink) BUILT @ v0.2.7 (2026-06-21), needs live-Blender verify.** `core/imagepaths.py`
+  (bpy-free: `dedup_path` collapses doubled `BlenderSync\BlenderSync\` segments, `apply_prefix_remap`
+  cross-drive, `find_relink_targets` folder-search-by-basename; 13 tests, suite 175 green) +
+  `ops/image_relink.py` (`scan_broken_textures`, `relink_pick_texture`, `relink_textures_selected` —
+  LOCAL images only, per-texture checkboxes + pick-a-file, backup→set `image.filepath`→`reload`). UI:
+  `ASSETDOCTOR_UL_broken_imgs` + "Missing textures" box in the Scene panel + WM `assetdoctor_broken_imgs`
+  (reuses `ASSETDOCTOR_PG_broken_lib`). **Verify:** Find Missing Textures lists the magenta images,
+  doubled-prefix ones auto-match, pick-a-file works, Relink Selected fixes only ticked. Layers 2
+  (name-family consolidation) + 3 (content-overlap deep dive) still TODO.
+  - **UI LIVE-CONFIRMED @ v0.2.7 (user screenshot, 2026-06-21):** the "Missing textures" box draws,
+    lists the CC4/Beard/Brows textures (mostly "no match — pick a file" since they're absent locally).
+    Two NEW follow-ups from that test:
+  - [ ] **F6 follow-up A — wrap Blender's NATIVE missing-file ops + report results.** Blender's
+    `file.find_missing_files(directory=…)` relocates found files **silently** (reports nothing);
+    `file.report_missing_files` only lists the missing. Add:
+    (1) a function/button that runs **Report Missing Files** and **collects** the result into our list
+        (we already enumerate missing images ourselves — present it as that, or capture Blender's
+        report); and
+    (2) a **"Find Missing Files (folder)…"** button that opens a directory picker, runs
+        `bpy.ops.file.find_missing_files(directory=chosen)` (native, recursive by filename), then
+        **reports BOTH found and still-missing** by snapshotting each image's resolved-exists
+        before/after and diffing — the reporting Blender omits. Complements our dedup/folder relink
+        with Blender's recursive search. Backup first.
+  - [ ] **F6 follow-up B — group missing textures + flexible targeting (from the screenshot).**
+    (1) **Group by source** (by material, or by the missing files' original containing directory) into
+        a collapsible **summary row**; let the user point the GROUP at ONE containing directory and
+        resolve every member by filename within it (directory-level relink). The screenshot's
+        `Beard18_Transparency_*` / `Brows_*` families all share a folder → fix the whole group at once.
+    (2) **Substitute a DIFFERENT-named texture** ("any beard would do"): map e.g.
+        `Beard18_Transparency_Diffuse` → `Beard1_Transparency_Diffuse`. Pick-a-file already allows any
+        single file; the new needs are (a) doing it group-wide from one chosen dir even when the
+        variant number differs (fuzzy match within the dir by stripping the trailing index), and
+        (b) a deliberate "substitute equivalent" workflow with fuzzy name matching (`BeardNN` family).
+    Note: screenshot rows include `.001` duplicate-suffix names that are ALSO missing — overlaps
+    Layer 2 (name-family consolidation); design A/B/Layer-2 together.
+  User relinked the material library OK but some materials still render pink/purple = likely missing
+  IMAGE files inside that library. AssetDoctor's relinker currently fixes LIBRARY (.blend) links only,
+  NOT image/texture paths. (User CAN use Blender's File→External Data→Report Missing Files to confirm —
+  they were just thinking add-on-first; not a gap in Blender.) Still worth folding into AssetDoctor as
+  a one-stop **missing-file detection + relink for images/textures** (the F6 smart relinker, below) so
+  the user doesn't bounce between tools. Detect missing `image.filepath` (+ other external files),
+  report, and relink (folder remap / pick / fuzzy). Pairs with the existing library relinker. NOTE: fix
+  the SOURCE library top-down (e.g. human_bundle), not the linking file — but human_bundle is a SHARED
+  library, so relink/normalize + save there; do NOT make-local/purge in it.
+  - **CONFIRMED via render log (user, 2026-06-21): the magenta = MISSING IMAGE TEXTURES.** Concrete
+    patterns from the real files (these define the F6 relinker's required transforms):
+    1. **Doubled prefix `E:\BlenderSync\BlenderSync\SynologyDrive\...`** (should be `E:\BlenderSync\
+       SynologyDrive\...`) — the biggest, fixed by a single prefix find/replace `E:\BlenderSync\
+       BlenderSync\` → `E:\BlenderSync\`. ← headline F6 case.
+    2. **Cross-drive `D:\CharacterCreator\...`** — machine-specific; needs drive/root remap or absent.
+    3. **Temp `C:\Users\Rick\AppData\Local\Temp\tmp…\...`** — deleted; must re-point to real source.
+    4. **`E:\Addons\HumGenV4\...` (dot-prefixed)** — Human Generator addon-internal; addon-managed.
+    5. Genuinely-missing files under valid CC_DataLink/imports roots (CC4 re-imports cleaned up).
+    So F6 = detect missing `image.filepath` + **prefix find/replace remap** + folder-search-by-
+    filename + cross-drive (D:→E:) remap, report-first + backup. Stopgap now: Blender File→External
+    Data→**Find Missing Files** pointed at `E:\BlenderSync\SynologyDrive` catches the doubled-prefix +
+    many others by filename.
+  - **F6 ALSO: consolidate similar-named image datablocks (user, 2026-06-21).** Beyond relink, detect
+    similar names and offer to combine — but TWO distinct cases, treated differently (mixing them
+    would corrupt the render):
+    - **`.NNN` suffix families ("Leather" vs "Leather.001") → usually IDENTICAL → LOSSLESS merge.**
+      The image analogue of F3 material dedup: pick canonical, remap users, purge rest. Reuse
+      `core/datablock_graph.py` `strip_dup_suffix`/`duplicate_families`.
+    - **Resolution variants ("Leather_2k" vs "Leather_1k", "LowRes"/"HighRes") → DIFFERENT files →
+      NOT a merge.** "Combining" = standardize to a CHOSEN resolution; LOSSY, changes the render →
+      belongs with the **footprint-reduction pillar**, opt-in per family, user picks target res, never
+      automatic.
+    - **SAFETY RULE: name similarity only finds CANDIDATES; verify identity (dimensions + file hash /
+      datablock fingerprint) before offering "combine."** Same family + same content → lossless merge;
+      same family + different content (1k/2k) → standardize-to-resolution (flagged lossy), show which
+      objects use each.
+    - **Family detection:** strip `.NNN` → strip res tokens (`_1k`/`_2k`/`_4k`/`_8k`, `_1024`/`_2048`,
+      `LowRes`/`HighRes`) → group. Real cases in the render log (`…\LowRes\…`, `Std_Skin_Head_*`
+      families across CC4 re-imports). Pairs with the relinker: a missing `Leather_2k` whose
+      `Leather_1k` exists is BOTH a relink candidate AND a consolidation candidate — surface both.
+  - **F6 DEEP DIVE: content-based texture-overlap analysis (user, 2026-06-21) — the real bloat-killer.**
+    Render log shows the SAME texture names repeated across ~15+ CC4 import folders (`CC3_Base_Plus`,
+    `_2`, `_4`, `_20`, `fullyClothed`, `HD Aaron`, …) → likely dozens of content-identical copies.
+    - **Detect overlap by CONTENT, not name:** fingerprint each image = file-bytes hash (or
+      packed-file/pixel data) + dimensions. Name-matching misses this and risks false merges; hashing
+      is the backbone.
+    - **Three signals:** (a) **exact-content duplicates** (same hash, different datablocks/paths) →
+      LOSSLESS collapse to one shared image, remap users, purge rest (biggest win); (b) **already-
+      shared many-user** images → report (so F5 counts once); (c) **partial material overlap**
+      (materials sharing most of their texture set) → near-dup material clusters, ties to F3 node-graph
+      fingerprint.
+    - **Build a texture→materials→objects usage graph** so blast radius is visible before merging.
+    - **Hard constraints:** hashing a 60GB closure is slow → modal scan w/ progress+pause (like
+      dep-scan) + **cache by (path,size,mtime)**; offline-capable (BAT reads refs, hash on-disk files,
+      no Blender load = crash-safe); scope = current file first, recurse on request (this is the
+      deferred **M6 cross-file census** re-scoped to textures). Packed images hash from packed data.
+    - **Feeds F5:** overlap quantifies savings ("47 copies → 1, −X GB disk, −Y GB est RAM") = the
+      before/after diff.
+    - **F6 = 3 layers:** relink (fix missing) → name-family consolidation (identity-verified) →
+      content-overlap analysis (hash-based deep dive).
+  - **SEPARATE (not textures):** the huge `KEKey … not linkable, but is flagged as directly linked`
+    blend.writefile errors = broken shape-key/override hierarchy from the dependency loops (the
+    Asset_bundle/human_bundle/People1_v5.1/materialMaster cycle). Untangle via break-circular work;
+    not the magenta.
+
+**Requirement change (user, 2026-06-21):** today the **"Fix Paths"** button
+(`ops/relink.py::ASSETDOCTOR_OT_fix_library_paths`, apply=True) does **two distinct jobs in one
+all-or-nothing click**:
+1. **Relink missing libraries** — search folders for a same-named `.blend` and repoint the broken
+   library link (the "fix folders" / find-the-file job; Phase 3b, `relink.find_relink_candidates`).
+2. **Normalize paths** — absolute→`//`-relative + backslash→forward-slash on the libraries that
+   already resolve (the "fix paths/links" job; Phase 3a, `relink.plan_library_fixes`).
+
+**These must be separated, AND the relink job must be targetable per-link.** Real case: a file with a
+**single broken link to a materials library** — the user wants to fix **that one link specifically**,
+not run a bulk pass over every library.
+
+Design to flesh out (report-first + backup stays):
+- **Split the UI into two independent actions** — one for relinking missing/broken libraries, one for
+  path normalization. Don't force both.
+- **Per-link selection** for the relink action: list each broken/missing library link as its own row
+  (with the candidate match found, if any) and let the user fix **just the selected one(s)** — likely
+  checkboxes + a single "Fix selected" button (matches the user's stated checkbox-over-per-row-button
+  preference in the deferred UI batch, items (i)/(j)).
+- Also allow **pointing a broken link at a file the user picks** (manual relink target), not only the
+  auto-found same-name candidate — needed when the materials lib lives somewhere the folder search
+  doesn't cover or the name differs.
+- Keep `core/relink.py` bpy-free + add tests for the per-link plan (one selected link → only that
+  `lib.filepath` changes; others untouched).
+
 ## Scope/design expansion — DISCUSS 2026-06-16
 - [ ] **Expand the add-on's design & purpose** — user wants a broader conversation about where
   AssetDoctor is headed (next session). Capture goals before building.

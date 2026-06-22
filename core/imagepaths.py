@@ -1,0 +1,161 @@
+"""F6 Layer 1 — relink missing image textures (bpy-free core).
+
+The image analogue of :mod:`core.relink` (library paths). Given the current
+file's images, find an on-disk target for each MISSING one by trying, in
+confidence order:
+
+  1. **de-duplicating accidentally repeated path segments** — the real
+     ``E:\\BlenderSync\\BlenderSync\\SynologyDrive\\…`` case (a doubled folder),
+  2. **user prefix find/replace remaps** (e.g. ``D:\\`` → ``E:\\`` cross-drive),
+  3. **folder search by basename** in the supplied directories (unique match only),
+
+and only ever returns a path that actually EXISTS, so a bad guess can't be
+applied. Turning a found absolute target into a stored ``//``-relative path
+reuses :func:`core.relink.relink_stored_path`.
+
+Layers 2 (name-family consolidation) and 3 (content-overlap dedup) build on top
+of this and live in separate modules; this file is just the relinker.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+from .relink import relink_stored_path  # reused: same //-relative logic
+from .report import Finding, Report
+
+
+@dataclass
+class ImgDesc:
+    """A current-file image datablock, as the operator extracts it from bpy.data."""
+
+    name: str
+    stored: str  # image.filepath as stored ("//…" or absolute)
+    resolved: str  # absolute, resolved path
+    exists: bool
+
+
+def dedup_path(path: str) -> str:
+    """Collapse **consecutive duplicate** path components (case-insensitive).
+
+    ``E:\\BlenderSync\\BlenderSync\\SynologyDrive\\a.png`` →
+    ``E:/BlenderSync/SynologyDrive/a.png``. Non-consecutive repeats (``a/b/a``)
+    are kept — only an immediately-doubled segment is treated as the error.
+    Returns a forward-slash path; callers normalise before hitting disk."""
+    parts = path.replace("\\", "/").split("/")
+    out: list[str] = []
+    for p in parts:
+        if out and p and out[-1].lower() == p.lower():
+            continue  # drop the immediate duplicate
+        out.append(p)
+    return "/".join(out)
+
+
+def apply_prefix_remap(path: str, old: str, new: str) -> str:
+    """Case-insensitive prefix find/replace (e.g. ``D:\\`` → ``E:\\``). Returns the
+    path unchanged when ``old`` is not a prefix. Forward-slash normalised."""
+    np = path.replace("\\", "/")
+    no = old.replace("\\", "/")
+    if no and np.lower().startswith(no.lower()):
+        return new.replace("\\", "/") + np[len(no):]
+    return np
+
+
+def _candidate_paths(img: ImgDesc, remaps: list[tuple[str, str]]):
+    """Yield candidate absolute paths for a missing image, best-confidence first:
+    the de-duped path, then each prefix remap (and its de-duped form)."""
+    seen: set[str] = set()
+
+    def _emit(p: str):
+        n = os.path.normpath(p)
+        key = n.replace("\\", "/").lower()
+        if key not in seen:
+            seen.add(key)
+            return n
+        return None
+
+    base = img.resolved
+    for cand in (dedup_path(base), *(apply_prefix_remap(base, o, n) for o, n in remaps),
+                 *(dedup_path(apply_prefix_remap(base, o, n)) for o, n in remaps)):
+        out = _emit(cand)
+        if out is not None:
+            yield out
+
+
+def _index_dirs(search_dirs: list[str]) -> dict[str, list[str]]:
+    """Map lowercased basename → list of absolute paths, across the dirs (deduped)."""
+    index: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for d in search_dirs:
+        key = d.replace("\\", "/").rstrip("/").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            for entry in os.scandir(d):
+                if entry.is_file():
+                    index.setdefault(entry.name.lower(), []).append(
+                        os.path.normpath(entry.path))
+        except OSError:
+            continue
+    return index
+
+
+def find_image_target(
+    img: ImgDesc, search_dirs: list[str], remaps: list[tuple[str, str]] | None = None,
+    _index: dict[str, list[str]] | None = None,
+) -> str | None:
+    """An existing on-disk path for a MISSING image, or None. Tries de-dup +
+    prefix remaps first (high confidence), then a unique basename match in
+    ``search_dirs``. Never returns a non-existent path."""
+    remaps = remaps or []
+    for cand in _candidate_paths(img, remaps):
+        if os.path.isfile(cand):
+            return cand
+    index = _index if _index is not None else _index_dirs(search_dirs)
+    base = os.path.basename((img.resolved or img.stored).replace("\\", "/")).lower()
+    matches = index.get(base, [])
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def find_relink_targets(
+    missing: list[ImgDesc], search_dirs: list[str],
+    remaps: list[tuple[str, str]] | None = None,
+) -> dict[str, str]:
+    """``{image name: found absolute path}`` for every missing image we can place.
+    Builds the basename index once and reuses it across all images."""
+    index = _index_dirs(search_dirs)
+    out: dict[str, str] = {}
+    for img in missing:
+        target = find_image_target(img, search_dirs, remaps, _index=index)
+        if target is not None:
+            out[img.name] = target
+    return out
+
+
+def build_image_report(targets: dict[str, str], unresolved: list[ImgDesc],
+                       blend_name: str = "current file") -> Report:
+    """Report the missing-texture relink plan: found targets (info) first, then
+    the ones still unresolved (error). Category headers carry the counts."""
+    report = Report(title=f"Missing textures: {blend_name}", feature="f6tex")
+    for name, target in targets.items():
+        report.add(Finding(category="relink_texture",
+                           message=f"{name}:  missing  →  {target}",
+                           severity="info", items=[name, target],
+                           data={"name": name, "new": target}))
+    for img in unresolved:
+        report.add(Finding(category="unresolved_texture",
+                           message=f"{img.name}:  {img.stored}  (no candidate found)",
+                           severity="error", items=[img.name, img.stored]))
+    if not targets and not unresolved:
+        report.add(Finding(category="clean",
+                           message="✓ All image textures resolve — nothing missing",
+                           severity="info"))
+    return report
+
+
+__all__ = ["ImgDesc", "dedup_path", "apply_prefix_remap", "find_image_target",
+           "find_relink_targets", "build_image_report", "relink_stored_path"]

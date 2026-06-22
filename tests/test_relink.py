@@ -27,6 +27,18 @@ def test_to_relative_cross_drive_returns_none():
     assert relink.to_relative(r"D:\libs\a.blend", r"C:\proj") is None
 
 
+def test_relink_stored_path_same_drive_is_relative():
+    assert relink.relink_stored_path(
+        r"C:\proj\libs\mat.blend", r"C:\proj\scene") == "//../libs/mat.blend"
+
+
+def test_relink_stored_path_cross_drive_keeps_absolute():
+    if os.name != "nt":
+        return  # cross-drive semantics are Windows-only
+    assert relink.relink_stored_path(
+        r"D:\libs\mat.blend", r"C:\proj") == r"D:\libs\mat.blend"
+
+
 def test_plan_normalizes_absolute_same_drive():
     libs = [_lib("a.blend", r"C:\proj\libs\a.blend", r"C:\proj\libs\a.blend")]
     plan = relink.plan_library_fixes(libs, r"C:\proj\scene")

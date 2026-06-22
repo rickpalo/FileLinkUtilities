@@ -46,6 +46,15 @@ def needs_fix(lib: LibDesc) -> bool:
     return (not lib.stored.startswith("//")) or has_backslash(lib.stored)
 
 
+def relink_stored_path(target_abs: str, blend_dir: str) -> str:
+    """The path to store in ``library.filepath`` when relinking to ``target_abs``.
+
+    Same-drive targets become ``//``-relative (portable); a cross-drive target
+    keeps its absolute path (can't be relativised on Windows). This is the single
+    place the relink operators turn a chosen target file into a stored path."""
+    return to_relative(target_abs, blend_dir) or target_abs
+
+
 def _key(p: str) -> str:
     return p.replace("\\", "/").rstrip("/").lower()
 
