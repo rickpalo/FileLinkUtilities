@@ -86,6 +86,72 @@ class ASSETDOCTOR_OT_scan_broken_textures(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class ASSETDOCTOR_OT_find_missing_files_folder(bpy.types.Operator):
+    """Follow-up A — wrap Blender's NATIVE recursive missing-file search and report
+    the result (which Blender omits). Our Layer-1 search is single-level; this is
+    recursive by filename. Affects ALL external files (images, libraries…), not just
+    the textures listed above; backs up first."""
+
+    bl_idname = "assetdoctor.find_missing_files_folder"
+    bl_label = "Find Missing Files (folder)…"
+    bl_options = {"REGISTER"}
+
+    # A directory picker: the file browser fills `directory` with the chosen folder.
+    directory: bpy.props.StringProperty(subtype="DIR_PATH")  # type: ignore[valid-type]
+    filter_folder: bpy.props.BoolProperty(default=True, options={"HIDDEN"})  # type: ignore[valid-type]
+
+    @classmethod
+    def description(cls, context, properties):
+        return ("Search a folder RECURSIVELY (by filename) for every missing external "
+                "file and relink what it finds — Blender's native search — then report "
+                "which were found and which are still missing. Affects ALL external "
+                "files (images, libraries…), not just the list above. Backs up first")
+
+    def invoke(self, context, event):
+        if not bpy.data.filepath:
+            self.report({"ERROR"}, "Save the file first")
+            return {"CANCELLED"}
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        if not self.directory or not os.path.isdir(self.directory):
+            self.report({"ERROR"}, "Choose a folder to search")
+            return {"CANCELLED"}
+
+        before_missing = [i for i in _gather_images() if not i.exists]
+        if not before_missing:
+            self.report({"INFO"}, "No missing image textures to find")
+            return {"CANCELLED"}
+
+        from .safety import auto_backup
+
+        backup = auto_backup(context)
+        try:
+            # Native, recursive-by-filename; relocates found files silently.
+            bpy.ops.file.find_missing_files(directory=self.directory)
+        except RuntimeError as exc:
+            self.report({"ERROR"}, f"Native search failed: {exc}")
+            return {"CANCELLED"}
+
+        after_by_name = {i.name: i for i in _gather_images()}
+        result = imagepaths.diff_found(before_missing, after_by_name)
+
+        from . import report_store
+
+        blend_name = os.path.basename(bpy.data.filepath) or "current file"
+        report = imagepaths.build_find_missing_report(result, blend_name)
+        report_store.stash_report(context, report, "f6tex")
+
+        _populate_broken_images(context)  # found ones drop off; still-missing remain
+        if context.area:
+            context.area.tag_redraw()
+        tail = f" Backup: {backup}" if backup else " (no backup written)"
+        self.report({"INFO"}, f"Found {len(result.found)}, "
+                    f"{len(result.still_missing)} still missing. Save to persist.{tail}")
+        return {"FINISHED"}
+
+
 class ASSETDOCTOR_OT_relink_pick_texture(bpy.types.Operator):
     bl_idname = "assetdoctor.relink_pick_texture"
     bl_label = "Pick Texture File"

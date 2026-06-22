@@ -16,6 +16,7 @@ from .relink import (
 )
 from .image_relink import (
     ASSETDOCTOR_OT_scan_broken_textures,
+    ASSETDOCTOR_OT_find_missing_files_folder,
     ASSETDOCTOR_OT_relink_pick_texture,
     ASSETDOCTOR_OT_relink_textures_selected,
 )
@@ -44,6 +45,7 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_relink_selected,
     ASSETDOCTOR_OT_normalize_library_paths,
     ASSETDOCTOR_OT_scan_broken_textures,
+    ASSETDOCTOR_OT_find_missing_files_folder,
     ASSETDOCTOR_OT_relink_pick_texture,
     ASSETDOCTOR_OT_relink_textures_selected,
     ASSETDOCTOR_OT_toggle_pause,

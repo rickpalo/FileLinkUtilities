@@ -29,6 +29,7 @@ FEATURES = [
     ("f7", "Dependencies"),
     ("f7live", "Overrides & Dups"),
     ("f7fix", "Path Fixes"),
+    ("f6tex", "Missing Textures"),
 ]
 
 

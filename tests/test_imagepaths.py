@@ -99,3 +99,38 @@ def test_build_image_report_sections():
 def test_build_image_report_clean():
     report = imagepaths.build_image_report({}, [])
     assert report.findings[0].category == "clean"
+
+
+# --- Follow-up A: native find_missing_files before/after diff -----------------
+
+def test_diff_found_classifies_found_and_still_missing():
+    before = [_img("a.png", r"C:\gone\a.png"), _img("b.png", r"C:\gone\b.png", stored="//b.png")]
+    after = {
+        "a.png": _img("a.png", r"C:\found\a.png", exists=True),  # relocated by native search
+        "b.png": _img("b.png", r"C:\gone\b.png"),                # still not found
+    }
+    result = imagepaths.diff_found(before, after)
+    assert result.found == [("a.png", r"C:\found\a.png")]
+    assert result.still_missing == [("b.png", "//b.png")]
+
+
+def test_diff_found_missing_after_entry_counts_as_still_missing():
+    # An image that vanished from bpy.data after the run (renamed/purged) isn't "found".
+    before = [_img("c.png", r"C:\gone\c.png", stored="//c.png")]
+    result = imagepaths.diff_found(before, {})
+    assert result.found == []
+    assert result.still_missing == [("c.png", "//c.png")]
+
+
+def test_build_find_missing_report_sections():
+    result = imagepaths.FindMissingResult(
+        found=[("a.png", r"C:\found\a.png")], still_missing=[("b.png", "//b.png")])
+    report = imagepaths.build_find_missing_report(result, blend_name="scene.blend")
+    assert [f.category for f in report.findings] == ["found_texture", "unresolved_texture"]
+    assert report.feature == "f6tex"
+
+
+def test_build_find_missing_report_clean_when_empty():
+    report = imagepaths.build_find_missing_report(
+        imagepaths.FindMissingResult(found=[], still_missing=[]))
+    assert report.findings[0].category == "clean"

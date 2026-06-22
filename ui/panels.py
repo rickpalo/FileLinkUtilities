@@ -386,7 +386,7 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
 
     # The F7 reports this panel can show (offline scan, live analysis, path fixes).
     _F7_FEATURES = (("f7", "Dependencies"), ("f7live", "Overrides & Dups"),
-                    ("f7fix", "Path Fixes"))
+                    ("f7fix", "Path Fixes"), ("f6tex", "Missing Textures"))
 
     def draw(self, context):
         from ..core.report import Report
@@ -456,6 +456,10 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
                 wm, "assetdoctor_broken_imgs_index", rows=4)
             tex.operator("assetdoctor.relink_textures_selected",
                          text="Relink Selected (creates backup)", icon="FILE_REFRESH")
+        # Follow-up A: Blender's native recursive search (by filename) over a chosen
+        # folder; reports found vs still-missing. Affects ALL external files.
+        tex.operator("assetdoctor.find_missing_files_folder",
+                     text="Find Missing Files (folder)…", icon="FILEBROWSER")
 
         # While a scan runs, show only the progress (avoids the cramped overlap
         # of progress + empty-state hint the user reported).

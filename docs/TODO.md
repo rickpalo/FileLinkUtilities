@@ -43,7 +43,16 @@ or "pick a file" per row, "Relink Selected (creates backup)") and **Path normali
     a thin extractor (like `_gather_images`); all logic unit-tested. Matches the cross-cutting
     "build the selection model once and reuse" requirement.
 
-  - [ ] **F6 follow-up A — wrap Blender's NATIVE recursive search + report (smallest, ship-alone).**
+  - [~] **F6 follow-up A — BUILT @ v0.2.8 (2026-06-21), needs live-Blender verify.**
+    `core/imagepaths.py`: `diff_found(before_missing, after_by_name)` → `FindMissingResult`
+    (found / still_missing) + `build_find_missing_report` (feature `"f6tex"`; 4 new tests, suite 179).
+    `ops/image_relink.py::ASSETDOCTOR_OT_find_missing_files_folder` — dir picker → snapshot missing →
+    `auto_backup` → `bpy.ops.file.find_missing_files(directory=)` → re-snapshot → diff → stash f6tex
+    report + re-populate the broken-imgs list. UI: "Find Missing Files (folder)…" button in the
+    Missing-textures box; `"f6tex"` ("Missing Textures") added to `report_store.FEATURES` +
+    panel `_F7_FEATURES` + `core/tree._CATEGORY_TITLES` (found_texture/unresolved_texture/relink_texture).
+    **VERIFY:** pick a folder containing the missing textures → found ones drop off the list + appear in
+    the Missing Textures report; still-missing remain; backup written.
     Our Layer-1 search is single-level `os.scandir`; `bpy.ops.file.find_missing_files(directory=X)` is
     **recursive by filename** but **silent**. New **"Find Missing Files (folder)…"** button in the
     Missing-textures box → dir picker. Flow: snapshot each LOCAL image's `exists` → `auto_backup` → run

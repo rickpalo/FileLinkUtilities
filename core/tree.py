@@ -30,6 +30,9 @@ _CATEGORY_TITLES = {
     "relink_missing": "Relink missing libraries",
     "normalize_path": "Normalize paths",
     "duplicate_library": "Duplicate library blocks",
+    "relink_texture": "Relink missing textures",
+    "found_texture": "Found textures",
+    "unresolved_texture": "Still missing",
     "clean": "Status",
     "summary": "Summary",
 }
