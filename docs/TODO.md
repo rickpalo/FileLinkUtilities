@@ -1,5 +1,41 @@
 # AssetDoctor — TODO / backlog
 
+## ⚑ LIVE-BLENDER VERIFY CHECKLIST — tonight's builds v0.2.5–v0.2.10 (2026-06-21)
+
+Everything below is BUILT + unit-tested (suite 194 green) but **never exercised in Blender** beyond the
+v0.2.7 panel draw. Modal pickers, native ops, node-tree walks, and datablock mutation can't be
+headless-tested, so this is the first real run. **Test on a COPY of the real file.** All mutating ops
+auto-backup; you must **save** to persist. **Install the new build and RESTART Blender** (registration
+changed — new ops/props/panels; F3 "Reload Scripts" is unreliable for structural changes). Work the list
+**top-down (lossless/report paths first, apply last).** All controls live in **Properties › Scene ›
+AssetDoctor** (the dependency panel) unless noted.
+
+1. **Library relink + normalize (v0.2.5).** *Broken links* box → **Find Broken Links** lists missing
+   library links (per-row checkbox; auto-found candidate or "pick a file"); tick → **Relink Selected
+   (backup)** fixes only ticked, leaves others. *Path normalization* box → **Check** (report) then
+   **Normalize (backup)** — normalize must NOT relink.
+2. **Unsaved-changes caution (v0.2.6).** With unsaved edits, a red hint shows above **Scan deps**
+   ("save before Scan deps — it reads from disk"); it clears after saving.
+3. **Missing-texture relink — Layer 1 (v0.2.7).** *Missing textures* box → **Find Missing Textures**
+   lists magenta/missing LOCAL images; doubled-prefix ones auto-match (`CHECKMARK`); **pick a file**
+   works; **Relink Selected (backup)** fixes only ticked → magenta resolves on reload. *(Relink ACTION
+   never run before — watch this one.)*
+4. **Find Missing Files / native recursive (v0.2.8).** **Find Missing Files (folder)…** → pick a folder
+   (e.g. `E:\BlenderSync\SynologyDrive`) → found textures drop off the list AND appear in the **Missing
+   Textures** report; still-missing remain; backup written. **Caveat to confirm:** native op is
+   recursive and relocates ALL external files (libraries too), picking one on duplicate basenames.
+5. **Group targeting — B1 (v0.2.9).** *Fix a group at once* box: **Folder/Material** toggle; groups
+   list by original folder; **Point at folder…** fills targets for the whole group (recursive, unique
+   match) → then **Relink Selected**. Switch to **Material** when a group's original folder is gone and
+   point one material's textures at a chosen dir.
+6. **Duplicate-texture dedup — Layer 2 (v0.2.10).** *Duplicate textures (.NNN)* box → **Find (report)**
+   lists content-identical `.NNN` sets (verified by dims+hash); a same-name family with DIFFERING
+   content is flagged "content differs — not merged". **Merge (backup)** keeps one canonical, remaps
+   users, removes the copies → re-check shows clean.
+
+Report any failures back here; the **next build step is step 4 (B2 fuzzy substitute + Layer 2
+resolution-standardize — LOSSY/opt-in)**, which should wait until these lossless layers verify.
+
 ## TOP PRIORITY — separate "fix folders" from "fix paths/links"; per-link targeted fix (2026-06-21)
 
 **STATUS: BUILT @ v0.2.5, VERIFIED IN BLENDER (user, 2026-06-21) — feature works end-to-end.** On the
