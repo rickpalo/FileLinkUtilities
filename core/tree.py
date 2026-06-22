@@ -33,6 +33,8 @@ _CATEGORY_TITLES = {
     "relink_texture": "Relink missing textures",
     "found_texture": "Found textures",
     "unresolved_texture": "Still missing",
+    "merge_lossless": "Merge duplicates (lossless)",
+    "family_conflict": "Name family, content differs",
     "clean": "Status",
     "summary": "Summary",
 }

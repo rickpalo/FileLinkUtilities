@@ -21,6 +21,7 @@ from .image_relink import (
     ASSETDOCTOR_OT_relink_pick_texture,
     ASSETDOCTOR_OT_relink_textures_selected,
 )
+from .image_dedup import ASSETDOCTOR_OT_dedup_textures
 from .progress import ASSETDOCTOR_OT_toggle_pause, ASSETDOCTOR_OT_request_cancel
 from .make_local import ASSETDOCTOR_OT_make_local
 from .material_dedup import ASSETDOCTOR_OT_material_dedup
@@ -50,6 +51,7 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_point_group_at_folder,
     ASSETDOCTOR_OT_relink_pick_texture,
     ASSETDOCTOR_OT_relink_textures_selected,
+    ASSETDOCTOR_OT_dedup_textures,
     ASSETDOCTOR_OT_toggle_pause,
     ASSETDOCTOR_OT_request_cancel,
     ASSETDOCTOR_OT_make_local,

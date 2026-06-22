@@ -83,9 +83,20 @@ or "pick a file" per row, "Relink Selected (creates backup)") and **Path normali
 ### F6 Layer 2 — name-family consolidation (DEDUP datablocks, not relink) — design agreed 2026-06-21
   Different operation from A/B (which fix MISSING files): merge duplicate image DATABLOCKS. Two cases,
   treated differently (mixing them corrupts the render):
-  - **`.NNN` families (Leather vs Leather.001) → LOSSLESS merge** when identity-verified. Image analogue
-    of F3 material dedup: pick canonical, `old.user_remap(new)`, purge rest. Reuse
-    `datablock_graph.strip_dup_suffix`/`duplicate_families`.
+  - [~] **`.NNN` families (Leather vs Leather.001) → LOSSLESS merge — BUILT @ v0.2.10 (2026-06-21),
+    needs live-Blender verify.** `core/imagededup.py` (bpy-free, 8 tests, suite 194):
+    `plan_dup_merges(images)` → `([MergePlan], [FamilyConflict])` — groups local images into `.NNN`
+    families via `datablock_graph.duplicate_families`, partitions each by the operator-supplied
+    fingerprint, emits a lossless plan per identical 2+ subset (canonical = un-suffixed base, else
+    most-users); families with differing/unverifiable content become conflicts (reported, NOT merged).
+    `build_dedup_report` (feature `"f6dup"`). `ops/image_dedup.py::ASSETDOCTOR_OT_dedup_textures`
+    (apply bool): fingerprints ONLY family members (`WxH:channels:depth:hash`; packed→packed data,
+    else file hash cached by path/size/mtime); apply = `auto_backup` → `victim.user_remap(canonical)`
+    → `images.remove` when users==0 → re-report. UI "Duplicate textures (.NNN)" box (Find/Merge) in
+    the Scene panel; `"f6dup"` in FEATURES/_F7_FEATURES + category titles (merge_lossless/
+    family_conflict). **VERIFY:** Find lists identical `.NNN` sets; Merge keeps one + removes copies +
+    backup; a mixed-content family is flagged not merged. Reuse `datablock_graph.strip_dup_suffix`/
+    `duplicate_families` (done).
   - **Resolution variants (`_1k` vs `_2k`) → DIFFERENT files → NOT a merge.** "Combine" = standardize
     to a CHOSEN resolution = **LOSSY → footprint pillar, opt-in, REPORT-ONLY for now.**
   - **SAFETY RULE:** name similarity finds CANDIDATES only; verify **dimensions + content hash** before
