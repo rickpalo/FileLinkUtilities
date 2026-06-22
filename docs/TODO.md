@@ -62,14 +62,18 @@ or "pick a file" per row, "Relink Selected (creates backup)") and **Path normali
     one — less safe than our unique-match rule; mitigation = backup + the before/after report so the
     user inspects what moved (label it "searches recursively, affects all external files"). Complements
     Layer 1 (ours = precise/unique; native = broad/recursive).
-  - [ ] **F6 follow-up B1 — directory-level relink (LOSSLESS, build now).** Keep the flat virtualized
-    UIList as source of truth; add a compact **Groups** strip above it. **Group by ORIGINAL containing
-    directory** (decided — files that lived together likely still do; material shown as secondary
-    info). Each group row → **"Point group at folder…"** → dir picker → fill `target` for every member
-    found there by basename → existing **Relink Selected** applies. **Material is the FALLBACK
-    targeting dimension (user, 2026-06-21):** when a group's original directory is gone, let the user
-    pick a directory and resolve **all of ONE material's** missing textures within it (group-by-material
-    targeting mode for that case). Minimal new state; reuses the working apply path.
+  - [~] **F6 follow-up B1 — BUILT @ v0.2.9 (2026-06-21), needs live-Blender verify.**
+    `core/imagefamily.py` (bpy-free, 7 tests, suite 186): `group_by_directory`, `group_by_key` (material
+    fallback), `resolve_group_in_dir(members, dir, recursive)` (unique basename match, never a
+    non-existent path; reuses Layer-1 `find_relink_targets`). Name-family detection deferred to step 3.
+    `ASSETDOCTOR_PG_broken_lib` gained `group`+`material`; `_populate_broken_images` fills them
+    (`_image_material_map` walks material node trees for a representative material). New op
+    `ASSETDOCTOR_OT_point_group_at_folder` (group_key, by=DIR|MATERIAL, recursive dir picker → fills
+    targets on the group's rows → user Relinks Selected). UI: a "Fix a group at once" box in the
+    Missing-textures section with a Folder/Material toggle (`WM.assetdoctor_tex_group_by`) + a
+    "Point at folder…" button per group. **VERIFY:** groups list by folder; pick a folder → members
+    matched/ticked; Material toggle groups by material when the original folder is gone; Relink Selected
+    applies. Name-family/`.001` overlap stays for Layer 2.
   - [ ] **F6 follow-up B2 — fuzzy substitution (LOSSY/render-changing, build WITH Layer 2, gate hard).**
     Substituting `Beard18→Beard1` deliberately changes the render. Separate, explicitly-labeled
     **"Substitute equivalent…"** per-group action, **default OFF**, candidate shown for confirmation.

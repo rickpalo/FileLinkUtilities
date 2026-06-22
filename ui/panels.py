@@ -110,6 +110,10 @@ class ASSETDOCTOR_PG_broken_lib(bpy.types.PropertyGroup):
     selected: bpy.props.BoolProperty(
         default=False, name="",
         description="Include this link when you Relink Selected")  # type: ignore[valid-type]
+    # F6 B1 grouping (images only): original containing directory + a representative
+    # material, so the user can point a whole group at one folder.
+    group: bpy.props.StringProperty()  # type: ignore[valid-type]
+    material: bpy.props.StringProperty()  # type: ignore[valid-type]
 
 
 class ASSETDOCTOR_UL_broken_libs(bpy.types.UIList):
@@ -456,6 +460,32 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
                 wm, "assetdoctor_broken_imgs_index", rows=4)
             tex.operator("assetdoctor.relink_textures_selected",
                          text="Relink Selected (creates backup)", icon="FILE_REFRESH")
+
+            # B1: point a whole GROUP at one folder. Group by original folder, or by
+            # material when that folder is gone; matching fills targets, then Relink.
+            mode = wm.assetdoctor_tex_group_by
+            grp = tex.box().column(align=True)
+            grp.label(text="Fix a group at once", icon="OUTLINER_OB_GROUP_INSTANCE")
+            grp.row(align=True).prop(wm, "assetdoctor_tex_group_by", expand=True)
+            counts: dict[str, int] = {}
+            for item in wm.assetdoctor_broken_imgs:
+                key = item.group if mode == "DIR" else item.material
+                if key:
+                    counts[key] = counts.get(key, 0) + 1
+            if counts:
+                for key in sorted(counts):
+                    disp = (os.path.basename(key.rstrip("/")) or key) if mode == "DIR" else key
+                    grow = grp.row(align=True)
+                    grow.label(text=f"{disp}  ({counts[key]})",
+                               icon="FILE_FOLDER" if mode == "DIR" else "MATERIAL")
+                    op = grow.operator("assetdoctor.point_group_at_folder",
+                                       text="Point at folder…", icon="FILEBROWSER")
+                    op.group_key = key
+                    op.by = mode
+            else:
+                grp.label(text="(no material assigned to these)" if mode == "MATERIAL"
+                          else "(no folder info)", icon="INFO")
+
         # Follow-up A: Blender's native recursive search (by filename) over a chosen
         # folder; reports found vs still-missing. Affects ALL external files.
         tex.operator("assetdoctor.find_missing_files_folder",

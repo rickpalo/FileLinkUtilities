@@ -125,6 +125,13 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_broken_imgs = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_broken_lib)
     bpy.types.WindowManager.assetdoctor_broken_imgs_index = bpy.props.IntProperty(default=0)
+    # F6 B1: how the "point a group at one folder" strip groups missing textures.
+    bpy.types.WindowManager.assetdoctor_tex_group_by = bpy.props.EnumProperty(
+        name="Group by",
+        items=[("DIR", "Folder", "Group by each texture's original folder"),
+               ("MATERIAL", "Material", "Group by the material that uses each texture "
+                "(use when the original folder is gone)")],
+        default="DIR")
 
 
 def unregister() -> None:
@@ -147,7 +154,8 @@ def unregister() -> None:
                 "assetdoctor_report_rows", "assetdoctor_report_index",
                 "assetdoctor_resource_rows", "assetdoctor_resource_index",
                 "assetdoctor_broken_libs", "assetdoctor_broken_index",
-                "assetdoctor_broken_imgs", "assetdoctor_broken_imgs_index"]
+                "assetdoctor_broken_imgs", "assetdoctor_broken_imgs_index",
+                "assetdoctor_tex_group_by"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]
     for attr in wm_attrs:

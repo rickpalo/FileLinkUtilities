@@ -16,11 +16,26 @@ import os
 
 import bpy
 
-from ..core import imagepaths
+from ..core import imagepaths, imagefamily
 from ..core.imagepaths import ImgDesc
 
 # Image datablock sources whose filepath points at an external file we can relink.
 _FILE_SOURCES = {"FILE", "SEQUENCE", "MOVIE", "TILED"}
+
+
+def _image_material_map() -> dict[str, str]:
+    """``{image name: a material that uses it}`` — a representative material per
+    image (the first found), for the B1 material-fallback grouping. Walks material
+    node trees for any node carrying an ``image`` (TEX_IMAGE & friends)."""
+    out: dict[str, str] = {}
+    for mat in bpy.data.materials:
+        if not mat.use_nodes or mat.node_tree is None:
+            continue
+        for node in mat.node_tree.nodes:
+            img = getattr(node, "image", None)
+            if img is not None and img.name not in out:
+                out[img.name] = mat.name
+    return out
 
 
 def _gather_images() -> list[ImgDesc]:
@@ -52,6 +67,7 @@ def _populate_broken_images(context) -> tuple[int, int]:
     # Search the folders of resolvable images (+ this file's folder) by basename.
     search_dirs = [blend_dir] + [os.path.dirname(i.resolved) for i in imgs if i.exists]
     targets = imagepaths.find_relink_targets(missing, search_dirs)
+    mat_map = _image_material_map()  # for B1 material-fallback grouping
     for img in missing:
         item = coll.add()
         item.name = img.name
@@ -60,6 +76,8 @@ def _populate_broken_images(context) -> tuple[int, int]:
         item.target = cand
         item.has_candidate = bool(cand)
         item.selected = bool(cand)  # pre-tick only confident auto-matches
+        item.group = os.path.dirname((img.resolved or img.stored).replace("\\", "/"))
+        item.material = mat_map.get(img.name, "")
     wm.assetdoctor_broken_imgs_index = 0
     return len(missing), len(targets)
 
@@ -149,6 +167,65 @@ class ASSETDOCTOR_OT_find_missing_files_folder(bpy.types.Operator):
         tail = f" Backup: {backup}" if backup else " (no backup written)"
         self.report({"INFO"}, f"Found {len(result.found)}, "
                     f"{len(result.still_missing)} still missing. Save to persist.{tail}")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_point_group_at_folder(bpy.types.Operator):
+    """Follow-up B1 — point a whole GROUP of missing textures at one folder and
+    resolve every member by filename within it (directory-level relink). Groups are
+    by original directory; the material fallback (``by='MATERIAL'``) lets the user
+    fix all of one material's textures when the original folder is gone. Fills the
+    rows' targets (unique basename match only) — the user then Relinks Selected."""
+
+    bl_idname = "assetdoctor.point_group_at_folder"
+    bl_label = "Point Group at Folder"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    group_key: bpy.props.StringProperty()  # type: ignore[valid-type]
+    by: bpy.props.StringProperty(default="DIR")  # type: ignore[valid-type]  # DIR | MATERIAL
+    recursive: bpy.props.BoolProperty(
+        name="Search subfolders",
+        description="Also search inside subfolders of the chosen folder",
+        default=True)  # type: ignore[valid-type]
+    directory: bpy.props.StringProperty(subtype="DIR_PATH")  # type: ignore[valid-type]
+    filter_folder: bpy.props.BoolProperty(default=True, options={"HIDDEN"})  # type: ignore[valid-type]
+
+    @classmethod
+    def description(cls, context, properties):
+        return ("Choose a folder; every missing texture in this group is matched by "
+                "filename within it (and subfolders) and its target set. Then Relink "
+                "Selected to apply")
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        if not self.directory or not os.path.isdir(self.directory):
+            self.report({"ERROR"}, "Choose a folder to search")
+            return {"CANCELLED"}
+
+        coll = context.window_manager.assetdoctor_broken_imgs
+        members = [item for item in coll
+                   if (item.group if self.by == "DIR" else item.material) == self.group_key]
+        if not members:
+            self.report({"WARNING"}, "No textures in this group")
+            return {"CANCELLED"}
+
+        descs = [ImgDesc(name=item.name, stored=item.stored,
+                         resolved=os.path.normpath(bpy.path.abspath(item.stored)), exists=False)
+                 for item in members]
+        found = imagefamily.resolve_group_in_dir(descs, self.directory, recursive=self.recursive)
+        for item in members:
+            target = found.get(item.name)
+            if target:
+                item.target = target
+                item.has_candidate = True
+                item.selected = True
+        if context.area:
+            context.area.tag_redraw()
+        self.report({"INFO"}, f"Matched {len(found)} of {len(members)} in this group. "
+                    "Tick/adjust, then Relink Selected.")
         return {"FINISHED"}
 
 
