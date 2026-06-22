@@ -31,29 +31,64 @@ or "pick a file" per row, "Relink Selected (creates backup)") and **Path normali
   - **UI LIVE-CONFIRMED @ v0.2.7 (user screenshot, 2026-06-21):** the "Missing textures" box draws,
     lists the CC4/Beard/Brows textures (mostly "no match — pick a file" since they're absent locally).
     Two NEW follow-ups from that test:
-  - [ ] **F6 follow-up A — wrap Blender's NATIVE missing-file ops + report results.** Blender's
-    `file.find_missing_files(directory=…)` relocates found files **silently** (reports nothing);
-    `file.report_missing_files` only lists the missing. Add:
-    (1) a function/button that runs **Report Missing Files** and **collects** the result into our list
-        (we already enumerate missing images ourselves — present it as that, or capture Blender's
-        report); and
-    (2) a **"Find Missing Files (folder)…"** button that opens a directory picker, runs
-        `bpy.ops.file.find_missing_files(directory=chosen)` (native, recursive by filename), then
-        **reports BOTH found and still-missing** by snapshotting each image's resolved-exists
-        before/after and diffing — the reporting Blender omits. Complements our dedup/folder relink
-        with Blender's recursive search. Backup first.
-  - [ ] **F6 follow-up B — group missing textures + flexible targeting (from the screenshot).**
-    (1) **Group by source** (by material, or by the missing files' original containing directory) into
-        a collapsible **summary row**; let the user point the GROUP at ONE containing directory and
-        resolve every member by filename within it (directory-level relink). The screenshot's
-        `Beard18_Transparency_*` / `Brows_*` families all share a folder → fix the whole group at once.
-    (2) **Substitute a DIFFERENT-named texture** ("any beard would do"): map e.g.
-        `Beard18_Transparency_Diffuse` → `Beard1_Transparency_Diffuse`. Pick-a-file already allows any
-        single file; the new needs are (a) doing it group-wide from one chosen dir even when the
-        variant number differs (fuzzy match within the dir by stripping the trailing index), and
-        (b) a deliberate "substitute equivalent" workflow with fuzzy name matching (`BeardNN` family).
-    Note: screenshot rows include `.001` duplicate-suffix names that are ALSO missing — overlaps
-    Layer 2 (name-family consolidation); design A/B/Layer-2 together.
+  - **DESIGN AGREED (user, 2026-06-21) — A + B + Layer 2 designed together. Build NOT started.**
+
+    **Unifying model (the "better design" — build ONCE, reuse across B + Layer 2).** A, B, and
+    Layer 2 all operate on FAMILIES/GROUPS of images, and a missing `Leather_2k` whose `Leather_1k`
+    exists is BOTH a relink candidate AND a consolidation candidate (surface both). So build a single
+    bpy-free `core/imagefamily.py`: `family_key(name)` (strip `.NNN` → strip res tokens
+    `_1k`/`_2k`/`_4k`/`_1024`/`LowRes`/`HighRes`); `group_images(descs)` →
+    `{family_key: [members]}` where members carry name/stored/resolved/exists/dims/content-hash/users;
+    `classify_family(members)` → IDENTICAL | RES_VARIANT | DISTINCT (needs dims+hash). The bpy op stays
+    a thin extractor (like `_gather_images`); all logic unit-tested. Matches the cross-cutting
+    "build the selection model once and reuse" requirement.
+
+  - [ ] **F6 follow-up A — wrap Blender's NATIVE recursive search + report (smallest, ship-alone).**
+    Our Layer-1 search is single-level `os.scandir`; `bpy.ops.file.find_missing_files(directory=X)` is
+    **recursive by filename** but **silent**. New **"Find Missing Files (folder)…"** button in the
+    Missing-textures box → dir picker. Flow: snapshot each LOCAL image's `exists` → `auto_backup` → run
+    native op → re-snapshot → **diff** → report **found** vs **still-missing** (the report Blender
+    omits); also surface `file.report_missing_files`. **Accepted caveat:** the native op affects ALL
+    external files (libraries/caches too), recurses the whole tree, and on duplicate basenames picks
+    one — less safe than our unique-match rule; mitigation = backup + the before/after report so the
+    user inspects what moved (label it "searches recursively, affects all external files"). Complements
+    Layer 1 (ours = precise/unique; native = broad/recursive).
+  - [ ] **F6 follow-up B1 — directory-level relink (LOSSLESS, build now).** Keep the flat virtualized
+    UIList as source of truth; add a compact **Groups** strip above it. **Group by ORIGINAL containing
+    directory** (decided — files that lived together likely still do; material shown as secondary
+    info). Each group row → **"Point group at folder…"** → dir picker → fill `target` for every member
+    found there by basename → existing **Relink Selected** applies. **Material is the FALLBACK
+    targeting dimension (user, 2026-06-21):** when a group's original directory is gone, let the user
+    pick a directory and resolve **all of ONE material's** missing textures within it (group-by-material
+    targeting mode for that case). Minimal new state; reuses the working apply path.
+  - [ ] **F6 follow-up B2 — fuzzy substitution (LOSSY/render-changing, build WITH Layer 2, gate hard).**
+    Substituting `Beard18→Beard1` deliberately changes the render. Separate, explicitly-labeled
+    **"Substitute equivalent…"** per-group action, **default OFF**, candidate shown for confirmation.
+    Needs a DIFFERENT strip than `.NNN` — an embedded trailing index in a name segment (`BeardNN`) —
+    which overlaps Layer 2's family logic, so build it together with Layer 2, not with B1.
+
+### F6 Layer 2 — name-family consolidation (DEDUP datablocks, not relink) — design agreed 2026-06-21
+  Different operation from A/B (which fix MISSING files): merge duplicate image DATABLOCKS. Two cases,
+  treated differently (mixing them corrupts the render):
+  - **`.NNN` families (Leather vs Leather.001) → LOSSLESS merge** when identity-verified. Image analogue
+    of F3 material dedup: pick canonical, `old.user_remap(new)`, purge rest. Reuse
+    `datablock_graph.strip_dup_suffix`/`duplicate_families`.
+  - **Resolution variants (`_1k` vs `_2k`) → DIFFERENT files → NOT a merge.** "Combine" = standardize
+    to a CHOSEN resolution = **LOSSY → footprint pillar, opt-in, REPORT-ONLY for now.**
+  - **SAFETY RULE:** name similarity finds CANDIDATES only; verify **dimensions + content hash** before
+    offering merge. Same family + same content → lossless; same family + different content → standardize
+    (flagged lossy). Show which objects/materials use each (usage graph).
+  - First cut: **current-file images only**, hash on demand, **cache by (path,size,mtime)**, packed
+    images hashed from packed data. New `core/imagededup.py` (bpy-free) + report feature key `"f6dup"`
+    (categories `merge_lossless` info, `standardize_lossy` warning/opt-in).
+
+### F6 A/B/Layer-2 — recommended build order (lossless-now vs lossy-deferred)
+  1. **Follow-up A** — self-contained, immediate value.
+  2. **`core/imagefamily.py` + B1** — shared model + directory-level relink (lossless).
+  3. **Layer 2 `.NNN` lossless merge** — safe, high-value dedup (new core + tests).
+  4. **B2 fuzzy substitute + Layer 2 resolution-standardize** — both lossy/opt-in, designed & built
+     together under the footprint pillar.
+  Keeps the lossless/lossy split clean; never collapses a 1k+2k pair by accident.
   User relinked the material library OK but some materials still render pink/purple = likely missing
   IMAGE files inside that library. AssetDoctor's relinker currently fixes LIBRARY (.blend) links only,
   NOT image/texture paths. (User CAN use Blender's File→External Data→Report Missing Files to confirm —
