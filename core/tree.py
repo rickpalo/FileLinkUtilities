@@ -45,6 +45,10 @@ _CATEGORY_TITLES = {
     "override_loop": "Override dependency loops (cause resync spam / bloat)",
     "duplicate_family": "Duplicate data-blocks (.NNN copies — wasted memory)",
     "library_block": "Linked data-blocks per library",
+    "missing_image": "Missing images (render-time)",
+    "driver_error": "Driver errors",
+    "render_error": "Render errors",
+    "render_warning": "Render warnings",
 }
 
 

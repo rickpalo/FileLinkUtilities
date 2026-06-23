@@ -35,6 +35,7 @@ FEATURES = [
     ("f6tex", "Missing Textures"),
     ("f6dup", "Duplicate Textures"),
     ("f6res", "Resolution Variants"),
+    ("f9", "Dry-Run Render Warnings"),
 ]
 
 

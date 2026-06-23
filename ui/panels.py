@@ -577,7 +577,7 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
     _F7_FEATURES = (("f7", "Dependencies"), ("f7live", "Overrides & Dups"),
                     ("f7miss", "Missing Data-blocks"), ("f7rev", "Safe to Delete?"),
                     ("f7links", "Broken Links"), ("f7fix", "Path Fixes"),
-                    ("f6res", "Resolution Variants"))
+                    ("f6res", "Resolution Variants"), ("f9", "Dry-Run Render Warnings"))
 
     def draw(self, context):
         from ..core.report import Report
@@ -704,6 +704,18 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
         # (verified by dimensions + hash). Redesigned to mirror the Missing section:
         # collapsible material groups, a per-family keeper dropdown, inline summary.
         self._draw_duplicate_textures(context, layout, wm)
+
+        # Batch D: catch render-TIME problems (missing textures, driver errors)
+        # that no static scan above can see, by rendering one low-res frame in a
+        # SEPARATE background Blender process — this session's UI/file is untouched.
+        dry = layout.box().column(align=True)
+        dry.label(text="Dry-run render (catches render-time warnings)", icon="RENDER_STILL")
+        if bpy.data.filepath and bpy.data.is_dirty:
+            drow = dry.row()
+            drow.alert = True
+            drow.label(text="Unsaved changes — save first (renders from disk)", icon="ERROR")
+        dry.operator("assetdoctor.dryrun_render", text="Run Dry-Run Render",
+                     icon="RENDER_STILL")
 
         # Which F7 reports exist; a small selector when more than one. The Reports
         # area always gets its own header so a lone report isn't mistaken for part of

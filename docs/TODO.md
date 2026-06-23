@@ -1,27 +1,45 @@
 # AssetDoctor — TODO / backlog
 
-## ⏩ SESSION RESUME (as of v0.2.32, 2026-06-23) — read this first
+## ⏩ SESSION RESUME (as of v0.2.33, 2026-06-23) — read this first
 
-**State:** local dev **v0.2.32** (published channel still 0.1.9). Suite **284 green**. **Batch C: #2, #3's
-generic half, and the new #2b "Examine Library" are all BUILT + WIRED** (ALL need live-Blender verify —
-they mutate links/datablocks, see "★ BATCH C" below for exact test steps per feature):
-- **#2 @ v0.2.30** missing-data-block reconnect (`core/reconnect.py`, `ops/datablock_reconnect.py`,
-  "Datablock Reconnect" box) — only triggers on BROKEN placeholders.
-- **#3 generic half @ v0.2.31** Duplicate Data-blocks merge (`core/datablock_dedup.py` — extracted the
-  type-agnostic algorithm out of `core.imagededup`, now a thin wrapper over it — `core.fingerprint.
-  fingerprint_action`, `ops/datablock_dup.py`, "Duplicate Data-blocks" box; excludes Materials/Meshes/Images,
-  which already have F3/F5/F6).
-- **#2b @ v0.2.32 (new, user request)** "Examine Library" (`ops/examine_library.py`, "Examine Library" box)
-  — for a chosen WORKING library, list everything it provides and retarget away from it (local match → other-
-  library match → Make Local or a manual per-row file+item pick), even though nothing is broken. Real case:
-  `Asset_bundle.blend` causes circular references, user wants to stop depending on it.
+**State:** local dev **v0.2.33** (published channel still 0.1.9). Suite **295 green**. **BATCH D BUILT**
+(see "BATCH D" below) — **RESUME WITH BATCH E next session.**
 
-Also landed 3 quick fixes from a live-test feedback batch this session (NUL-byte sentinel bug, a redundant
-Summary line under Overrides & Dups, a report-toggle scroll-jump fix) — see "★★ LIVE-TEST FEEDBACK BATCH 2"
-for the full 10-item triage. **NEXT:** the KEKey/shape-key half of #3 (needs its own fingerprinter — shape
-keys must match their owning mesh), the deferred folder-wide search for Examine Library, then the rest of
-LIVE-TEST FEEDBACK BATCH 2 (#1 synonym-table+inverse-pairs design, #2/#10 report-formatting pass, #4
-auto-suggest feasibility).
+- **Batch D @ v0.2.33 — headless dry-run render for warnings (#12), BUILT, needs live-Blender verify.**
+  `core/dryrun.py` (bpy-free, 11 tests): `build_dryrun_script`/`build_dryrun_command` build a throwaway
+  low-res (10%, 1 sample), `write_still=False` render script + the subprocess argv (`--background
+  --factory-startup <blend> --python <script>` — factory-startup deliberately keeps unrelated add-on
+  startup noise out of the captured log); `classify_line`/`parse_render_log` turn the captured stdout/
+  stderr into a `Report` (categories `missing_image`/`driver_error`/`render_error`/`render_warning`,
+  deduped with "(xN)", ✓-clean when nothing found). `ops/dryrun_render.py::ASSETDOCTOR_OT_dryrun_render`
+  (`ModalProgressMixin`) launches a SEPARATE `bpy.app.binary_path` process against the file ON DISK (save-
+  first guard, same idiom as Scan Deps), polls non-blockingly (small sleep avoids busy-spin in both modal
+  and synchronous-drain paths) with a 5-minute timeout, parses the log, stashes report `"f9"`. New "Dry-run
+  render" box in `ASSETDOCTOR_PT_scene_deps` (after Duplicate Textures, before the Reports selector);
+  `"f9"` added to `report_store.FEATURES` + the panel's `_F7_FEATURES` + `core/tree._CATEGORY_TITLES`.
+  Distinct from F5's in-process Profile Render (`ops/resource.py`) — this never touches the live session.
+  **VERIFY:** run it on a file with a missing texture or a broken driver → report lists them; a clean file
+  → ✓ no warnings; Cancel/ESC kills the subprocess cleanly.
+
+**Previously, Batch C @ v0.2.30–0.2.32** (all BUILT + WIRED, still needs live-Blender verify — mutates
+links/datablocks, see "★ BATCH C" below for exact test steps per feature): **#2** missing-data-block
+reconnect (`core/reconnect.py`, `ops/datablock_reconnect.py`, "Datablock Reconnect" box) — only triggers
+on BROKEN placeholders. **#3 generic half** Duplicate Data-blocks merge (`core/datablock_dedup.py` —
+extracted the type-agnostic algorithm out of `core.imagededup`, now a thin wrapper over it —
+`core.fingerprint.fingerprint_action`, `ops/datablock_dup.py`, "Duplicate Data-blocks" box; excludes
+Materials/Meshes/Images, which already have F3/F5/F6). **#2b "Examine Library"**
+(`ops/examine_library.py`, "Examine Library" box) — for a chosen WORKING library, list everything it
+provides and retarget away from it (local match → other-library match → Make Local or a manual per-row
+file+item pick), even though nothing is broken. Real case: `Asset_bundle.blend` causes circular
+references, user wants to stop depending on it.
+
+Also still open from a live-test feedback batch (NOT yet built): the KEKey/shape-key half of Batch C's
+#3 (needs its own fingerprinter — shape keys must match their owning mesh), the deferred folder-wide
+search for Examine Library, and the rest of "★★ LIVE-TEST FEEDBACK BATCH 2" (#1 synonym-table+inverse-
+pairs design, #2/#10 report-formatting pass, #4 auto-suggest feasibility). **NEXT SESSION: Batch E**
+(node-graph substitute-material confidence, idle-scan feasibility prototype, then Batch 5's N-panel→
+Properties migration + UIList virtualization — see "BATCH E" below) — pick up the live-test-feedback
+leftovers above whenever convenient, they're independent of Batch E.
 
 ## ★★ LIVE-TEST FEEDBACK BATCH 2 (user, 2026-06-23 — 10 items, screenshots from a real PSM_Stage file) ★★
 
@@ -270,12 +288,16 @@ reconnect" plan — build them together.
   works; Apply Selected remaps/localizes only ticked rows and the old Asset_bundle copies aren't force-
   removed (just unreferenced).
 
-### BATCH D — headless dry-run render warnings (#12)
-- **#12 Dry-run render for warnings:** YES — run a low-res render in a SEPARATE headless Blender
-  (`blender -b file.blend -f 1 -- ...` or a temp script) as a subprocess so it does NOT touch the live UI
-  (correct — a separate process has its own bpy/UI). Capture stdout/stderr, parse warnings/cautions (missing
-  textures, driver errors, "could not load image", etc.) into a report. New feature; subprocess + parser +
-  report feature. Distinct from the in-process Profile Render (F5). Modal/async so the UI stays live.
+### BATCH D — headless dry-run render warnings (#12) — BUILT @ v0.2.33, needs live-Blender verify
+- **#12 Dry-run render for warnings — DONE.** Runs a low-res (10%, 1 sample), `write_still=False` render in
+  a SEPARATE background Blender subprocess (`bpy.app.binary_path`, `--factory-startup` to keep add-on
+  startup noise out of the log) against the file ON DISK, so it never touches the live UI/session. Captures
+  combined stdout/stderr to a temp log file (read after the process exits — no pipe-deadlock risk), parses
+  it for missing-image/driver-error/generic-error/-warning lines (deduped with "(xN)") into report `"f9"`.
+  `core/dryrun.py` (bpy-free, 11 tests) + `ops/dryrun_render.py::ASSETDOCTOR_OT_dryrun_render`
+  (`ModalProgressMixin`, non-blocking poll with a 5-min timeout) + "Dry-run render" box in
+  `ASSETDOCTOR_PT_scene_deps`. Distinct from the in-process Profile Render (F5). See the "BATCH D" entry
+  at the top of this file (SESSION RESUME) for full build notes + the live-verify checklist.
 
 ### BATCH E — finish Batch 4 leftovers + Batch 5
 - Node-graph substitute-material confidence (reuse `core/fingerprint.fingerprint_material`).
