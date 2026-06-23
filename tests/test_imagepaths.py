@@ -134,3 +134,34 @@ def test_build_find_missing_report_clean_when_empty():
     report = imagepaths.build_find_missing_report(
         imagepaths.FindMissingResult(found=[], still_missing=[]))
     assert report.findings[0].category == "clean"
+
+
+def test_iter_walk_dirs_non_recursive_yields_root_only(tmp_path):
+    (tmp_path / "sub").mkdir()
+    assert list(imagepaths.iter_walk_dirs(str(tmp_path), recursive=False)) == [str(tmp_path)]
+
+
+def test_iter_walk_dirs_recursive_descends(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "b").mkdir()
+    got = set(imagepaths.iter_walk_dirs(str(tmp_path), recursive=True))
+    assert got == {str(tmp_path), str(tmp_path / "a"), str(tmp_path / "a" / "b")}
+
+
+def test_scan_dir_into_indexes_files_and_skips_seen(tmp_path):
+    (tmp_path / "A.PNG").write_bytes(b"x")
+    index, seen = {}, set()
+    imagepaths._scan_dir_into(index, seen, str(tmp_path))
+    assert index == {"a.png": [os.path.normpath(str(tmp_path / "A.PNG"))]}
+    # A second scan of the same dir (case/trailing-slash insensitive) is a no-op.
+    imagepaths._scan_dir_into(index, seen, str(tmp_path) + os.sep)
+    assert index["a.png"] == [os.path.normpath(str(tmp_path / "A.PNG"))]
+
+
+def test_scan_dir_into_matches_index_dirs(tmp_path):
+    # The incremental primitive must build exactly what _index_dirs builds.
+    (tmp_path / "a.png").write_bytes(b"x")
+    (tmp_path / "b.png").write_bytes(b"x")
+    index, seen = {}, set()
+    imagepaths._scan_dir_into(index, seen, str(tmp_path))
+    assert index == imagepaths._index_dirs([str(tmp_path)])

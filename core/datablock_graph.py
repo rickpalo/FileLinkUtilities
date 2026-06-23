@@ -77,6 +77,21 @@ def build_live_report(extract: LiveExtract, file_label: str = "current file") ->
     """Turn a :class:`LiveExtract` into the F7 live (overrides & duplicates) report."""
     report = Report(title=f"Overrides & duplicates: {file_label}", feature="f7live")
 
+    # Headline counts as a flat top row, read at a glance without drilling into
+    # each category (mirrors core.missingdata's "overview" row).
+    n_loops = len(extract.loops)
+    waste = wasted_copies(extract.duplicates)
+    n_libs = len(extract.library_counts)
+    severity = "error" if n_loops else ("warning" if waste else "info")
+    report.add(Finding(
+        category="overview",
+        message=(f"{n_loops} override loop(s) · {waste} duplicate data-block(s) · "
+                 f"{n_libs} librar{'y' if n_libs == 1 else 'ies'} · "
+                 f"{extract.override_count} override(s)"),
+        severity=severity,
+        data={"loops": n_loops, "wasted": waste, "libraries": n_libs,
+              "overrides": extract.override_count}))
+
     # Override dependency loops first — these are the crash/resync cause.
     for loop in extract.loops:
         report.add(Finding(category="override_loop",
@@ -88,7 +103,6 @@ def build_live_report(extract: LiveExtract, file_label: str = "current file") ->
                            severity="warning"))
 
     # Duplicate families (the .NNN bloat), worst first, grouped by type.
-    waste = wasted_copies(extract.duplicates)
     for type_label in sorted(extract.duplicates):
         fams = extract.duplicates[type_label]
         for base in sorted(fams, key=lambda b: -len(fams[b])):
@@ -105,15 +119,7 @@ def build_live_report(extract: LiveExtract, file_label: str = "current file") ->
                            message=f"{lib}: {n} linked datablock(s)",
                            severity="info", items=[lib], detail=f"{n}"))
 
-    if extract.override_count:
-        report.add(Finding(category="override_summary",
-                           message=f"{extract.override_count} library override(s) in file",
-                           severity="info"))
-
-    report.add(Finding(category="summary",
-                       message=f"{len(extract.loops)} loop(s); ~{waste} redundant "
-                               f"duplicate datablock(s); {len(extract.library_counts)} "
-                               f"linked library/-ies",
-                       severity="info",
-                       data={"loops": len(extract.loops), "wasted": waste}))
+    # No trailing "summary" Finding here (unlike most reports) — the flat
+    # "overview" headline above already carries the same counts, just phrased
+    # differently; a second summary row was redundant clutter (user, 2026-06-23).
     return report

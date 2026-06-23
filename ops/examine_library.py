@@ -1,0 +1,285 @@
+"""Examine Library — proactively retarget AWAY from a chosen (working) library.
+
+Different problem from ``ops.datablock_reconnect`` (which only triggers on
+BROKEN/missing placeholders): a library can resolve perfectly fine and still be
+worth dropping — e.g. a shared "Asset_bundle.blend" that creates circular
+references with another library, so the user wants everything it currently
+provides re-sourced from the local file or from OTHER already-loaded libraries
+first, falling back to picking a specific replacement only when nothing already
+in memory matches.
+
+Workflow: pick a library → list EVERY local datablock currently linked from it →
+for each, look for an EXACT (or ``.NNN``-same-base) name match already in memory,
+preferring a LOCAL datablock over one from a different library (no file I/O at
+all for that path) → where nothing matches, the row offers Make Local or a
+per-row manual override: pick ANY source .blend and ANY datablock within it (not
+just an auto-suggested name — e.g. relinking a Cube to a Sphere from another
+file is a deliberate, valid choice here, not a mistake to guess around).
+"""
+
+from __future__ import annotations
+
+import os
+
+import bpy
+
+from ..core import reconnect as rc
+
+
+def _iter_library_blocks(library):
+    """Yield ``(bpy.data attribute, block)`` for every datablock the CURRENT file
+    links from ``library`` — any type, mirroring the generic walk
+    ``ops.datablock_inspect._iter_missing_blocks`` uses, but keyed on ``library``
+    rather than ``is_missing``."""
+    for attr in dir(bpy.data):
+        if attr.startswith("_"):
+            continue
+        coll = getattr(bpy.data, attr, None)
+        if not isinstance(coll, bpy.types.bpy_prop_collection):
+            continue
+        for block in coll:
+            if not isinstance(block, bpy.types.ID):
+                break  # not a data-block collection — skip it
+            if block.library is library:
+                yield attr, block
+
+
+def _in_memory_pools(attr: str, exclude_library) -> tuple[list[str], dict[str, str]]:
+    """``(local names, {other-library name: library filepath})`` for ``attr``'s
+    collection — the candidate pools "Examine Library" searches before falling
+    back to a manual file pick."""
+    coll = getattr(bpy.data, attr, None)
+    if coll is None:
+        return [], {}
+    local_names: list[str] = []
+    other_by_name: dict[str, str] = {}
+    for b in coll:
+        if b.library is None:
+            local_names.append(b.name)
+        elif b.library is not exclude_library:
+            other_by_name.setdefault(b.name, b.library.filepath)
+    return local_names, other_by_name
+
+
+def _populate_examine_rows(context, library) -> int:
+    """Refill ``assetdoctor_examine_rows`` from every datablock ``library``
+    currently provides. Returns the row count."""
+    wm = context.window_manager
+    coll = wm.assetdoctor_examine_rows
+    coll.clear()
+    for attr, block in _iter_library_blocks(library):
+        local_names, other_by_name = _in_memory_pools(attr, library)
+        row = coll.add()
+        row.name = block.name
+        row.kind = type(block).__name__
+        row.collection = attr
+
+        # EXACT/numbered only — a wrong fuzzy guess here would silently repoint a
+        # WORKING link at an unrelated datablock, so only an unambiguous match
+        # auto-applies; anything else needs the user's explicit Make Local or pick.
+        sug = rc.suggest_reconnect(block.name, local_names, allow_fuzzy=False)
+        if sug.target:
+            row.suggested_kind = "local"
+            row.suggested_name = sug.target
+        else:
+            sug2 = rc.suggest_reconnect(block.name, list(other_by_name), allow_fuzzy=False)
+            if sug2.target:
+                row.suggested_kind = "library"
+                row.suggested_name = sug2.target
+                row.suggested_library = other_by_name[sug2.target]
+            else:
+                row.suggested_kind = "none"
+        row.use_suggested = row.suggested_kind != "none"
+        row.selected = row.use_suggested
+    wm.assetdoctor_examine_index = 0
+    wm.assetdoctor_examine_library = library.name if library else ""
+    wm.assetdoctor_examine_scanned = True
+    return len(coll)
+
+
+class ASSETDOCTOR_OT_examine_library(bpy.types.Operator):
+    bl_idname = "assetdoctor.examine_library"
+    bl_label = "Examine Library"
+    bl_description = (
+        "List every data-block the current file links from the chosen library, "
+        "and suggest an existing LOCAL or OTHER-LIBRARY datablock already in "
+        "memory to re-source it from instead (exact-name only — no guessing). "
+        "Nothing is changed yet"
+    )
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        name = context.window_manager.assetdoctor_examine_library_pick
+        library = bpy.data.libraries.get(name) if name else None
+        if library is None:
+            self.report({"ERROR"}, "Pick a library to examine")
+            return {"CANCELLED"}
+        n = _populate_examine_rows(context, library)
+        if context.area:
+            context.area.tag_redraw()
+        if n:
+            suggested = sum(1 for row in context.window_manager.assetdoctor_examine_rows
+                            if row.suggested_kind != "none")
+            self.report({"INFO"}, f"{n} data-block(s) from {library.name}; "
+                        f"{suggested} have an in-memory match already")
+        else:
+            self.report({"INFO"}, f"✓ Nothing currently links from {library.name}")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_examine_pick_source(bpy.types.Operator):
+    bl_idname = "assetdoctor.examine_pick_source"
+    bl_label = "Pick a Specific Item"
+    bl_description = (
+        "Choose a .blend AND a specific datablock within it for THIS row — not "
+        "limited to a name match (e.g. relink a Cube to a Sphere from another "
+        "file on purpose). Overrides any in-memory suggestion for this row"
+    )
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    index: bpy.props.IntProperty()  # type: ignore[valid-type]
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore[valid-type]
+    filter_glob: bpy.props.StringProperty(default="*.blend", options={"HIDDEN"})  # type: ignore[valid-type]
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        coll = context.window_manager.assetdoctor_examine_rows
+        if not (0 <= self.index < len(coll)):
+            return {"CANCELLED"}
+        row = coll[self.index]
+        path = os.path.normpath(bpy.path.abspath(self.filepath))
+        if not os.path.isfile(path):
+            self.report({"ERROR"}, "Choose a .blend file")
+            return {"CANCELLED"}
+        try:
+            with bpy.data.libraries.load(path, link=True) as (data_from, _data_to):
+                names = list(getattr(data_from, row.collection, []))
+        except Exception as exc:
+            self.report({"ERROR"}, f"Could not read {os.path.basename(path)}: {exc}")
+            return {"CANCELLED"}
+
+        row.source_blend = path
+        row.candidates = "\n".join(rc.ranked_candidates(row.name, names))
+        row.use_suggested = False
+        row.make_local = False
+        row.selected = bool(names)
+        if context.area:
+            context.area.tag_redraw()
+        if not names:
+            self.report({"WARNING"}, f"{os.path.basename(path)} has no {row.kind} datablocks")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_examine_apply_selected(bpy.types.Operator):
+    bl_idname = "assetdoctor.examine_apply_selected"
+    bl_label = "Apply Selected"
+    bl_description = (
+        "For each ticked row: Make Local if checked, else remap onto the accepted "
+        "in-memory suggestion or the manually picked item. The old (Asset_bundle) "
+        "copy is NOT deleted — Blender drops it from the file on its own once "
+        "nothing references it anymore. Takes a backup first"
+    )
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        wm = context.window_manager
+        library = bpy.data.libraries.get(wm.assetdoctor_examine_library)
+        coll = wm.assetdoctor_examine_rows
+        chosen = [row for row in coll if row.selected]
+        if not chosen:
+            self.report({"WARNING"}, "Tick at least one data-block")
+            return {"CANCELLED"}
+
+        from .safety import auto_backup
+
+        backup = auto_backup(context)
+
+        # Rows needing a fresh per-row file link, grouped by source so a file
+        # already picked for several rows is only opened once.
+        by_source: dict[str, list] = {}
+        for row in chosen:
+            if not row.make_local and not row.use_suggested and row.source_blend and row.target:
+                by_source.setdefault(row.source_blend, []).append(row)
+
+        loaded: dict[tuple[str, str, str], object] = {}
+        for source, rows in by_source.items():
+            wanted_by_attr: dict[str, set[str]] = {}
+            for row in rows:
+                wanted_by_attr.setdefault(row.collection, set()).add(row.target)
+            try:
+                with bpy.data.libraries.load(source, link=True) as (data_from, data_to):
+                    for attr, names in wanted_by_attr.items():
+                        setattr(data_to, attr,
+                               [n for n in getattr(data_from, attr, []) if n in names])
+            except Exception as exc:
+                self.report({"WARNING"}, f"{os.path.basename(source)}: {exc}")
+                continue
+            for attr in wanted_by_attr:
+                for idblock in getattr(data_to, attr, None) or []:
+                    if idblock is not None:
+                        loaded[(source, attr, idblock.name)] = idblock
+
+        localized = remapped = 0
+        for row in chosen:
+            target_coll = getattr(bpy.data, row.collection, None)
+            block = target_coll.get(row.name) if target_coll is not None else None
+            if block is None or block.library is not library:
+                continue  # already changed (or gone) since the scan
+
+            if row.make_local:
+                block.make_local()
+                localized += 1
+                continue
+
+            target = None
+            if row.use_suggested:
+                if row.suggested_kind == "local":
+                    cand = target_coll.get(row.suggested_name)
+                    target = cand if (cand is not None and cand.library is None) else None
+                elif row.suggested_kind == "library":
+                    target = next((b for b in target_coll
+                                   if b.name == row.suggested_name and b.library is not None
+                                   and b.library.filepath == row.suggested_library), None)
+            elif row.source_blend and row.target:
+                target = loaded.get((row.source_blend, row.collection, row.target))
+
+            if target is None or target is block:
+                continue
+            block.user_remap(target)
+            remapped += 1
+
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
+
+        wm.assetdoctor_examine_rows.clear()
+        wm.assetdoctor_examine_scanned = False
+        if context.area:
+            context.area.tag_redraw()
+        tail = f" Backup: {backup}" if backup else " (no backup written)"
+        self.report({"INFO"}, f"Made {localized} local, remapped {remapped}.{tail} "
+                    "Save to persist. Re-run Examine Library to see any remaining.")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_examine_category_toggle(bpy.types.Operator):
+    """Expand/collapse one KIND group in the Examine Library list."""
+
+    bl_idname = "assetdoctor.examine_category_toggle"
+    bl_label = "Expand/Collapse Kind"
+    bl_options = {"INTERNAL"}
+
+    key: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+    def execute(self, context):
+        wm = context.window_manager
+        keys = set(filter(None, wm.assetdoctor_examine_expanded.split("\n")))
+        keys.discard(self.key) if self.key in keys else keys.add(self.key)
+        wm.assetdoctor_examine_expanded = "\n".join(sorted(keys))
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}

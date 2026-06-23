@@ -113,6 +113,32 @@ def find_relink_candidates(
     return out
 
 
+def build_broken_links_report(
+    broken: list[tuple[str, str, str]], blend_name: str = "current file"
+) -> Report:
+    """Report the current file's broken/missing library links.
+
+    ``broken`` is ``[(library name, stored path, auto-found candidate or "")]``.
+    Always emits at least one finding: an analysis must produce a visible result
+    even when it finds nothing, so a clean file shows "No broken links found"
+    rather than silently doing nothing (user rule, 2026-06-22). Mirrors the ✓
+    "clean" status row :func:`build_libfix_report` produces."""
+    report = Report(title=f"Broken links: {blend_name}", feature="f7links")
+    for name, stored, candidate in broken:
+        if candidate:
+            msg = f"{name}:  missing ({stored})  —  auto-match found: {candidate}"
+        else:
+            msg = f"{name}:  missing ({stored})  —  no match found (pick a file)"
+        report.add(Finding(category="broken_link", message=msg, severity="error",
+                           items=[name, stored], data={"name": name, "stored": stored}))
+    if not broken:
+        report.add(Finding(
+            category="clean",
+            message="✓ No broken links found — every linked library resolves on disk",
+            severity="info"))
+    return report
+
+
 def build_libfix_report(plan: LibFixPlan, relinks: dict[str, str] | None = None,
                         blend_name: str = "current file") -> Report:
     # No standalone "Summary" row — the section headers (with counts) say it all

@@ -3,6 +3,10 @@
 from .panels import (
     ASSETDOCTOR_PG_tree_row,
     ASSETDOCTOR_PG_broken_lib,
+    ASSETDOCTOR_PG_dup_family,
+    ASSETDOCTOR_PG_missing_block,
+    ASSETDOCTOR_PG_datablock_family,
+    ASSETDOCTOR_PG_examine_row,
     ASSETDOCTOR_UL_tree,
     ASSETDOCTOR_UL_broken_libs,
     ASSETDOCTOR_UL_broken_imgs,
@@ -25,6 +29,10 @@ from .panels import (
 REGISTER_CLASSES = (
     ASSETDOCTOR_PG_tree_row,
     ASSETDOCTOR_PG_broken_lib,
+    ASSETDOCTOR_PG_dup_family,
+    ASSETDOCTOR_PG_missing_block,
+    ASSETDOCTOR_PG_datablock_family,
+    ASSETDOCTOR_PG_examine_row,
     ASSETDOCTOR_UL_tree,
     ASSETDOCTOR_UL_broken_libs,
     ASSETDOCTOR_UL_broken_imgs,

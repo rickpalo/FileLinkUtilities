@@ -16,25 +16,49 @@ import os
 
 import bpy
 
-from ..core import imagepaths, imagefamily
+from ..core import imagematch, imagepaths, imagefamily
 from ..core.imagepaths import ImgDesc
+from .progress import ModalProgressMixin
 
 # Image datablock sources whose filepath points at an external file we can relink.
 _FILE_SOURCES = {"FILE", "SEQUENCE", "MOVIE", "TILED"}
 
 
+def _walk_image_nodes(node_tree, seen):
+    """Yield every image referenced anywhere in ``node_tree``, recursing into node
+    groups (so a texture buried in a ShaderNodeGroup is still attributed to its
+    material — the old top-level-only walk left those as '(no material)')."""
+    if node_tree is None or node_tree in seen:
+        return
+    seen.add(node_tree)
+    for node in node_tree.nodes:
+        img = getattr(node, "image", None)
+        if img is not None:
+            yield img
+        sub = getattr(node, "node_tree", None)  # ShaderNodeGroup -> nested tree
+        if sub is not None:
+            yield from _walk_image_nodes(sub, seen)
+
+
 def _image_material_map() -> dict[str, str]:
-    """``{image name: a material that uses it}`` — a representative material per
-    image (the first found), for the B1 material-fallback grouping. Walks material
-    node trees for any node carrying an ``image`` (TEX_IMAGE & friends)."""
-    out: dict[str, str] = {}
+    """``{image name: the representative material that uses it}``. Walks each
+    material's node tree AND its nested node groups. When several materials use the
+    same image, the one whose NAME best matches the image's (token affinity) wins —
+    so a ``…_lightBlue_…`` texture groups under a lightBlue material, not whichever
+    happened to be first (the FabricWool mis-grouping)."""
+    image_to_mats: dict[str, list[str]] = {}
     for mat in bpy.data.materials:
         if not mat.use_nodes or mat.node_tree is None:
             continue
-        for node in mat.node_tree.nodes:
-            img = getattr(node, "image", None)
-            if img is not None and img.name not in out:
-                out[img.name] = mat.name
+        for img in _walk_image_nodes(mat.node_tree, set()):
+            mats = image_to_mats.setdefault(img.name, [])
+            if mat.name not in mats:
+                mats.append(mat.name)
+    out: dict[str, str] = {}
+    for img_name, mats in image_to_mats.items():
+        # max() keeps the first on ties (mats is in discovery order).
+        out[img_name] = (mats[0] if len(mats) == 1
+                         else max(mats, key=lambda m: imagematch.name_affinity(img_name, m)))
     return out
 
 
@@ -84,10 +108,10 @@ def _populate_broken_images(context) -> tuple[int, int]:
 
 class ASSETDOCTOR_OT_scan_broken_textures(bpy.types.Operator):
     bl_idname = "assetdoctor.scan_broken_textures"
-    bl_label = "Find Missing Textures"
-    bl_description = ("List this file's missing image textures so you can relink them "
-                      "individually (auto-fixing doubled path segments and finding files "
-                      "by name where possible)")
+    bl_label = "List Missing Textures"
+    bl_description = ("List this file's missing image textures, grouped by material "
+                      "(or folder), so you can relink them — point a whole group at a "
+                      "folder, search a folder recursively, or pick a file per texture")
     bl_options = {"REGISTER"}
 
     def execute(self, context):
@@ -95,6 +119,9 @@ class ASSETDOCTOR_OT_scan_broken_textures(bpy.types.Operator):
             self.report({"ERROR"}, "Save the file first")
             return {"CANCELLED"}
         missing, found = _populate_broken_images(context)
+        wm = context.window_manager
+        wm.assetdoctor_tex_scanned = True
+        wm.assetdoctor_tex_initial_missing = missing  # "found" later = initial − still-missing
         if context.area:
             context.area.tag_redraw()
         if not missing:
@@ -104,31 +131,27 @@ class ASSETDOCTOR_OT_scan_broken_textures(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_find_missing_files_folder(bpy.types.Operator):
-    """Follow-up A — wrap Blender's NATIVE recursive missing-file search and report
-    the result (which Blender omits). Our Layer-1 search is single-level; this is
-    recursive by filename. Affects ALL external files (images, libraries…), not just
-    the textures listed above; backs up first."""
+class ASSETDOCTOR_OT_search_textures_folder(bpy.types.Operator):
+    """Recursively search ONE folder for ALL the listed missing textures by filename
+    and STAGE the matches (set each found texture's target + tick it) without
+    changing anything yet — the user reviews, then Relink Selected applies. Unlike
+    Blender's native find-missing-files this touches only the textures listed here
+    (libraries have their own Broken Links section) and never writes until applied."""
 
-    bl_idname = "assetdoctor.find_missing_files_folder"
-    bl_label = "Find Missing Files (folder)…"
+    bl_idname = "assetdoctor.search_textures_folder"
+    bl_label = "Search a Folder (recursive)"
     bl_options = {"REGISTER"}
 
-    # A directory picker: the file browser fills `directory` with the chosen folder.
     directory: bpy.props.StringProperty(subtype="DIR_PATH")  # type: ignore[valid-type]
     filter_folder: bpy.props.BoolProperty(default=True, options={"HIDDEN"})  # type: ignore[valid-type]
 
     @classmethod
     def description(cls, context, properties):
-        return ("Search a folder RECURSIVELY (by filename) for every missing external "
-                "file and relink what it finds — Blender's native search — then report "
-                "which were found and which are still missing. Affects ALL external "
-                "files (images, libraries…), not just the list above. Backs up first")
+        return ("Pick a folder; every missing texture above is searched for by filename "
+                "in it and its subfolders, and matches are staged (target set + ticked). "
+                "Nothing is written until you Relink Selected")
 
     def invoke(self, context, event):
-        if not bpy.data.filepath:
-            self.report({"ERROR"}, "Save the file first")
-            return {"CANCELLED"}
         context.window_manager.fileselect_add(self)
         return {"RUNNING_MODAL"}
 
@@ -136,37 +159,431 @@ class ASSETDOCTOR_OT_find_missing_files_folder(bpy.types.Operator):
         if not self.directory or not os.path.isdir(self.directory):
             self.report({"ERROR"}, "Choose a folder to search")
             return {"CANCELLED"}
-
-        before_missing = [i for i in _gather_images() if not i.exists]
-        if not before_missing:
-            self.report({"INFO"}, "No missing image textures to find")
+        if not len(context.window_manager.assetdoctor_broken_imgs):
+            self.report({"INFO"}, "No missing textures to search for")
             return {"CANCELLED"}
+        # Hand off to the modal worker so a large tree doesn't freeze the UI.
+        bpy.ops.assetdoctor.relink_folder_search(
+            "INVOKE_DEFAULT", directory=self.directory, mode="EXACT_ALL", recursive=True)
+        return {"FINISHED"}
 
-        from .safety import auto_backup
 
-        backup = auto_backup(context)
+def _wanted_basename(item) -> str:
+    """The filename a missing-texture row wants on disk (basename of its stored path)."""
+    return os.path.basename((item.stored or item.name).replace("\\", "/"))
+
+
+def _stage_proposals(todo, proposals) -> int:
+    """Copy ``{wanted basename: (path, Match)}`` proposals onto the still-unplaced
+    rows (the shared tail of every 'suggest from a corpus' op). Returns the count
+    staged. Rows with no proposal have theirs cleared."""
+    staged = 0
+    for item in todo:
+        res = proposals.get(_wanted_basename(item))
+        if res is None:
+            item.proposal = ""
+            continue
+        path, m = res
+        item.proposal = path
+        item.proposal_confidence = m.confidence
+        item.proposal_res_mismatch = m.res_mismatch
+        staged += 1
+    return staged
+
+
+class ASSETDOCTOR_OT_relink_folder_search(ModalProgressMixin, bpy.types.Operator):
+    """Modal worker behind the folder-search relink actions (Search a folder / Point
+    group at folder / Suggest matches). It walks the chosen tree under the shared
+    progress bar — cancellable, so a big import tree no longer freezes the UI — and
+    stages matches onto the missing-texture rows. The thin picker ops own the file
+    browser and launch this via INVOKE_DEFAULT: a fileselect modal and a progress
+    modal can't share one operator, hence the two-op split."""
+
+    bl_idname = "assetdoctor.relink_folder_search"
+    bl_label = "Searching folder for textures"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    directory: bpy.props.StringProperty()  # type: ignore[valid-type]
+    # EXACT_ALL (search a folder for every row) | EXACT_GROUP (one material/dir group)
+    # | FUZZY (name-similarity proposals for still-unplaced rows).
+    mode: bpy.props.StringProperty(default="EXACT_ALL")  # type: ignore[valid-type]
+    group_key: bpy.props.StringProperty()  # type: ignore[valid-type]
+    by: bpy.props.StringProperty(default="DIR")  # type: ignore[valid-type]  # DIR | MATERIAL
+    recursive: bpy.props.BoolProperty(default=True)  # type: ignore[valid-type]
+
+    def _members(self, coll):
+        if self.mode == "EXACT_GROUP":
+            return [it for it in coll
+                    if (it.group if self.by == "DIR" else it.material) == self.group_key]
+        if self.mode == "FUZZY":
+            return [it for it in coll if not it.target]  # only still-unplaced rows
+        return list(coll)  # EXACT_ALL
+
+    def cancel_message(self) -> str:
+        return "Folder search cancelled — nothing changed"
+
+    def run_steps(self, context):
+        coll = context.window_manager.assetdoctor_broken_imgs
+        members = self._members(coll)
+        if not members:
+            msg = ("Every missing texture already has a match" if self.mode == "FUZZY"
+                   else "No textures in this group" if self.mode == "EXACT_GROUP"
+                   else "No missing textures to search for")
+            self.report({"INFO"}, msg)
+            return
+        if self.mode == "FUZZY":
+            yield from self._run_fuzzy(context, members)
+        else:
+            yield from self._run_exact(context, members)
+
+    def _run_exact(self, context, members):
+        descs = [ImgDesc(name=it.name, stored=it.stored,
+                         resolved=os.path.normpath(bpy.path.abspath(it.stored)), exists=False)
+                 for it in members]
+        gen = imagefamily.iter_resolve_group_in_dir(descs, self.directory, self.recursive)
+        found: dict[str, str] = {}
         try:
-            # Native, recursive-by-filename; relocates found files silently.
-            bpy.ops.file.find_missing_files(directory=self.directory)
-        except RuntimeError as exc:
-            self.report({"ERROR"}, f"Native search failed: {exc}")
-            return {"CANCELLED"}
+            while True:
+                walked = next(gen)
+                yield (min(0.9, walked / (walked + 20.0)),
+                       f"Searching {self.directory}… {walked} folder(s)")
+        except StopIteration as stop:
+            found = stop.value or {}
 
-        after_by_name = {i.name: i for i in _gather_images()}
-        result = imagepaths.diff_found(before_missing, after_by_name)
-
-        from . import report_store
-
-        blend_name = os.path.basename(bpy.data.filepath) or "current file"
-        report = imagepaths.build_find_missing_report(result, blend_name)
-        report_store.stash_report(context, report, "f6tex")
-
-        _populate_broken_images(context)  # found ones drop off; still-missing remain
+        yield (0.97, f"Staging {len(found)} match(es)…")
+        for it in members:
+            target = found.get(it.name)
+            if target:
+                it.target = target
+                it.has_candidate = True
+                it.selected = True
         if context.area:
             context.area.tag_redraw()
-        tail = f" Backup: {backup}" if backup else " (no backup written)"
-        self.report({"INFO"}, f"Found {len(result.found)}, "
-                    f"{len(result.still_missing)} still missing. Save to persist.{tail}")
+        yield (1.0, "Done")
+
+        total = len(members)
+        if found and self.mode == "EXACT_GROUP":
+            self.report({"INFO"}, f"Matched {len(found)} of {total} in this group — "
+                        "targets set in the list above. Tick/adjust, then Relink Selected.")
+        elif found:
+            self.report({"INFO"}, f"Staged {len(found)} of {total} texture(s) from "
+                        f"{self.directory}. Review, then Relink Selected.")
+        elif self.mode == "EXACT_GROUP":
+            scope = "and subfolders" if self.recursive else "(this folder only)"
+            self.report({"WARNING"}, f"No matching filenames found in {self.directory} {scope}. "
+                        "Nothing changed — try another folder or pick files individually.")
+        else:
+            self.report({"WARNING"}, f"No matching filenames found under {self.directory}. "
+                        "Nothing changed.")
+
+    def _run_fuzzy(self, context, members):
+        index: dict[str, list[str]] = {}
+        seen: set[str] = set()
+        walked = 0
+        for d in imagepaths.iter_walk_dirs(self.directory, True):
+            imagepaths._scan_dir_into(index, seen, d)
+            walked += 1
+            yield (min(0.9, walked / (walked + 20.0)),
+                   f"Scanning {self.directory}… {walked} folder(s)")
+        if not index:
+            self.report({"WARNING"}, f"No files found under {self.directory}")
+            return
+
+        name_to_path = {os.path.basename(paths[0]): paths[0] for paths in index.values()}
+        cand_names = list(name_to_path)
+        wanted = sorted({_wanted_basename(it) for it in members})
+        yield (0.95, f"Matching {len(wanted)} name(s) by similarity…")
+        proposals = imagematch.propose_matches(wanted, cand_names, min_confidence="low")
+
+        staged = 0
+        for it in members:
+            m = proposals.get(_wanted_basename(it))
+            if m is None:
+                it.proposal = ""
+                continue
+            it.proposal = name_to_path.get(m.candidate, "")
+            it.proposal_confidence = m.confidence
+            it.proposal_res_mismatch = m.res_mismatch
+            if it.proposal:
+                staged += 1
+        if context.area:
+            context.area.tag_redraw()
+        yield (1.0, "Done")
+        if staged:
+            self.report({"INFO"}, f"Found {staged} possible match(es) by name in "
+                        f"{self.directory}. Review the Possible Matches list and Accept.")
+        else:
+            self.report({"WARNING"}, f"No similar filenames found under {self.directory}.")
+
+
+class ASSETDOCTOR_OT_suggest_fuzzy_matches(bpy.types.Operator):
+    """F6 step 4 — fuzzy FALLBACK for textures exact search couldn't place. Pick a
+    folder; for every missing texture that still has NO target, score the folder's
+    files with the rename matcher (``core.imagematch``: stem identity + PBR-channel
+    synonyms + resolution, with numbered-variant conflicts disqualified) and STAGE
+    the best candidate as a *proposal* — shown in a separate "Possible Matches"
+    list for the user to Accept. Nothing is applied here; Accept moves a proposal
+    into the main Missing Textures list, then Relink Selected writes it."""
+
+    bl_idname = "assetdoctor.suggest_fuzzy_matches"
+    bl_label = "Suggest Matches (fuzzy)"
+    bl_options = {"REGISTER"}
+
+    directory: bpy.props.StringProperty(subtype="DIR_PATH")  # type: ignore[valid-type]
+    filter_folder: bpy.props.BoolProperty(default=True, options={"HIDDEN"})  # type: ignore[valid-type]
+
+    @classmethod
+    def description(cls, context, properties):
+        return ("Pick a folder; each missing texture with no exact match is matched "
+                "by NAME SIMILARITY (renamed channels, e.g. _ao -> _AO) against the "
+                "files in it and its subfolders. Best guesses are staged as Possible "
+                "Matches to review and Accept — nothing is written here")
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        if not self.directory or not os.path.isdir(self.directory):
+            self.report({"ERROR"}, "Choose a folder to search")
+            return {"CANCELLED"}
+        coll = context.window_manager.assetdoctor_broken_imgs
+        if not any(not item.target for item in coll):  # nothing still-unplaced
+            self.report({"INFO"}, "Every missing texture already has a match")
+            return {"CANCELLED"}
+        # Hand off to the modal worker so a large tree doesn't freeze the UI.
+        bpy.ops.assetdoctor.relink_folder_search(
+            "INVOKE_DEFAULT", directory=self.directory, mode="FUZZY", recursive=True)
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_suggest_from_material(bpy.types.Operator):
+    """B4 — propose substitutes for the missing textures from ANOTHER material's
+    existing (on-disk) textures (the eyedropper datablock-picker). The picked source
+    material's image files become the candidate corpus, matched by name against every
+    missing texture that still has no target, and staged as Possible Matches to
+    Accept. All-local (reads `bpy.data`, no folder walk) so it's instant; nothing is
+    written here."""
+
+    bl_idname = "assetdoctor.suggest_from_material"
+    bl_label = "Suggest from Material"
+    bl_description = ("Use the picked source material's existing textures as substitute "
+                      "candidates for the missing ones (matched by name). Staged as "
+                      "Possible Matches to review — nothing is written")
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    def execute(self, context):
+        wm = context.window_manager
+        mat = wm.assetdoctor_tex_source_material
+        if mat is None:
+            self.report({"ERROR"}, "Pick a source material first (the eyedropper)")
+            return {"CANCELLED"}
+        coll = wm.assetdoctor_broken_imgs
+        todo = [item for item in coll if not item.target]  # still-unplaced rows only
+        if not todo:
+            self.report({"INFO"}, "Every missing texture already has a match")
+            return {"CANCELLED"}
+
+        # Harvest the source material's images (recursing node groups), keeping only
+        # local, file-backed images whose file is actually on disk.
+        cand_paths: list[str] = []
+        if mat.use_nodes and mat.node_tree is not None:
+            for img in _walk_image_nodes(mat.node_tree, set()):
+                if img.library is not None or img.source not in _FILE_SOURCES or not img.filepath:
+                    continue
+                p = os.path.normpath(bpy.path.abspath(img.filepath))
+                if os.path.isfile(p):
+                    cand_paths.append(p)
+        if not cand_paths:
+            self.report({"WARNING"}, f"'{mat.name}' has no on-disk textures to offer")
+            return {"CANCELLED"}
+
+        wanted = sorted({_wanted_basename(item) for item in todo})
+        proposals = imagematch.propose_from_paths(wanted, cand_paths, min_confidence="low")
+        staged = _stage_proposals(todo, proposals)
+        if context.area:
+            context.area.tag_redraw()
+        if staged:
+            self.report({"INFO"}, f"Staged {staged} possible match(es) from '{mat.name}'. "
+                        "Review the Possible Matches list and Accept.")
+        else:
+            self.report({"WARNING"}, f"No similar texture names found in '{mat.name}'.")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_suggest_from_blend(bpy.types.Operator):
+    """B4 — propose substitutes for the missing textures from the images referenced by
+    ANOTHER .blend file. Pick a .blend; its texture FILE PATHS (harvested offline via
+    BAT, wherever they point) become the candidate corpus, matched by name against
+    every still-unplaced missing texture and staged as Possible Matches. Nothing is
+    written here. (Images are file-backed, so this just finds the right FILE — no
+    Blender linking, which is only needed for missing DATA-BLOCKS.)"""
+
+    bl_idname = "assetdoctor.suggest_from_blend"
+    bl_label = "Suggest from Another .blend"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore[valid-type]
+    filter_blender: bpy.props.BoolProperty(default=True, options={"HIDDEN"})  # type: ignore[valid-type]
+    filter_glob: bpy.props.StringProperty(default="*.blend", options={"HIDDEN"})  # type: ignore[valid-type]
+
+    @classmethod
+    def description(cls, context, properties):
+        return ("Pick another .blend; the image files IT references become substitute "
+                "candidates for the missing textures (matched by name). Staged as "
+                "Possible Matches to review — nothing is written")
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        from ..core import blendscan
+
+        src = os.path.normpath(bpy.path.abspath(self.filepath)) if self.filepath else ""
+        if not src or not os.path.isfile(src):
+            self.report({"ERROR"}, "Choose a .blend file")
+            return {"CANCELLED"}
+        coll = context.window_manager.assetdoctor_broken_imgs
+        todo = [item for item in coll if not item.target]  # still-unplaced rows only
+        if not todo:
+            self.report({"INFO"}, "Every missing texture already has a match")
+            return {"CANCELLED"}
+        if not blendscan.bat_available():
+            self.report({"ERROR"}, "Blender Asset Tracer unavailable; reinstall the extension")
+            return {"CANCELLED"}
+
+        try:
+            cand_paths = blendscan.harvest_image_paths(src)
+        except Exception as exc:  # unreadable/corrupt .blend
+            self.report({"ERROR"}, f"Could not read {os.path.basename(src)}: {exc}")
+            return {"CANCELLED"}
+        cand_paths = [p for p in cand_paths if os.path.isfile(p)]  # on-disk targets only
+        if not cand_paths:
+            self.report({"WARNING"}, f"{os.path.basename(src)} references no on-disk textures")
+            return {"CANCELLED"}
+
+        wanted = sorted({_wanted_basename(item) for item in todo})
+        proposals = imagematch.propose_from_paths(wanted, cand_paths, min_confidence="low")
+        staged = _stage_proposals(todo, proposals)
+        if context.area:
+            context.area.tag_redraw()
+        if staged:
+            self.report({"INFO"}, f"Staged {staged} possible match(es) from "
+                        f"{os.path.basename(src)}. Review the Possible Matches list and Accept.")
+        else:
+            self.report({"WARNING"}, f"No similar texture names in {os.path.basename(src)}.")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_accept_match(bpy.types.Operator):
+    """Accept one staged fuzzy proposal: copy it into the row's target (so it joins
+    the main Missing Textures list, ticked) and clear the proposal."""
+
+    bl_idname = "assetdoctor.accept_match"
+    bl_label = "Accept Match"
+    bl_description = "Use this proposed file as the relink target for this texture"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    index: bpy.props.IntProperty()  # type: ignore[valid-type]
+
+    def execute(self, context):
+        coll = context.window_manager.assetdoctor_broken_imgs
+        if not (0 <= self.index < len(coll)):
+            return {"CANCELLED"}
+        item = coll[self.index]
+        if not item.proposal:
+            return {"CANCELLED"}
+        item.target = item.proposal
+        item.has_candidate = os.path.isfile(item.proposal)
+        item.selected = True
+        item.proposal = ""
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_accept_material_matches(bpy.types.Operator):
+    """Accept every staged proposal under one MATERIAL group at once (the textures
+    rolled up beneath that material header in the Possible Matches list)."""
+
+    bl_idname = "assetdoctor.accept_material_matches"
+    bl_label = "Accept Material's Matches"
+    bl_description = ("Accept all proposed files for this material's textures — they "
+                      "move into the Missing Textures list above, ticked")
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    material: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+    def execute(self, context):
+        coll = context.window_manager.assetdoctor_broken_imgs
+        accepted = 0
+        for item in coll:
+            if not item.proposal or item.target:
+                continue
+            if (item.material or "(no material)") != self.material:
+                continue
+            item.target = item.proposal
+            item.has_candidate = os.path.isfile(item.proposal)
+            item.selected = True
+            item.proposal = ""
+            accepted += 1
+        if context.area:
+            context.area.tag_redraw()
+        self.report({"INFO"}, f"Accepted {accepted} match(es) for {self.material}.")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_accept_all_matches(bpy.types.Operator):
+    """Accept every staged fuzzy proposal at once, moving them all into the main
+    Missing Textures list (ticked) ready for Relink Selected."""
+
+    bl_idname = "assetdoctor.accept_all_matches"
+    bl_label = "Accept All Matches"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return ("Use every proposed file as its texture's relink target — they move "
+                "into the Missing Textures list above, ticked. Then Relink Selected")
+
+    def execute(self, context):
+        coll = context.window_manager.assetdoctor_broken_imgs
+        accepted = 0
+        for item in coll:
+            if not item.proposal:
+                continue
+            item.target = item.proposal
+            item.has_candidate = os.path.isfile(item.proposal)
+            item.selected = True
+            item.proposal = ""
+            accepted += 1
+        if context.area:
+            context.area.tag_redraw()
+        if accepted:
+            self.report({"INFO"}, f"Accepted {accepted} match(es). Review the ticks above, "
+                        "then Relink Selected.")
+        else:
+            self.report({"INFO"}, "No proposed matches to accept")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_tex_category_toggle(bpy.types.Operator):
+    """Expand/collapse one missing-texture category (folder or material group)."""
+
+    bl_idname = "assetdoctor.tex_category_toggle"
+    bl_label = "Expand/Collapse Category"
+    bl_options = {"INTERNAL"}
+
+    key: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+    def execute(self, context):
+        wm = context.window_manager
+        keys = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
+        keys.discard(self.key) if self.key in keys else keys.add(self.key)
+        wm.assetdoctor_tex_expanded = "\n".join(sorted(keys))
+        if context.area:
+            context.area.tag_redraw()
         return {"FINISHED"}
 
 
@@ -204,28 +621,16 @@ class ASSETDOCTOR_OT_point_group_at_folder(bpy.types.Operator):
         if not self.directory or not os.path.isdir(self.directory):
             self.report({"ERROR"}, "Choose a folder to search")
             return {"CANCELLED"}
-
         coll = context.window_manager.assetdoctor_broken_imgs
         members = [item for item in coll
                    if (item.group if self.by == "DIR" else item.material) == self.group_key]
         if not members:
             self.report({"WARNING"}, "No textures in this group")
             return {"CANCELLED"}
-
-        descs = [ImgDesc(name=item.name, stored=item.stored,
-                         resolved=os.path.normpath(bpy.path.abspath(item.stored)), exists=False)
-                 for item in members]
-        found = imagefamily.resolve_group_in_dir(descs, self.directory, recursive=self.recursive)
-        for item in members:
-            target = found.get(item.name)
-            if target:
-                item.target = target
-                item.has_candidate = True
-                item.selected = True
-        if context.area:
-            context.area.tag_redraw()
-        self.report({"INFO"}, f"Matched {len(found)} of {len(members)} in this group. "
-                    "Tick/adjust, then Relink Selected.")
+        # Hand off to the modal worker so a large tree doesn't freeze the UI.
+        bpy.ops.assetdoctor.relink_folder_search(
+            "INVOKE_DEFAULT", directory=self.directory, mode="EXACT_GROUP",
+            group_key=self.group_key, by=self.by, recursive=self.recursive)
         return {"FINISHED"}
 
 
@@ -243,6 +648,12 @@ class ASSETDOCTOR_OT_relink_pick_texture(bpy.types.Operator):
         options={"HIDDEN"})  # type: ignore[valid-type]
 
     def invoke(self, context, event):
+        # If this texture already has a match, open the browser AT that match's
+        # folder (with the file selected) instead of wherever the UI was last —
+        # so "the folder icon opens the folder for THIS match" (user, 2026-06-22).
+        coll = context.window_manager.assetdoctor_broken_imgs
+        if 0 <= self.index < len(coll) and coll[self.index].target:
+            self.filepath = bpy.path.abspath(coll[self.index].target)
         context.window_manager.fileselect_add(self)
         return {"RUNNING_MODAL"}
 
@@ -301,6 +712,14 @@ class ASSETDOCTOR_OT_relink_textures_selected(bpy.types.Operator):
                 relinked += 1
             except Exception as exc:
                 self.report({"WARNING"}, f"Relinked {item.name} but reload failed: {exc}")
+
+        # Defensive: settle the dependency graph after bulk filepath/reload changes
+        # before the next viewport draw (the relink/merge crash was the EEVEE draw
+        # acquiring a stale image buffer). Precaution, not a verified fix.
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
 
         _populate_broken_images(context)
         if context.area:

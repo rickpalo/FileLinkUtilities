@@ -14,9 +14,13 @@ import time
 import bpy
 
 
-def _emit(operator, context, scan, root):
-    """Build the report from a finished scan, write exports, log + report."""
+def _emit(operator, context, scan, root, open_graph=True):
+    """Build the report from a finished scan, write exports + the interactive
+    graph, open the graph in the browser, log + report."""
+    import webbrowser
+
     from ..core.f1_linkmap import report_from_scan
+    from ..core.linkmap_html import build_link_map_html
     from ..log import get_logger
 
     log = get_logger()
@@ -33,6 +37,19 @@ def _emit(operator, context, scan, root):
     base.with_suffix(".csv").write_text(report.to_csv(), encoding="utf-8")
     base.with_suffix(".dot").write_text(scan.graph.to_dot(), encoding="utf-8")
 
+    # The graphical output: a self-contained interactive HTML link map, opened in
+    # the browser. This is the headline result of a folder scan.
+    html_path = base.with_suffix(".html")
+    html_path.write_text(
+        build_link_map_html(scan, root, title=f"Link map: {root.name or root}"),
+        encoding="utf-8",
+    )
+    if open_graph:
+        try:
+            webbrowser.open(html_path.as_uri())
+        except Exception as exc:  # headless / no browser - the file is still written
+            log.warning("Could not open link-map graph: %s", exc)
+
     log.debug("F1 scan root=%s exports=%s", root, out_dir)
     for f in report.findings:
         log.info("F1 [%s] %s: %s", f.severity, f.category, f.message)
@@ -42,15 +59,19 @@ def _emit(operator, context, scan, root):
     level = "ERROR" if errors else ("WARNING" if warnings else "INFO")
     operator.report(
         {level},
-        f"Scanned {len(scan.graph.nodes)} files: {errors} error(s), "
-        f"{warnings} warning(s). Reports in {out_dir}",
+        f"Mapped {len(scan.graph.nodes)} files ({errors} error(s), "
+        f"{warnings} warning(s)). Graph: {html_path.name} in {out_dir}",
     )
 
 
 class ASSETDOCTOR_OT_scan_folder(bpy.types.Operator):
     bl_idname = "assetdoctor.scan_folder"
-    bl_label = "Scan Folder (Link Map)"
-    bl_description = "Recursively map which .blend files link which, and export the report"
+    bl_label = "Scan Folder → Link Graph"
+    bl_description = (
+        "Recursively map which .blend files in a folder link which (backups "
+        "skipped), then open an interactive graph in your browser. Also writes "
+        "JSON/CSV/DOT exports beside it. Offline — does not open the files in Blender"
+    )
     bl_options = {"REGISTER"}
 
     directory: bpy.props.StringProperty(subtype="DIR_PATH")  # type: ignore[valid-type]

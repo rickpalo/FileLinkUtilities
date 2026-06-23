@@ -170,6 +170,28 @@ def fingerprint_mesh(mesh_dict: dict) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Actions
+# --------------------------------------------------------------------------- #
+#
+# action_dict contract:
+#   { "fcurves": [{"data_path": str, "array_index": int,
+#                   "points": [[frame, value, interpolation], ...]}, ...] }
+# Keyframe co (frame, value) + interpolation only — not handle positions/types.
+# Detects byte-identical re-linked duplicates (the undisciplined-animator
+# ".001"/".002" case), not arbitrary congruent animation curves.
+
+
+def fingerprint_action(action_dict: dict) -> str:
+    """Stable hash of an Action's F-curve keyframe data. Curves are sorted by
+    ``(data_path, array_index)`` so fcurve ORDER doesn't matter, only identity."""
+    curves = sorted(
+        (c.get("data_path", ""), c.get("array_index", 0), c.get("points", []))
+        for c in action_dict.get("fcurves", [])
+    )
+    return _sha(["action", curves])
+
+
+# --------------------------------------------------------------------------- #
 # Images (identity, resolution-SENSITIVE)
 # --------------------------------------------------------------------------- #
 #

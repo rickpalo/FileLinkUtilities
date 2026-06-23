@@ -12,7 +12,9 @@ from __future__ import annotations
 import bpy
 
 from ..core import datablock_graph as dg
+from ..core import missingdata
 from ..core.datablock_graph import LiveExtract
+from ..core.missingdata import MissingBlock
 from .progress import ModalProgressMixin
 from .report_store import stash_report
 
@@ -32,6 +34,79 @@ _LOOP_NODE_CAP = 60000
 
 def _node_id(idblock) -> str:
     return f"{type(idblock).__name__}/{idblock.name}"
+
+
+def _iter_missing_blocks():
+    """Yield every ``is_missing`` (placeholder) ID across all of ``bpy.data``'s
+    data-block collections. Walks generically so ANY linked type counts (not just
+    the audited dup-census set); non-ID collections are skipped on their first item."""
+    for attr in dir(bpy.data):
+        if attr.startswith("_"):
+            continue
+        coll = getattr(bpy.data, attr, None)
+        if not isinstance(coll, bpy.types.bpy_prop_collection):
+            continue
+        for block in coll:
+            if not isinstance(block, bpy.types.ID):
+                break  # not a data-block collection (e.g. a settings list) — skip it
+            if getattr(block, "is_missing", False):
+                lib = getattr(block, "library", None)
+                yield MissingBlock(
+                    kind=type(block).__name__,
+                    name=block.name,
+                    library=(lib.filepath if lib is not None else ""),
+                    collection=attr)
+
+
+class ASSETDOCTOR_OT_scan_missing_datablocks(bpy.types.Operator):
+    bl_idname = "assetdoctor.scan_missing_datablocks"
+    bl_label = "Find Missing Data-blocks"
+    bl_description = (
+        "Scan the CURRENT file for linked data-blocks whose source can't be "
+        "resolved (the library file is missing, or the block no longer exists in "
+        "it). These placeholders render empty/magenta and are what crash other "
+        "add-ons. Grouped by the broken library. Read-only"
+    )
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        blocks = list(_iter_missing_blocks())
+        label = bpy.path.basename(bpy.data.filepath) or "current file"
+        report = missingdata.build_missing_datablocks_report(blocks, label)
+        stash_report(context, report, "f7miss")
+        if context.area:
+            context.area.tag_redraw()
+        if blocks:
+            libs = len({b.library for b in blocks})
+            self.report({"WARNING"}, f"{len(blocks)} missing data-block(s) from "
+                        f"{libs} librar{'y' if libs == 1 else 'ies'}")
+        else:
+            self.report({"INFO"}, "✓ No missing data-blocks")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_scan_all_missing(bpy.types.Operator):
+    bl_idname = "assetdoctor.scan_all_missing"
+    bl_label = "Find All Missing"
+    bl_description = (
+        "Run BOTH checks at once: broken library LINKS (whole .blend files that "
+        "can't be found) and missing DATA-BLOCKS (individual linked materials / "
+        "objects that didn't resolve — usually because a link is broken). Read-only; "
+        "use the report selector to switch between the two results"
+    )
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        if not bpy.data.filepath:
+            self.report({"ERROR"}, "Save the file first")
+            return {"CANCELLED"}
+        bpy.ops.assetdoctor.scan_broken_links()       # whole missing libraries
+        bpy.ops.assetdoctor.scan_missing_datablocks()  # individual placeholder ids
+        if context.area:
+            context.area.tag_redraw()
+        self.report({"INFO"}, "Checked broken links + missing data-blocks — "
+                    "switch reports with the selector below")
+        return {"FINISHED"}
 
 
 class ASSETDOCTOR_OT_analyze_overrides(ModalProgressMixin, bpy.types.Operator):

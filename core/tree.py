@@ -35,8 +35,16 @@ _CATEGORY_TITLES = {
     "unresolved_texture": "Still missing",
     "merge_lossless": "Merge duplicates (lossless)",
     "family_conflict": "Name family, content differs",
+    "res_variant": "Multi-resolution variants (footprint)",
+    "missing_datablock": "Missing data-blocks",
+    "direct_dependent": "Linked directly by",
+    "indirect_dependent": "Linked indirectly by",
+    "overview": "Summary",
     "clean": "Status",
     "summary": "Summary",
+    "override_loop": "Override dependency loops (cause resync spam / bloat)",
+    "duplicate_family": "Duplicate data-blocks (.NNN copies — wasted memory)",
+    "library_block": "Linked data-blocks per library",
 }
 
 
@@ -48,6 +56,7 @@ class TreeNode:
     children: list["TreeNode"] = field(default_factory=list)
     ref: dict | None = None  # optional {"type","name"} for click-to-select
     detail: str = ""  # optional right-aligned value column (e.g. sizes)
+    icon: str = ""  # optional Blender icon id override (e.g. "FILE_BLEND")
 
 
 @dataclass
@@ -60,19 +69,21 @@ class Row:
     expanded: bool
     ref: dict | None = None
     detail: str = ""
+    icon: str = ""
+    guide: str = ""  # precomputed "│  ├─ "-style indent-guide prefix (own connector last)
 
 
 def node_to_dict(n: TreeNode) -> dict:
     return {
         "key": n.key, "label": n.label, "severity": n.severity, "detail": n.detail,
-        "ref": n.ref, "children": [node_to_dict(c) for c in n.children],
+        "ref": n.ref, "icon": n.icon, "children": [node_to_dict(c) for c in n.children],
     }
 
 
 def node_from_dict(d: dict) -> TreeNode:
     return TreeNode(
         key=d["key"], label=d["label"], severity=d.get("severity", "info"),
-        detail=d.get("detail", ""), ref=d.get("ref"),
+        detail=d.get("detail", ""), ref=d.get("ref"), icon=d.get("icon", ""),
         children=[node_from_dict(c) for c in d.get("children", [])],
     )
 
@@ -103,20 +114,40 @@ def _parse_ref(item: str) -> dict | None:
     return {"type": type_, "name": name}
 
 
+# Categories rendered as a flat top-level row (the message IS the whole content,
+# no items to drill into): "clean" (the all-clear status) and "overview" (a one-line
+# headline a feature wants read without expanding — e.g. the missing-data-block count).
+# "summary" is intentionally NOT here — it stays a collapsible "Summary" category by
+# design (several tests assert that).
+_FLAT_CATEGORIES = {"clean", "overview"}
+
+
 def report_to_tree(report: Report) -> list[TreeNode]:
-    """category → finding(message) → item leaves, with rolled-up severities."""
+    """category → finding(message) → item leaves, with rolled-up severities.
+    Exception: ``clean`` status findings are hoisted to a flat top-level row."""
     groups: dict[str, list] = {}
     for f in report.findings:
         groups.setdefault(f.category, []).append(f)
 
-    # Summary first, then the rest in their original order (user: summary on top).
-    ordered = ([c for c in groups if c == "summary"]
-               + [c for c in groups if c != "summary"])
+    # Overview (flat headline) first, then Summary, then the rest in original
+    # order (user: summary on top; overview — when present — reads even higher,
+    # since it's a single glance line rather than a collapsible category).
+    ordered = ([c for c in groups if c == "overview"]
+               + [c for c in groups if c == "summary"]
+               + [c for c in groups if c not in ("overview", "summary")])
 
     nodes: list[TreeNode] = []
     for cat in ordered:
         findings = groups[cat]
         cat_key = f"{report.feature}:{cat}"
+        # "clean"/status findings render as a DIRECT top-level row (no collapsible
+        # wrapper), so an all-clear result shows on the summary line instead of
+        # making the user expand a "Status" category to read it (user, 2026-06-22).
+        if cat in _FLAT_CATEGORIES:
+            for i, f in enumerate(findings):
+                nodes.append(TreeNode(key=f"{cat_key}:{i}", label=f.message,
+                                      severity=f.severity, detail=f.detail))
+            continue
         # Category row detail: a feature-supplied override (e.g. F3's local/linked
         # breakdown) or, by default, the number of findings in the category.
         detail = report.category_details.get(cat) or str(len(findings))
@@ -139,21 +170,34 @@ def report_to_tree(report: Report) -> list[TreeNode]:
     return nodes
 
 
+def _guide_prefix(is_last_chain: list[bool]) -> str:
+    """File-explorer-style indent guide: a "│  " continuation per ancestor that
+    still has siblings below it, blank ("   ") once an ancestor was the last
+    child, then this node's own connector ("├─ "/"└─ "). Empty at depth 0 (top
+    rows stay unindented, matching the pre-guide look)."""
+    if not is_last_chain:
+        return ""
+    parts = ["   " if last else "│  " for last in is_last_chain[:-1]]
+    parts.append("└─ " if is_last_chain[-1] else "├─ ")
+    return "".join(parts)
+
+
 def flatten_visible(nodes: list[TreeNode], expanded: set[str]) -> list[Row]:
     """DFS into ``expanded`` nodes only, producing ordered indented rows."""
     rows: list[Row] = []
 
-    def walk(node: TreeNode, depth: int) -> None:
+    def walk(node: TreeNode, depth: int, is_last_chain: list[bool]) -> None:
         has = bool(node.children)
         is_exp = node.key in expanded
         rows.append(Row(depth, node.key, node.label, node.severity, has, is_exp,
-                        node.ref, node.detail))
+                        node.ref, node.detail, node.icon, _guide_prefix(is_last_chain)))
         if has and is_exp:
-            for child in node.children:
-                walk(child, depth + 1)
+            last_idx = len(node.children) - 1
+            for i, child in enumerate(node.children):
+                walk(child, depth + 1, is_last_chain + [i == last_idx])
 
     for n in nodes:
-        walk(n, 0)
+        walk(n, 0, [])
     return rows
 
 

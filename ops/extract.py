@@ -111,6 +111,18 @@ def extract_mesh(mesh) -> dict:
     }
 
 
+def extract_action(action) -> dict:
+    """Walk a bpy Action into a core.fingerprint action_dict (keyframe co +
+    interpolation only — not handle positions/types, same scope tradeoff as
+    extract_mesh keeping verts+polys but not normals/UVs)."""
+    fcurves = []
+    for fc in action.fcurves:
+        points = [[kp.co[0], kp.co[1], kp.interpolation] for kp in fc.keyframe_points]
+        fcurves.append({"data_path": fc.data_path, "array_index": fc.array_index,
+                        "points": points})
+    return {"fcurves": fcurves}
+
+
 def extract_image(image) -> dict:
     cs = getattr(image, "colorspace_settings", None)
     return {

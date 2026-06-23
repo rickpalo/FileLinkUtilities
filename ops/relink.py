@@ -62,6 +62,21 @@ def _populate_broken_links(context) -> tuple[int, int]:
     return len(missing), len(candidates)
 
 
+def _refresh_broken_links(context) -> tuple[int, int]:
+    """Repopulate the broken-link list AND stash the persistent report, so a scan
+    always leaves a visible result — including a "No broken links found" status
+    when the file is clean (user rule, 2026-06-22). Returns (broken, auto-matched)."""
+    from .report_store import stash_report
+
+    broken, found = _populate_broken_links(context)
+    coll = context.window_manager.assetdoctor_broken_libs
+    rows = [(item.name, item.stored, item.target) for item in coll]
+    report = relink.build_broken_links_report(
+        rows, blend_name=bpy.path.basename(bpy.data.filepath) or "current file")
+    stash_report(context, report, "f7links")
+    return broken, found
+
+
 class ASSETDOCTOR_OT_scan_broken_links(bpy.types.Operator):
     bl_idname = "assetdoctor.scan_broken_links"
     bl_label = "Find Broken Links"
@@ -73,11 +88,11 @@ class ASSETDOCTOR_OT_scan_broken_links(bpy.types.Operator):
         if not bpy.data.filepath:
             self.report({"ERROR"}, "Save the file first")
             return {"CANCELLED"}
-        broken, found = _populate_broken_links(context)
+        broken, found = _refresh_broken_links(context)
         if context.area:
             context.area.tag_redraw()
         if not broken:
-            self.report({"INFO"}, "No broken library links")
+            self.report({"INFO"}, "No broken links found — see the Broken Links report")
         else:
             self.report({"INFO"}, f"{broken} broken link(s); {found} with an auto-found match")
         return {"FINISHED"}
@@ -154,8 +169,9 @@ class ASSETDOCTOR_OT_relink_selected(bpy.types.Operator):
             except Exception as exc:
                 self.report({"WARNING"}, f"Relinked {item.name} but reload failed: {exc}")
 
-        # Refresh the list so the now-fixed links drop off.
-        _populate_broken_links(context)
+        # Refresh the list + report so the now-fixed links drop off (and the report
+        # flips to "No broken links found" once they're all resolved).
+        _refresh_broken_links(context)
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

@@ -73,3 +73,46 @@ def test_resolve_group_in_dir_ambiguous_recursive_skipped(tmp_path):
     (s2 / "a.png").write_bytes(b"x")
     members = [_img("a.png", str(tmp_path / "gone" / "a.png"))]
     assert imagefamily.resolve_group_in_dir(members, str(tmp_path / "p"), recursive=True) == {}
+
+
+def _drain(gen):
+    """Run an iter_resolve generator to completion and return its StopIteration value."""
+    try:
+        while True:
+            next(gen)
+    except StopIteration as stop:
+        return stop.value
+
+
+def test_iter_resolve_group_matches_sync_version(tmp_path):
+    d = tmp_path / "beard"
+    d.mkdir()
+    (d / "a.png").write_bytes(b"x")
+    (d / "b.png").write_bytes(b"x")
+    members = [_img("a.png", str(tmp_path / "gone" / "a.png")),
+               _img("b.png", str(tmp_path / "gone" / "b.png")),
+               _img("c.png", str(tmp_path / "gone" / "c.png"))]
+    assert _drain(imagefamily.iter_resolve_group_in_dir(members, str(d))) == \
+        imagefamily.resolve_group_in_dir(members, str(d))
+
+
+def test_iter_resolve_group_recursive_matches_sync(tmp_path):
+    sub = tmp_path / "pack" / "tex"
+    sub.mkdir(parents=True)
+    (sub / "a.png").write_bytes(b"x")
+    members = [_img("a.png", str(tmp_path / "gone" / "a.png"))]
+    # Non-recursive finds nothing; recursive finds it — same as the sync function.
+    assert _drain(imagefamily.iter_resolve_group_in_dir(members, str(tmp_path / "pack"))) == {}
+    assert _drain(imagefamily.iter_resolve_group_in_dir(
+        members, str(tmp_path / "pack"), recursive=True)) == \
+        {"a.png": os.path.normpath(str(sub / "a.png"))}
+
+
+def test_iter_resolve_group_yields_folder_progress(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "x.png").write_bytes(b"x")
+    members = [_img("x.png", str(tmp_path / "gone" / "x.png"))]
+    counts = list(imagefamily.iter_resolve_group_in_dir(
+        members, str(tmp_path), recursive=True))
+    # One yield per folder walked (root + "a"), monotonically increasing.
+    assert counts == [1, 2]

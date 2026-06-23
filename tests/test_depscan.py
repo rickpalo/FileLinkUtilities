@@ -140,6 +140,44 @@ def test_dependency_tree_file_map(crafted):
     assert any("missing" in c.label for c in scene.children)
 
 
+def test_dependency_tree_file_map_icons(crafted):
+    """File Map nodes (#6) carry a per-node icon: a clean in-tree relative link
+    is "FILE_BLEND", a link resolved via an absolute path reads as "external"
+    (FILE_FOLDER), and a missing link reads as broken — missing wins over
+    absolute, same precedence as ``link_issues``."""
+    nodes = depscan.build_dependency_tree(crafted)
+    filemap = next(n for n in nodes if n.key == "f7:filemap")
+    assert filemap.icon == "FILE_FOLDER"
+    scene = filemap.children[0]
+    assert scene.icon == depscan.ICON_BLEND  # root file, no ref yet
+
+    clean = next(c for c in scene.children if "[" not in c.label)
+    assert clean.icon == depscan.ICON_BLEND
+    external = next(c for c in scene.children
+                     if "absolute" in c.label and "missing" not in c.label)
+    assert external.icon == depscan.ICON_EXTERNAL
+    missing = next(c for c in scene.children if "missing" in c.label)
+    assert missing.icon == depscan.ICON_MISSING
+
+
+def test_dependency_tree_circular_node_keeps_blend_icon(crafted):
+    nodes = depscan.build_dependency_tree(crafted)
+    filemap = next(n for n in nodes if n.key == "f7:filemap")
+
+    def find_circular(node):
+        if "↻ circular" in node.label:
+            return node
+        for c in node.children:
+            found = find_circular(c)
+            if found:
+                return found
+        return None
+
+    circ = find_circular(filemap)
+    assert circ is not None
+    assert circ.icon == depscan.ICON_BLEND
+
+
 def test_dependency_tree_marks_circular(crafted):
     nodes = depscan.build_dependency_tree(crafted)
 

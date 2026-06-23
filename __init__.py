@@ -58,6 +58,13 @@ def register() -> None:
         subtype="DIR_PATH",
         default="",
     )
+    bpy.types.Scene.assetdoctor_dep_target = bpy.props.StringProperty(
+        name="File to check",
+        description="The .blend you're considering deleting — the reverse-dependency "
+        "check scans the Project Folder above and lists who links TO this file",
+        subtype="FILE_PATH",
+        default="",
+    )
     bpy.types.Scene.assetdoctor_debug_log = bpy.props.BoolProperty(
         name="Enable Debug Log",
         description="Write AssetDoctorDebugLog.txt next to the .blend (or Blender's temp folder "
@@ -106,7 +113,9 @@ def register() -> None:
     # (virtualized + scrollable — fixes blank rows on large reports). Rebuilt by
     # ops.report_store from the JSON above whenever a report or its expansion
     # changes. WM-scoped (ephemeral), matching the report JSON's lifetime.
-    from .ui.panels import ASSETDOCTOR_PG_broken_lib, ASSETDOCTOR_PG_tree_row
+    from .ui.panels import (ASSETDOCTOR_PG_broken_lib, ASSETDOCTOR_PG_datablock_family,
+                            ASSETDOCTOR_PG_dup_family, ASSETDOCTOR_PG_examine_row,
+                            ASSETDOCTOR_PG_missing_block, ASSETDOCTOR_PG_tree_row)
 
     bpy.types.WindowManager.assetdoctor_report_rows = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_tree_row)
@@ -125,13 +134,75 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_broken_imgs = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_broken_lib)
     bpy.types.WindowManager.assetdoctor_broken_imgs_index = bpy.props.IntProperty(default=0)
-    # F6 B1: how the "point a group at one folder" strip groups missing textures.
+    # F6 B1: how the missing-texture categories group (by original folder or by
+    # the material that uses each texture).
     bpy.types.WindowManager.assetdoctor_tex_group_by = bpy.props.EnumProperty(
         name="Group by",
         items=[("DIR", "Folder", "Group by each texture's original folder"),
                ("MATERIAL", "Material", "Group by the material that uses each texture "
                 "(use when the original folder is gone)")],
-        default="DIR")
+        default="MATERIAL")
+    # Missing-texture section state: whether a scan has run (drives the header
+    # summary), the count at scan time (so "found" = initial − still-missing), and
+    # the expanded category keys (newline-joined) for the collapsible list.
+    bpy.types.WindowManager.assetdoctor_tex_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.assetdoctor_tex_initial_missing = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_tex_expanded = bpy.props.StringProperty(default="")
+    # B4 — eyedropper source: pick a material whose (on-disk) textures become the
+    # candidate corpus for proposing matches to the still-unplaced missing textures.
+    bpy.types.WindowManager.assetdoctor_tex_source_material = bpy.props.PointerProperty(
+        type=bpy.types.Material,
+        name="Source material",
+        description="A material whose existing textures are offered as substitutes for "
+        "the missing ones (matched by name) — staged as Possible Matches, never applied")
+
+    # F6 Layer 2 — redesigned Duplicate Materials/Textures list: one row per content-
+    # identical .NNN family (with a keeper dropdown), grouped by material; plus the
+    # scan state + summary counts that drive the inline header (no separate report).
+    bpy.types.WindowManager.assetdoctor_dup_families = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_dup_family)
+    bpy.types.WindowManager.assetdoctor_dup_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_dup_scanned = bpy.props.BoolProperty(default=False)
+    # Which scan produced the current Duplicate list: "NNN" (fast, name-family only)
+    # or "CONTENT" (deep, hashes every image). Merge refreshes accordingly.
+    bpy.types.WindowManager.assetdoctor_dup_scan_mode = bpy.props.StringProperty(default="NNN")
+    bpy.types.WindowManager.assetdoctor_dup_expanded = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.assetdoctor_dup_removable = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_dup_conflicts = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_dup_conflicts_text = bpy.props.StringProperty(default="")
+
+    # Batch 3 reverse-dep check: a small verdict the panel colors without having
+    # to re-parse the stashed f7rev report JSON on every redraw. "" = not run yet.
+    bpy.types.WindowManager.assetdoctor_dep_verdict = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.assetdoctor_dep_verdict_text = bpy.props.StringProperty(default="")
+
+    # Batch C #2: missing-data-block RECONNECT list. Rows group by their broken/
+    # renamed source library; ops.datablock_reconnect fills/enumerates/applies it.
+    bpy.types.WindowManager.assetdoctor_missing_blocks = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_missing_block)
+    bpy.types.WindowManager.assetdoctor_missing_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_missing_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.assetdoctor_missing_expanded = bpy.props.StringProperty(default="")
+
+    # Batch C #3: generic Duplicate Data-blocks list (any type, via ID.user_remap).
+    bpy.types.WindowManager.assetdoctor_datablock_families = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_datablock_family)
+    bpy.types.WindowManager.assetdoctor_datablock_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_datablock_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.assetdoctor_datablock_removable = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_datablock_conflicts = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_datablock_conflicts_text = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.assetdoctor_datablock_expanded = bpy.props.StringProperty(default="")
+
+    # Examine Library: retarget AWAY from a chosen (working) library.
+    bpy.types.WindowManager.assetdoctor_examine_library_pick = bpy.props.StringProperty(
+        name="Library", description="The library to examine (prop_search over bpy.data.libraries)")
+    bpy.types.WindowManager.assetdoctor_examine_library = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.assetdoctor_examine_rows = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_examine_row)
+    bpy.types.WindowManager.assetdoctor_examine_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_examine_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.assetdoctor_examine_expanded = bpy.props.StringProperty(default="")
 
 
 def unregister() -> None:
@@ -142,7 +213,7 @@ def unregister() -> None:
         bpy.app.handlers.load_post.remove(_load_post_handler)
     _load_post_handler = None
 
-    for attr in ("assetdoctor_scan_dir", "assetdoctor_debug_log"):
+    for attr in ("assetdoctor_scan_dir", "assetdoctor_dep_target", "assetdoctor_debug_log"):
         if hasattr(bpy.types.Scene, attr):
             delattr(bpy.types.Scene, attr)
     from .ops.report_store import FEATURES
@@ -155,7 +226,24 @@ def unregister() -> None:
                 "assetdoctor_resource_rows", "assetdoctor_resource_index",
                 "assetdoctor_broken_libs", "assetdoctor_broken_index",
                 "assetdoctor_broken_imgs", "assetdoctor_broken_imgs_index",
-                "assetdoctor_tex_group_by"]
+                "assetdoctor_tex_group_by", "assetdoctor_tex_scanned",
+                "assetdoctor_tex_initial_missing", "assetdoctor_tex_expanded",
+                "assetdoctor_tex_source_material",
+                "assetdoctor_dup_families", "assetdoctor_dup_index",
+                "assetdoctor_dup_scanned", "assetdoctor_dup_scan_mode",
+                "assetdoctor_dup_expanded",
+                "assetdoctor_dup_removable", "assetdoctor_dup_conflicts",
+                "assetdoctor_dup_conflicts_text",
+                "assetdoctor_dep_verdict", "assetdoctor_dep_verdict_text",
+                "assetdoctor_missing_blocks", "assetdoctor_missing_index",
+                "assetdoctor_missing_scanned", "assetdoctor_missing_expanded",
+                "assetdoctor_datablock_families", "assetdoctor_datablock_index",
+                "assetdoctor_datablock_scanned", "assetdoctor_datablock_removable",
+                "assetdoctor_datablock_conflicts", "assetdoctor_datablock_conflicts_text",
+                "assetdoctor_datablock_expanded",
+                "assetdoctor_examine_library_pick", "assetdoctor_examine_library",
+                "assetdoctor_examine_rows", "assetdoctor_examine_index",
+                "assetdoctor_examine_scanned", "assetdoctor_examine_expanded"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]
     for attr in wm_attrs:

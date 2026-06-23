@@ -33,6 +33,16 @@ def test_libB_is_a_leaf():
     assert blendscan.scan_file(LINKPROJ / "libB.blend") == []
 
 
+def test_harvest_image_paths_runs_on_real_blend():
+    # The link fixtures hold no images, so the result is empty — but this proves the
+    # BAT IM-block path harvest runs against a real .blend without error (the texture
+    # corpus for "Suggest from another .blend"). Matching itself is covered by
+    # core.imagematch.propose_from_paths tests.
+    out = blendscan.harvest_image_paths(LINKPROJ / "scene.blend")
+    assert isinstance(out, list)
+    assert all(isinstance(p, str) for p in out)
+
+
 def test_resolve_blend_relative():
     base = LINKPROJ / "scene.blend"
     resolved, is_rel = blendscan.resolve_blend_relative("//libA.blend", base)

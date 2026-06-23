@@ -83,23 +83,42 @@ def _candidate_paths(img: ImgDesc, remaps: list[tuple[str, str]]):
             yield out
 
 
+def _scan_dir_into(index: dict[str, list[str]], seen: set[str], d: str) -> None:
+    """Add ``d``'s files to a lowercased-basename → paths ``index`` (skipping dirs
+    already in ``seen``). Factored out of :func:`_index_dirs` so a modal operator can
+    build the same index one folder at a time and report progress between folders."""
+    key = d.replace("\\", "/").rstrip("/").lower()
+    if key in seen:
+        return
+    seen.add(key)
+    try:
+        for entry in os.scandir(d):
+            if entry.is_file():
+                index.setdefault(entry.name.lower(), []).append(
+                    os.path.normpath(entry.path))
+    except OSError:
+        return
+
+
 def _index_dirs(search_dirs: list[str]) -> dict[str, list[str]]:
     """Map lowercased basename → list of absolute paths, across the dirs (deduped)."""
     index: dict[str, list[str]] = {}
     seen: set[str] = set()
     for d in search_dirs:
-        key = d.replace("\\", "/").rstrip("/").lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            for entry in os.scandir(d):
-                if entry.is_file():
-                    index.setdefault(entry.name.lower(), []).append(
-                        os.path.normpath(entry.path))
-        except OSError:
-            continue
+        _scan_dir_into(index, seen, d)
     return index
+
+
+def iter_walk_dirs(root: str, recursive: bool = True):
+    """Yield directories under ``root`` (``root`` itself first), one per step. When
+    ``recursive`` descend subfolders via ``os.walk``; otherwise yield only ``root``.
+    A thin generator so a modal operator can build the file index folder-by-folder
+    and stay responsive / cancellable over a large tree."""
+    if recursive:
+        for cur, _sub, _files in os.walk(root):
+            yield cur
+    else:
+        yield root
 
 
 def find_image_target(

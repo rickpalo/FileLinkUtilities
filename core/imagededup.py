@@ -17,9 +17,12 @@ separate by design so a 1k/2k pair is never collapsed by accident.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from .datablock_graph import duplicate_families
+from .datablock_dedup import FamilyConflict, MemberInfo, MergePlan
+from .datablock_dedup import plan_merges as _plan_merges
+from .datablock_dedup import removable_count as removable_count
+from .datablock_dedup import victims_for_keeper as victims_for_keeper
 from .report import Finding, Report
 
 
@@ -33,67 +36,38 @@ class ImgInfo:
     users: int = 0
 
 
-@dataclass
-class MergePlan:
-    base: str                       # family base name (suffix stripped)
-    canonical: str                  # the datablock to keep
-    redundant: list[str] = field(default_factory=list)  # remap->canonical, then remove
-    fingerprint: str = ""
-
-
-@dataclass
-class FamilyConflict:
-    base: str
-    members: list[str]
-    reason: str  # why the family wasn't a single clean merge
-
-
-def _pick_canonical(group: list[ImgInfo], base: str) -> str:
-    """Prefer the un-suffixed original name (``Leather`` over ``Leather.001``);
-    else the most-used datablock; ties broken lexicographically (deterministic)."""
-    for m in group:
-        if m.name == base:
-            return base
-    return sorted(group, key=lambda m: (-m.users, m.name))[0].name
-
-
 def plan_dup_merges(images: list[ImgInfo]
                     ) -> tuple[list[MergePlan], list[FamilyConflict]]:
     """``(merge plans, conflicts)``. Within each ``.NNN`` family, group members by
     fingerprint; any fingerprint-group of 2+ is a lossless :class:`MergePlan`. A
     family with more than one distinct content (or unverifiable members) is also
-    surfaced as a :class:`FamilyConflict` so the user sees what wasn't merged."""
-    by_name = {i.name: i for i in images}
-    fams = duplicate_families([i.name for i in images])
+    surfaced as a :class:`FamilyConflict` so the user sees what wasn't merged.
+
+    Thin image-flavored wrapper over :func:`core.datablock_dedup.plan_merges` (the
+    grouping logic isn't image-specific — every type's dedup tool shares it)."""
+    return _plan_merges([MemberInfo(i.name, i.fingerprint, i.users) for i in images])
+
+
+def plan_content_merges(images: list[ImgInfo]) -> list[MergePlan]:
+    """F6 Layer 3 — group images by CONTENT fingerprint regardless of name; any
+    group of 2+ identical-content datablocks is a LOSSLESS merge. Unlike
+    :func:`plan_dup_merges` (which only looks WITHIN a ``.NNN`` name-family) this
+    crosses names and folders, so the same texture imported under different names
+    across many CC4 folders collapses to one. Canonical = most-used, then shortest
+    name, then lexical (deterministic). Images with no fingerprint are skipped."""
+    by_fp: dict[str, list[ImgInfo]] = {}
+    for i in images:
+        if i.fingerprint:
+            by_fp.setdefault(i.fingerprint, []).append(i)
     plans: list[MergePlan] = []
-    conflicts: list[FamilyConflict] = []
-    for base in sorted(fams):
-        members = [by_name[n] for n in fams[base]]
-        groups: dict[str, list[ImgInfo]] = {}
-        unverified: list[str] = []
-        for m in members:
-            if m.fingerprint:
-                groups.setdefault(m.fingerprint, []).append(m)
-            else:
-                unverified.append(m.name)
-        for fp, group in groups.items():
-            if len(group) >= 2:
-                canonical = _pick_canonical(group, base)
-                redundant = sorted(m.name for m in group if m.name != canonical)
-                plans.append(MergePlan(base=base, canonical=canonical,
-                                       redundant=redundant, fingerprint=fp))
-        if len(groups) > 1 or unverified:
-            reason = ("differing content — identical copies merged, variants kept"
-                      if len(groups) > 1
-                      else "unverified copies (missing/unhashable) — not merged")
-            conflicts.append(FamilyConflict(
-                base=base, members=sorted(m.name for m in members), reason=reason))
-    return plans, conflicts
-
-
-def removable_count(plans: list[MergePlan]) -> int:
-    """Total datablocks the plans would remove (sum of redundant members)."""
-    return sum(len(p.redundant) for p in plans)
+    for fp, group in by_fp.items():
+        if len(group) < 2:
+            continue
+        canonical = sorted(group, key=lambda m: (-m.users, len(m.name), m.name))[0].name
+        redundant = sorted(m.name for m in group if m.name != canonical)
+        plans.append(MergePlan(base=canonical, canonical=canonical,
+                               redundant=redundant, fingerprint=fp))
+    return sorted(plans, key=lambda p: p.canonical)
 
 
 def build_dedup_report(plans: list[MergePlan], conflicts: list[FamilyConflict],
@@ -125,4 +99,5 @@ def build_dedup_report(plans: list[MergePlan], conflicts: list[FamilyConflict],
 
 
 __all__ = ["ImgInfo", "MergePlan", "FamilyConflict", "plan_dup_merges",
-           "removable_count", "build_dedup_report"]
+           "plan_content_merges", "removable_count", "victims_for_keeper",
+           "build_dedup_report"]

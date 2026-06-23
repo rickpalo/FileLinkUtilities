@@ -97,3 +97,22 @@ def test_build_libfix_report_no_summary_row():
     # no redundant Summary row; normalize_path is the self-describing top line
     assert all(f.category != "summary" for f in report.findings)
     assert report.findings[0].category == "normalize_path"
+
+
+def test_broken_links_report_lists_each():
+    report = relink.build_broken_links_report(
+        [("lib.blend", "//missing/lib.blend", r"C:\found\lib.blend"),
+         ("other.blend", "//gone.blend", "")],
+        blend_name="scene.blend")
+    assert report.feature == "f7links"
+    assert [f.category for f in report.findings] == ["broken_link", "broken_link"]
+    assert all(f.severity == "error" for f in report.findings)
+
+
+def test_broken_links_report_clean_still_produces_output():
+    """An analysis must yield a visible result even when it finds nothing."""
+    report = relink.build_broken_links_report([], blend_name="scene.blend")
+    assert len(report.findings) == 1
+    assert report.findings[0].category == "clean"
+    assert report.findings[0].severity == "info"
+    assert "No broken links" in report.findings[0].message

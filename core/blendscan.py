@@ -87,6 +87,37 @@ def scan_file(path: pathlib.Path) -> list[LinkRef]:
         bfile.close()
 
 
+def harvest_image_paths(path: pathlib.Path) -> list[str]:
+    """Absolute on-disk paths of the external IMAGES referenced by ``path`` (offline,
+    via BAT). The candidate corpus for relinking missing textures from ANOTHER .blend
+    — we want the files that .blend points its textures at, wherever they live.
+
+    Delegates to BAT's own ``IM``-block handler (skips packed/generated images and
+    resolves each path relative to the file), so it tracks Blender's DNA across
+    versions exactly as the rest of the offline scan does. Raises ImportError if BAT
+    is unavailable; lets BAT's exceptions propagate for unreadable files."""
+    from blender_asset_tracer import blendfile  # lazy: see module docstring
+    from blender_asset_tracer.trace import blocks2assets
+
+    path = pathlib.Path(path)
+    bfile = blendfile.BlendFile(path)
+    out: list[str] = []
+    seen: set[str] = set()
+    try:
+        for block in bfile.find_blocks_from_code(b"IM"):
+            for usage in blocks2assets.image(block):
+                try:
+                    p = str(usage.abspath)
+                except Exception:
+                    continue  # unresolvable path -> skip
+                if p and p not in seen:
+                    seen.add(p)
+                    out.append(p)
+        return out
+    finally:
+        bfile.close()
+
+
 def iter_blend_files(
     root: pathlib.Path, ignore_dirs: frozenset[str] = DEFAULT_IGNORE_DIRS
 ) -> Iterator[pathlib.Path]:

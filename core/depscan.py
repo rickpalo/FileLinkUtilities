@@ -360,6 +360,14 @@ def _worst(severities) -> str:
     return "info"
 
 
+# Per-node icons for the File Map (Outliner/Explorer-style): a clean in-tree
+# relative blend, a missing link, or one resolved via an absolute path
+# ("external" to the relative project tree) read visually apart at a glance.
+ICON_BLEND = "FILE_BLEND"
+ICON_MISSING = "LIBRARY_DATA_BROKEN"
+ICON_EXTERNAL = "FILE_FOLDER"
+
+
 def _build_file_map(scan: DepScan) -> list[TreeNode]:
     """The dependency hierarchy as a tree of files: each file's children are the
     libraries it links, marked missing/absolute/backslash, cycle-safe (a file
@@ -373,20 +381,22 @@ def _build_file_map(scan: DepScan) -> list[TreeNode]:
     def build(node_key: str, ref: LinkRef | None, path: frozenset) -> TreeNode:
         name = _name(node_key)
         if node_key in path:
-            return TreeNode(key=newkey(), label=f"{name}   ↻ circular", severity="error")
+            return TreeNode(key=newkey(), label=f"{name}   ↻ circular", severity="error",
+                            icon=ICON_BLEND)
         markers: list[str] = []
         sev = "info"
+        icon = ICON_BLEND
         if ref is not None:
             if not ref.exists:
-                markers.append("missing"); sev = "error"
+                markers.append("missing"); sev = "error"; icon = ICON_MISSING
             elif not ref.is_relative:
-                markers.append("absolute"); sev = "warning"
+                markers.append("absolute"); sev = "warning"; icon = ICON_EXTERNAL
             if has_backslash(ref.stored_path):
                 markers.append("backslash")
                 sev = sev if sev != "info" else "warning"
         label = name + (f"   [{', '.join(markers)}]" if markers else "")
         size = scan.sizes.get(node_key)
-        node = TreeNode(key=newkey(), label=label, severity=sev,
+        node = TreeNode(key=newkey(), label=label, severity=sev, icon=icon,
                         detail=_fmt_size(size) if size else "")
         child_path = path | {node_key}
         for r in scan.refs.get(node_key, []):
@@ -428,7 +438,7 @@ def build_dependency_tree(scan: DepScan) -> list[TreeNode]:
     nodes: list[TreeNode] = []
     if summary:
         nodes.append(TreeNode(key="f7:summary", label=summary.message, severity="info"))
-    nodes.append(TreeNode(key="f7:filemap", label="File map",
+    nodes.append(TreeNode(key="f7:filemap", label="File map", icon="FILE_FOLDER",
                           detail=str(len(scan.order)), children=_build_file_map(scan)))
 
     # One node per severity tier (skipping empty ones), worst tier first.

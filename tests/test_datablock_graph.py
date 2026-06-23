@@ -59,8 +59,13 @@ def test_build_live_report():
     report = dg.build_live_report(extract, "test.blend")
     assert report.feature == "f7live"
     cats = {f.category for f in report.findings}
-    assert {"override_loop", "duplicate_family", "library_block",
-            "override_summary", "summary"} <= cats
+    assert {"overview", "override_loop", "duplicate_family", "library_block"} <= cats
+    assert "summary" not in cats  # redundant with "overview" — dropped (user, 2026-06-23)
+    overview = [f for f in report.findings if f.category == "overview"][0]
+    assert "1 override loop(s)" in overview.message
+    assert "2 duplicate data-block(s)" in overview.message
+    assert "1 library" in overview.message
+    assert "5 override(s)" in overview.message
     dup = [f for f in report.findings if f.category == "duplicate_family"][0]
     assert dup.detail == "3"
     assert dup.items == ["Body", "Body.001", "Body.002"]

@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 from typing import Callable
 
+from . import imagepaths
 from .imagepaths import ImgDesc, find_relink_targets
 
 
@@ -56,4 +57,27 @@ def resolve_group_in_dir(members: list[ImgDesc], directory: str,
     return find_relink_targets(members, dirs)
 
 
-__all__ = ["group_by_directory", "group_by_key", "resolve_group_in_dir"]
+def iter_resolve_group_in_dir(members: list[ImgDesc], directory: str,
+                              recursive: bool = False):
+    """Generator form of :func:`resolve_group_in_dir`: walk ``directory`` building the
+    file index one folder at a time, yielding the running folder count, then ``return``
+    the ``{image name: found path}`` map (the generator's ``StopIteration`` value). Lets
+    a modal operator show progress + stay cancellable over a huge tree while producing
+    exactly what :func:`resolve_group_in_dir` would for the same inputs."""
+    index: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    walked = 0
+    for d in imagepaths.iter_walk_dirs(directory, recursive):
+        imagepaths._scan_dir_into(index, seen, d)
+        walked += 1
+        yield walked
+    out: dict[str, str] = {}
+    for img in members:
+        target = imagepaths.find_image_target(img, [], _index=index)
+        if target is not None:
+            out[img.name] = target
+    return out
+
+
+__all__ = ["group_by_directory", "group_by_key", "resolve_group_in_dir",
+           "iter_resolve_group_in_dir"]

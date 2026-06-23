@@ -11,6 +11,7 @@ import pytest
 
 from core import fingerprint
 from core.fingerprint import (
+    fingerprint_action,
     fingerprint_image,
     fingerprint_material,
     fingerprint_mesh,
@@ -136,6 +137,40 @@ def test_mesh_float_jitter_within_tolerance_matches():
     a = {"vertices": [[0.0, 0.0, 0.0]], "polygons": [], "edges": 0}
     b = {"vertices": [[0.0000000001, 0.0, 0.0]], "polygons": [], "edges": 0}
     assert fingerprint_mesh(a) == fingerprint_mesh(b)
+
+
+# --- action hashing -----------------------------------------------------------
+def test_action_identical_match():
+    a = {"fcurves": [{"data_path": "location", "array_index": 0,
+                      "points": [[1, 0.0, "LINEAR"], [10, 2.0, "LINEAR"]]}]}
+    assert fingerprint_action(a) == fingerprint_action(dict(a))
+
+
+def test_action_curve_order_is_invariant():
+    a = {"fcurves": [{"data_path": "location", "array_index": 0, "points": [[1, 0.0, "LINEAR"]]},
+                     {"data_path": "location", "array_index": 1, "points": [[1, 1.0, "LINEAR"]]}]}
+    b = {"fcurves": [{"data_path": "location", "array_index": 1, "points": [[1, 1.0, "LINEAR"]]},
+                     {"data_path": "location", "array_index": 0, "points": [[1, 0.0, "LINEAR"]]}]}
+    assert fingerprint_action(a) == fingerprint_action(b)
+
+
+def test_action_different_keyframe_value_differs():
+    a = {"fcurves": [{"data_path": "location", "array_index": 0, "points": [[1, 0.0, "LINEAR"]]}]}
+    b = {"fcurves": [{"data_path": "location", "array_index": 0, "points": [[1, 5.0, "LINEAR"]]}]}
+    assert fingerprint_action(a) != fingerprint_action(b)
+
+
+def test_action_different_interpolation_differs():
+    a = {"fcurves": [{"data_path": "location", "array_index": 0, "points": [[1, 0.0, "LINEAR"]]}]}
+    b = {"fcurves": [{"data_path": "location", "array_index": 0, "points": [[1, 0.0, "BEZIER"]]}]}
+    assert fingerprint_action(a) != fingerprint_action(b)
+
+
+def test_action_float_jitter_within_tolerance_matches():
+    a = {"fcurves": [{"data_path": "location", "array_index": 0, "points": [[1, 0.0, "LINEAR"]]}]}
+    b = {"fcurves": [{"data_path": "location", "array_index": 0,
+                      "points": [[1, 0.0000000001, "LINEAR"]]}]}
+    assert fingerprint_action(a) == fingerprint_action(b)
 
 
 # --- image identity (resolution-sensitive) -----------------------------------

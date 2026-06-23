@@ -1,0 +1,208 @@
+"""Batch C #3 — generic "Duplicate Data-blocks" merge tool.
+
+The Overrides & Dups (f7live) report already finds ``.NNN`` name-families across
+EVERY audited datablock type (``ops.datablock_inspect._COLLECTIONS``) but is
+read-only — on a real file, most of those families turn out to be `Action`
+datablocks from undisciplined animating (Blender auto-names a new pose action
+``ObjectName.PoseName``, then ``.001``, ``.002``, … on every re-take), and there
+was no way to act on any of it. This mirrors the F6 image-dedup keeper-dropdown
+UI (find families → pick a keeper → Merge Selected) but generalizes it to ANY
+datablock type via ``ID.user_remap()`` (which is generic, not image-specific) and
+``core.datablock_dedup`` (the same merge-planning algorithm imagededup already
+uses, extracted so it isn't reimplemented per type).
+
+Materials, Meshes and Images are deliberately OUT of scope here — they already
+have dedicated, more mature tools (F3 material dedup, F5 geometry instancing, F6
+image dedup) with their own verified content fingerprints; duplicating that path
+here would just be a second, weaker way to do the same job. Of the remaining
+types, only Action has a real fingerprint (``core.fingerprint.fingerprint_
+action``, hashing F-curve keyframe data) — everything else still shows up
+(visibility matters even without a merge path) but is reported "unverified", per
+the project's standing safety rule: name similarity finds candidates, content
+identity gates the merge. Add a fingerprinter to ``_fingerprint_for`` to light up
+another type later.
+"""
+
+from __future__ import annotations
+
+import bpy
+
+from ..core import datablock_dedup as dd
+from ..core import datablock_graph as dg
+from .datablock_inspect import _COLLECTIONS
+from .progress import ModalProgressMixin
+
+# Out of scope: F3/F5/F6 already own these types' dedup workflows.
+_OUT_OF_SCOPE = {"materials", "meshes", "images"}
+_GENERIC_COLLECTIONS = [(label, attr) for label, attr in _COLLECTIONS if attr not in _OUT_OF_SCOPE]
+
+_LABEL_BY_ATTR = dict((attr, label) for label, attr in _COLLECTIONS)
+
+
+def _fingerprint_for(attr: str, block) -> str:
+    """Content fingerprint for one datablock, or ``""`` if this type has none yet
+    (lands as an "unverified" conflict — never silently merged)."""
+    if attr == "actions":
+        from .extract import extract_action
+        from ..core.fingerprint import fingerprint_action
+
+        try:
+            return fingerprint_action(extract_action(block))
+        except Exception:
+            return ""
+    return ""
+
+
+def _gather_steps(context):
+    """Fingerprint every LOCAL ``.NNN``-family member across the in-scope
+    collections, yielding ``(fraction, status)`` per collection. Returns
+    ``(members, id_by_key)`` (via the generator's value) — ``members`` use
+    ``"{attr}:{name}"`` as their :class:`core.datablock_dedup.MemberInfo` name so
+    one ``plan_merges`` call naturally keeps each type's families separate
+    (the attr prefix survives ``.NNN``-suffix stripping)."""
+    members: list[dd.MemberInfo] = []
+    id_by_key: dict[tuple[str, str], object] = {}
+    total = len(_GENERIC_COLLECTIONS) or 1
+    for i, (label, attr) in enumerate(_GENERIC_COLLECTIONS):
+        coll = getattr(bpy.data, attr, None)
+        blocks = [b for b in coll if b.library is None] if coll is not None else []
+        fams = dg.duplicate_families([b.name for b in blocks])
+        family_names = {n for ms in fams.values() for n in ms}
+        for block in blocks:
+            if block.name not in family_names:
+                continue
+            id_by_key[(attr, block.name)] = block
+            members.append(dd.MemberInfo(name=f"{attr}:{block.name}",
+                                         fingerprint=_fingerprint_for(attr, block),
+                                         users=block.users))
+        yield ((i + 1) / total, f"Scanning {label} ({len(family_names)} in families)…")
+    return members, id_by_key
+
+
+def _populate_datablock_families(context, plans, conflicts) -> None:
+    """Refill ``assetdoctor_datablock_families`` (one row per merge-plan family,
+    grouped by KIND in the panel) + the summary counts + the conflict-list text."""
+    wm = context.window_manager
+    coll = wm.assetdoctor_datablock_families
+    coll.clear()
+    for p in plans:
+        attr, base = p.base.split(":", 1)
+        members = [n.split(":", 1)[1] for n in (p.canonical, *p.redundant)]
+        row = coll.add()
+        row.name = p.base
+        row.kind = _LABEL_BY_ATTR.get(attr, attr)
+        row.collection = attr
+        row.members = "\n".join(members)
+        row.selected = True
+        row.removable = len(p.redundant)
+    wm.assetdoctor_datablock_index = 0
+    wm.assetdoctor_datablock_removable = dd.removable_count(plans)
+    wm.assetdoctor_datablock_conflicts = len(conflicts)
+
+    lines = []
+    for c in conflicts:
+        attr, base = c.base.split(":", 1)
+        names = [n.split(":", 1)[1] for n in c.members]
+        lines.append(f"{_LABEL_BY_ATTR.get(attr, attr)}: {base} — {c.reason} ({', '.join(names)})")
+    wm.assetdoctor_datablock_conflicts_text = "\n".join(lines)
+
+
+class ASSETDOCTOR_OT_scan_datablock_dups(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "assetdoctor.scan_datablock_dups"
+    bl_label = "Find Duplicate Data-blocks"
+    bl_description = (
+        "Find .NNN name-family duplicates across Objects, Actions, Node Groups and "
+        "other datablock types (Materials/Meshes/Images have their own dedicated "
+        "dedup tools already). Verified by content where a fingerprint exists "
+        "(currently Actions); everything else is listed but never auto-merged. "
+        "Nothing is changed yet"
+    )
+    bl_options = {"REGISTER"}
+
+    def run_steps(self, context):
+        members, _id_by_key = yield from _gather_steps(context)
+        yield (0.95, "Building merge plan…")
+        plans, conflicts = dd.plan_merges(members)
+        _populate_datablock_families(context, plans, conflicts)
+        wm = context.window_manager
+        wm.assetdoctor_datablock_scanned = True
+        yield (1.0, "Done")
+        n = dd.removable_count(plans)
+        if plans or conflicts:
+            self.report({"INFO"}, f"{len(plans)} merge group(s); ~{n} removable; "
+                        f"{len(conflicts)} differing/unverified")
+        else:
+            self.report({"INFO"}, "✓ No duplicate data-blocks found")
+
+
+class ASSETDOCTOR_OT_merge_datablock_selected(bpy.types.Operator):
+    bl_idname = "assetdoctor.merge_datablock_selected"
+    bl_label = "Merge Selected Duplicates"
+    bl_description = ("Merge each ticked family into its chosen keeper (remap users, "
+                      "remove the rest). Takes a backup first")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        wm = context.window_manager
+        chosen = [row for row in wm.assetdoctor_datablock_families if row.selected]
+        if not chosen:
+            self.report({"WARNING"}, "Tick at least one family to merge")
+            return {"CANCELLED"}
+
+        from .safety import auto_backup
+
+        backup = auto_backup(context)
+        removed = 0
+        for row in chosen:
+            members = [n for n in row.members.split("\n") if n]
+            keeper_name = row.keeper or (members[0] if members else "")
+            target_coll = getattr(bpy.data, row.collection, None)
+            keeper = target_coll.get(keeper_name) if target_coll is not None else None
+            if keeper is None:
+                continue
+            for victim_name in dd.victims_for_keeper(members, keeper_name):
+                victim = target_coll.get(victim_name)
+                if victim is None or victim == keeper or victim.library is not None:
+                    continue
+                victim.user_remap(keeper)
+                if victim.users == 0:
+                    target_coll.remove(victim)
+                    removed += 1
+
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
+
+        # A deep re-fingerprint is too heavy to auto-run synchronously here (same
+        # call as image dedup's CONTENT mode) — clear + prompt re-scan.
+        wm.assetdoctor_datablock_families.clear()
+        wm.assetdoctor_datablock_removable = 0
+        wm.assetdoctor_datablock_conflicts = 0
+        wm.assetdoctor_datablock_conflicts_text = ""
+        wm.assetdoctor_datablock_scanned = False
+        if context.area:
+            context.area.tag_redraw()
+        tail = f" Backup: {backup}" if backup else " (no backup written)"
+        self.report({"INFO"}, f"Merged and removed {removed} duplicate data-block(s). "
+                    f"Save to persist.{tail} Re-run Find to see any remaining.")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_datablock_category_toggle(bpy.types.Operator):
+    """Expand/collapse one KIND group in the Duplicate Data-blocks list."""
+
+    bl_idname = "assetdoctor.datablock_category_toggle"
+    bl_label = "Expand/Collapse Kind"
+    bl_options = {"INTERNAL"}
+
+    key: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+    def execute(self, context):
+        wm = context.window_manager
+        keys = set(filter(None, wm.assetdoctor_datablock_expanded.split("\n")))
+        keys.discard(self.key) if self.key in keys else keys.add(self.key)
+        wm.assetdoctor_datablock_expanded = "\n".join(sorted(keys))
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}
