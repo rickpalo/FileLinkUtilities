@@ -1,6 +1,24 @@
 # AssetDoctor — TODO / backlog
 
-## ⏩ SESSION RESUME (as of v0.2.36, 2026-06-24) — read this first
+## ⏩ SESSION RESUME (as of v0.2.37, 2026-06-24) — read this first
+
+**v0.2.37 — Phase 0 of the 3-part review (code review / N-panel dedup / UX review, plan at
+`C:\Users\Rick\.claude\plans\declarative-booping-ripple.md`): dead-code removal only, zero
+behavior change, while the user live-tests v0.2.34-0.2.36 separately.** Removed: the unused
+`ASSETDOCTOR_UL_broken_imgs` UIList class (`ui/panels.py`, never drawn via `template_list`
+since the Missing-Textures section switched to custom rows in v0.2.12) + its registration;
+`core/imagepaths.diff_found`, `build_find_missing_report`, `build_image_report`, and the
+`FindMissingResult` dataclass (none called from any `ops/*.py` — verified by grep, not just
+inherited from notes) + the now-orphaned `Finding`/`Report` import and 6 tests covering them.
+Suite dropped from 307 → **301 green** (exactly the 6 removed tests). **Next: wait for the
+user's live-test bug list from this Blender session, fix those in place, THEN do the bigger
+Phase 2 refactor** (a shared file-picker/proposal-staging helper across `ops/relink.py`,
+`ops/image_relink.py`, `ops/datablock_reconnect.py`, `ops/examine_library.py` — deliberately
+held back since those are the exact files under live test right now) — see the plan file for
+the full 4-phase breakdown (code cleanup → panel-dedup/UX review combined → documentation
+review last, separately).
+
+## ⏩ PREVIOUS SESSION RESUME (as of v0.2.36, 2026-06-24)
 
 **State:** local dev **v0.2.36** (published channel still 0.1.9). Suite **307 green**. **Lettered
 Batches A–E are ALL COMPLETE**, and so is the numbered **5-batch consolidated plan (1–5)** — confirmed
@@ -824,9 +842,9 @@ report). `ui/panels.ASSETDOCTOR_PT_scene_deps._draw_missing_textures`:
 - **CAVEAT:** these category/file rows are manually drawn (not a UIList) → no virtualization; a single
   category with hundreds of expanded files could blank rows past ~the panel height (the known N-panel
   limitation). Categories are collapsed by default to mitigate; watch on the real CC4 file.
-- **Cleanup later:** `ASSETDOCTOR_UL_broken_imgs` UIList is now unused (replaced by custom rows) but
-  still registered — harmless; remove on a later pass. `core/imagepaths.diff_found`/`build_find_missing_report`
-  also now unused by ops (kept, still tested).
+- **Cleanup later — DONE @ v0.2.37 (2026-06-24).** `ASSETDOCTOR_UL_broken_imgs` UIList,
+  `core/imagepaths.diff_found`/`build_find_missing_report`/`build_image_report`/`FindMissingResult`,
+  and their tests all removed (Phase 0 of the code-review/panel-dedup/UX-review plan).
 - **DEFERRED UI tweaks (user, 2026-06-22 — do on the NEXT Missing-Textures UI change, not standalone):**
   (a) category label "(X of Y found)" → **"(X of Y matched)"** (more accurate — these are staged, not
   applied); (b) put the ticked count on the apply button: **"Relink YY Selected (creates backup)"**

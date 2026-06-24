@@ -23,7 +23,6 @@ import os
 from dataclasses import dataclass
 
 from .relink import relink_stored_path  # reused: same //-relative logic
-from .report import Finding, Report
 
 
 @dataclass
@@ -181,73 +180,6 @@ def find_relink_targets(
     return out
 
 
-@dataclass
-class FindMissingResult:
-    """Outcome of a native ``find_missing_files`` run, computed by diffing each
-    previously-missing image's resolved-exists before vs after."""
-
-    found: list[tuple[str, str]]          # (image name, resolved path now on disk)
-    still_missing: list[tuple[str, str]]  # (image name, stored path)
-
-
-def diff_found(before_missing: list[ImgDesc],
-               after_by_name: dict[str, ImgDesc]) -> FindMissingResult:
-    """Classify each image that was MISSING before as found (now exists) or still
-    missing, by looking up its post-run state. Blender's ``find_missing_files``
-    relocates silently — this is the report it omits."""
-    found: list[tuple[str, str]] = []
-    still: list[tuple[str, str]] = []
-    for img in before_missing:
-        after = after_by_name.get(img.name)
-        if after is not None and after.exists:
-            found.append((img.name, after.resolved))
-        else:
-            still.append((img.name, img.stored))
-    return FindMissingResult(found=found, still_missing=still)
-
-
-def build_find_missing_report(result: FindMissingResult,
-                              blend_name: str = "current file") -> Report:
-    """Report a native-search run: the textures it FOUND (info) first, then the
-    ones STILL missing (error). Category headers carry the counts."""
-    report = Report(title=f"Find missing files: {blend_name}", feature="f6tex")
-    for name, path in result.found:
-        report.add(Finding(category="found_texture",
-                           message=f"{name}:  found  →  {path}",
-                           severity="info", items=[name, path]))
-    for name, stored in result.still_missing:
-        report.add(Finding(category="unresolved_texture",
-                           message=f"{name}:  {stored}  (still missing)",
-                           severity="error", items=[name, stored]))
-    if not result.found and not result.still_missing:
-        report.add(Finding(category="clean",
-                           message="✓ No missing image textures",
-                           severity="info"))
-    return report
-
-
-def build_image_report(targets: dict[str, str], unresolved: list[ImgDesc],
-                       blend_name: str = "current file") -> Report:
-    """Report the missing-texture relink plan: found targets (info) first, then
-    the ones still unresolved (error). Category headers carry the counts."""
-    report = Report(title=f"Missing textures: {blend_name}", feature="f6tex")
-    for name, target in targets.items():
-        report.add(Finding(category="relink_texture",
-                           message=f"{name}:  missing  →  {target}",
-                           severity="info", items=[name, target],
-                           data={"name": name, "new": target}))
-    for img in unresolved:
-        report.add(Finding(category="unresolved_texture",
-                           message=f"{img.name}:  {img.stored}  (no candidate found)",
-                           severity="error", items=[img.name, img.stored]))
-    if not targets and not unresolved:
-        report.add(Finding(category="clean",
-                           message="✓ All image textures resolve — nothing missing",
-                           severity="info"))
-    return report
-
-
 __all__ = ["ImgDesc", "dedup_path", "apply_prefix_remap", "find_image_target",
-           "find_relink_targets", "build_image_report", "relink_stored_path",
-           "FindMissingResult", "diff_found", "build_find_missing_report",
+           "find_relink_targets", "relink_stored_path",
            "iter_walk_dirs", "ambiguous_matches"]

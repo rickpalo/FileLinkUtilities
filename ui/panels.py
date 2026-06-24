@@ -339,31 +339,6 @@ class ASSETDOCTOR_UL_broken_libs(bpy.types.UIList):
         row.operator("assetdoctor.relink_pick_file", text="", icon="FILEBROWSER").index = index
 
 
-class ASSETDOCTOR_UL_broken_imgs(bpy.types.UIList):
-    """Per-texture relink list (F6): checkbox + missing image name + its target
-    file (or a 'pick a file' hint) + a file-picker button. Same shape as the
-    broken-library list, reusing ASSETDOCTOR_PG_broken_lib for the rows."""
-
-    bl_idname = "ASSETDOCTOR_UL_broken_imgs"
-
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        if self.layout_type == "GRID":
-            layout.alignment = "CENTER"
-            layout.label(text=item.name)
-            return
-        row = layout.row(align=True)
-        row.prop(item, "selected", text="")
-        row.label(text=item.name, icon="IMAGE_DATA")
-        target = row.row()
-        target.alignment = "RIGHT"
-        if item.target:
-            target.label(text=os.path.basename(item.target) or item.target,
-                         icon="CHECKMARK" if item.has_candidate else "QUESTION")
-        else:
-            target.label(text="no match — pick a file", icon="QUESTION")
-        row.operator("assetdoctor.relink_pick_texture", text="", icon="FILEBROWSER").index = index
-
-
 class _SceneFeaturePanel:
     """Shared bl_* attributes for the legacy-feature Scene sub-panels (Make
     Local, Duplicate Materials, Orphans, Geometry, Resource Analyzer,
