@@ -57,17 +57,28 @@ def resolve_group_in_dir(members: list[ImgDesc], directory: str,
     return find_relink_targets(members, dirs)
 
 
-def iter_resolve_group_in_dir(members: list[ImgDesc], directory: str,
-                              recursive: bool = False):
+def iter_resolve_group_in_dir(
+    members: list[ImgDesc], directory: str, recursive: bool = False,
+    ambiguous: dict[str, list[str]] | None = None,
+    skipped_dirs: list[str] | None = None,
+):
     """Generator form of :func:`resolve_group_in_dir`: walk ``directory`` building the
     file index one folder at a time, yielding the running folder count, then ``return``
     the ``{image name: found path}`` map (the generator's ``StopIteration`` value). Lets
     a modal operator show progress + stay cancellable over a huge tree while producing
-    exactly what :func:`resolve_group_in_dir` would for the same inputs."""
+    exactly what :func:`resolve_group_in_dir` would for the same inputs.
+
+    Pass ``ambiguous``/``skipped_dirs`` (mutated in place, not part of the return
+    value, so existing callers/tests are unaffected) to learn WHY a member came back
+    with no target instead of just seeing it missing: ``ambiguous`` collects each
+    wanted basename that matched 2+ files somewhere in the tree (skipped rather than
+    guessed at), ``skipped_dirs`` collects any subfolder ``os.walk`` couldn't list at
+    all (permission denied / Windows MAX_PATH) — both look identical to "not found"
+    without this, which is especially confusing on a broad, e.g. drive-level, search."""
     index: dict[str, list[str]] = {}
     seen: set[str] = set()
     walked = 0
-    for d in imagepaths.iter_walk_dirs(directory, recursive):
+    for d in imagepaths.iter_walk_dirs(directory, recursive, skipped=skipped_dirs):
         imagepaths._scan_dir_into(index, seen, d)
         walked += 1
         yield walked
@@ -76,6 +87,10 @@ def iter_resolve_group_in_dir(members: list[ImgDesc], directory: str,
         target = imagepaths.find_image_target(img, [], _index=index)
         if target is not None:
             out[img.name] = target
+    if ambiguous is not None:
+        wanted = [os.path.basename((img.resolved or img.stored).replace("\\", "/"))
+                 for img in members]
+        ambiguous.update(imagepaths.ambiguous_matches(index, wanted))
     return out
 
 

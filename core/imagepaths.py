@@ -109,16 +109,42 @@ def _index_dirs(search_dirs: list[str]) -> dict[str, list[str]]:
     return index
 
 
-def iter_walk_dirs(root: str, recursive: bool = True):
+def iter_walk_dirs(root: str, recursive: bool = True, skipped: list[str] | None = None):
     """Yield directories under ``root`` (``root`` itself first), one per step. When
     ``recursive`` descend subfolders via ``os.walk``; otherwise yield only ``root``.
     A thin generator so a modal operator can build the file index folder-by-folder
-    and stay responsive / cancellable over a large tree."""
+    and stay responsive / cancellable over a large tree.
+
+    ``os.walk``'s default behaviour is to silently DROP any subdirectory it can't
+    list (permission denied, or a path Windows rejects — e.g. exceeding the 260
+    char MAX_PATH) — it just never gets yielded, with no trace. Pass ``skipped`` to
+    collect those paths instead, so a tree that went silently half-scanned doesn't
+    look identical to "nothing here" when a wanted file turns out to live in the
+    part that got dropped."""
     if recursive:
-        for cur, _sub, _files in os.walk(root):
+        def _onerror(err: OSError) -> None:
+            if skipped is not None:
+                skipped.append(getattr(err, "filename", None) or str(err))
+
+        for cur, _sub, _files in os.walk(root, onerror=_onerror):
             yield cur
     else:
         yield root
+
+
+def ambiguous_matches(index: dict[str, list[str]], basenames: list[str]) -> dict[str, list[str]]:
+    """``{wanted basename: [2+ matching paths]}`` for any of ``basenames`` (matched
+    case-insensitively, like :func:`find_image_target`) that exist in ``index`` under
+    more than one path. This is exactly the case ``find_image_target`` silently
+    declines to guess at — surfaced separately from a plain "not found" so a
+    same-filename-elsewhere collision (likely at a broad, e.g. drive-level, search)
+    doesn't look identical to the file genuinely not existing anywhere scanned."""
+    out: dict[str, list[str]] = {}
+    for b in basenames:
+        paths = index.get(b.lower(), [])
+        if len(paths) > 1:
+            out[b] = paths
+    return out
 
 
 def find_image_target(
@@ -223,4 +249,5 @@ def build_image_report(targets: dict[str, str], unresolved: list[ImgDesc],
 
 __all__ = ["ImgDesc", "dedup_path", "apply_prefix_remap", "find_image_target",
            "find_relink_targets", "build_image_report", "relink_stored_path",
-           "FindMissingResult", "diff_found", "build_find_missing_report"]
+           "FindMissingResult", "diff_found", "build_find_missing_report",
+           "iter_walk_dirs", "ambiguous_matches"]

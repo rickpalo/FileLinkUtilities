@@ -173,6 +173,22 @@ def _wanted_basename(item) -> str:
     return os.path.basename((item.stored or item.name).replace("\\", "/"))
 
 
+def _diagnostics_tail(ambiguous: dict | None, skipped_dirs: list | None) -> str:
+    """A short suffix for the folder-search status message surfacing the two ways a
+    broad (e.g. drive-level) search can silently miss a file that a narrower one
+    finds: a same-filename collision elsewhere in the tree (skipped, never guessed
+    at) or a subfolder ``os.walk`` couldn't list at all (permission / Windows'
+    MAX_PATH) — both otherwise look identical to "genuinely not there"."""
+    bits = []
+    if ambiguous:
+        bits.append(f"{len(ambiguous)} skipped (same filename found in 2+ places — pick "
+                    "manually for those)")
+    if skipped_dirs:
+        bits.append(f"{len(skipped_dirs)} folder(s) could not be scanned "
+                    "(permission, or a path too long for Windows)")
+    return "  ⚠ " + "; ".join(bits) + "." if bits else ""
+
+
 def _stage_proposals(todo, proposals) -> int:
     """Copy ``{wanted basename: (path, Match)}`` proposals onto the still-unplaced
     rows (the shared tail of every 'suggest from a corpus' op). Returns the count
@@ -240,7 +256,11 @@ class ASSETDOCTOR_OT_relink_folder_search(ModalProgressMixin, bpy.types.Operator
         descs = [ImgDesc(name=it.name, stored=it.stored,
                          resolved=os.path.normpath(bpy.path.abspath(it.stored)), exists=False)
                  for it in members]
-        gen = imagefamily.iter_resolve_group_in_dir(descs, self.directory, self.recursive)
+        ambiguous: dict[str, list[str]] = {}
+        skipped_dirs: list[str] = []
+        gen = imagefamily.iter_resolve_group_in_dir(
+            descs, self.directory, self.recursive,
+            ambiguous=ambiguous, skipped_dirs=skipped_dirs)
         found: dict[str, str] = {}
         try:
             while True:
@@ -257,36 +277,42 @@ class ASSETDOCTOR_OT_relink_folder_search(ModalProgressMixin, bpy.types.Operator
                 it.target = target
                 it.has_candidate = True
                 it.selected = True
+                it.ambiguous_count = 0
+            else:
+                it.ambiguous_count = len(ambiguous.get(_wanted_basename(it), []))
         if context.area:
             context.area.tag_redraw()
         yield (1.0, "Done")
 
         total = len(members)
+        tail = _diagnostics_tail(ambiguous, skipped_dirs)
         if found and self.mode == "EXACT_GROUP":
             self.report({"INFO"}, f"Matched {len(found)} of {total} in this group — "
-                        "targets set in the list above. Tick/adjust, then Relink Selected.")
+                        f"targets set in the list above. Tick/adjust, then Relink Selected.{tail}")
         elif found:
             self.report({"INFO"}, f"Staged {len(found)} of {total} texture(s) from "
-                        f"{self.directory}. Review, then Relink Selected.")
+                        f"{self.directory}. Review, then Relink Selected.{tail}")
         elif self.mode == "EXACT_GROUP":
             scope = "and subfolders" if self.recursive else "(this folder only)"
             self.report({"WARNING"}, f"No matching filenames found in {self.directory} {scope}. "
-                        "Nothing changed — try another folder or pick files individually.")
+                        f"Nothing changed — try another folder or pick files individually.{tail}")
         else:
             self.report({"WARNING"}, f"No matching filenames found under {self.directory}. "
-                        "Nothing changed.")
+                        f"Nothing changed.{tail}")
 
     def _run_fuzzy(self, context, members):
         index: dict[str, list[str]] = {}
         seen: set[str] = set()
+        skipped_dirs: list[str] = []
         walked = 0
-        for d in imagepaths.iter_walk_dirs(self.directory, True):
+        for d in imagepaths.iter_walk_dirs(self.directory, True, skipped=skipped_dirs):
             imagepaths._scan_dir_into(index, seen, d)
             walked += 1
             yield (min(0.9, walked / (walked + 20.0)),
                    f"Scanning {self.directory}… {walked} folder(s)")
         if not index:
-            self.report({"WARNING"}, f"No files found under {self.directory}")
+            self.report({"WARNING"}, f"No files found under {self.directory}."
+                        f"{_diagnostics_tail(None, skipped_dirs)}")
             return
 
         name_to_path = {os.path.basename(paths[0]): paths[0] for paths in index.values()}
@@ -309,11 +335,12 @@ class ASSETDOCTOR_OT_relink_folder_search(ModalProgressMixin, bpy.types.Operator
         if context.area:
             context.area.tag_redraw()
         yield (1.0, "Done")
+        tail = _diagnostics_tail(None, skipped_dirs)
         if staged:
             self.report({"INFO"}, f"Found {staged} possible match(es) by name in "
-                        f"{self.directory}. Review the Possible Matches list and Accept.")
+                        f"{self.directory}. Review the Possible Matches list and Accept.{tail}")
         else:
-            self.report({"WARNING"}, f"No similar filenames found under {self.directory}.")
+            self.report({"WARNING"}, f"No similar filenames found under {self.directory}.{tail}")
 
 
 class ASSETDOCTOR_OT_suggest_fuzzy_matches(bpy.types.Operator):

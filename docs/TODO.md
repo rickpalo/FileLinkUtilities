@@ -1,11 +1,124 @@
 # AssetDoctor — TODO / backlog
 
-## ⏩ SESSION RESUME (as of v0.2.33, 2026-06-23) — read this first
+## ⏩ SESSION RESUME (as of v0.2.36, 2026-06-24) — read this first
 
-**State:** local dev **v0.2.33** (published channel still 0.1.9). Suite **295 green**. **BATCH D BUILT**
-(see "BATCH D" below) — **RESUME WITH BATCH E next session.**
+**State:** local dev **v0.2.36** (published channel still 0.1.9). Suite **307 green**. **Lettered
+Batches A–E are ALL COMPLETE**, and so is the numbered **5-batch consolidated plan (1–5)** — confirmed
+2026-06-24 by checking the working tree directly: Batch 4's three "remaining" items (datablock reconnect,
+node-graph substitute confidence, idle-scan feasibility) were genuinely built, just shipped under the
+Batch C / Batch E labels instead of literal "Batch 4" commits — the numbered-Batch-4 status line was
+just stale bookkeeping, now fixed (see "Where we are in the 5-batch push" further down). **Nothing new
+was built this pass.** Plus a **user-reported bug fixed** in v0.2.36: "Search a Folder (Recursive)"
+silently missing textures at drive-level scope. All of this work (everything since v0.2.5) still needs
+the live-Blender verify sweep (structural panel changes especially — RESTART Blender, don't rely on
+Reload Scripts) — that is the actual next step, not new feature work, unless the user redirects.
 
-- **Batch D @ v0.2.33 — headless dry-run render for warnings (#12), BUILT, needs live-Blender verify.**
+- **v0.2.36 — fixed: drive-level "Search a Folder (Recursive)" silently misses textures a narrower
+  search finds.** User report: selecting a whole drive as the search root missed some textures that a
+  more specific folder found. Root cause is NOT a recursion-depth limit (`os.walk` has none) — it's two
+  silent-skip behaviors that both produce exactly this symptom: (1) **ambiguous-match skip by design** —
+  the exact-name search only relinks a texture when its filename matches EXACTLY ONE file anywhere in the
+  scanned tree (`core/imagepaths.find_image_target`); a common filename (e.g. `diffuse.jpg`) easily exists
+  in 2+ unrelated project folders at drive scope, so the match becomes ambiguous and is skipped with NO
+  feedback — narrow the search to one project and the ambiguity disappears. (2) **`os.walk`'s default
+  `onerror=None`** silently drops any subfolder it can't list (permission denied, or a path exceeding
+  Windows' 260-char MAX_PATH) — common given how deep this user's project paths nest from a drive root.
+  **Fix — make both failure modes VISIBLE instead of indistinguishable from "not found":**
+  `core/imagepaths.py` gained `ambiguous_matches(index, basenames)` (which wanted basenames matched 2+
+  paths) and `iter_walk_dirs` gained an optional `skipped: list[str]` out-param wired through a custom
+  `os.walk(..., onerror=...)` callback (+4 tests). `core/imagefamily.iter_resolve_group_in_dir` gained
+  optional `ambiguous`/`skipped_dirs` out-params (mutated in place, NOT part of the return value — kept
+  the existing `found`-dict contract so `resolve_group_in_dir`-equivalence tests didn't need touching;
+  +3 tests). `ops/image_relink.py`: `_run_exact` (powers both "Search a Folder (Recursive)" and "Point
+  group at folder") now sets a new `ASSETDOCTOR_PG_broken_lib.ambiguous_count` per row instead of leaving
+  a silently-skipped row looking identical to a genuinely-unmatched one; new `_diagnostics_tail()` helper
+  appends a short "⚠ N skipped (same filename in 2+ places); M folder(s) could not be scanned" suffix to
+  the operator's status message (both `_run_exact` and `_run_fuzzy`, since the skipped-folder risk applies
+  to fuzzy matching too). UI: `ui/panels._draw_missing_textures`'s per-row "no match" label becomes
+  "N found elsewhere — pick one" (ERROR icon) when `ambiguous_count > 1`, so the row itself explains why,
+  not just the transient status bar. **Deliberately scoped to the explicit folder-search operators** (what
+  the user is actually using) — the initial auto-scan on "List Missing Textures"
+  (`_populate_broken_images`/`find_relink_targets`) was left untouched (much narrower search_dirs, so
+  ambiguity there is rare, and touching it risked an unrelated regression for no reported problem). New
+  `tests/smoke_folder_search_diagnostics.py` (two same-named files in different subfolders → no target +
+  `ambiguous_count == 2`; one uniquely-named file → resolves normally + `ambiguous_count == 0`). Suite 307.
+  **VERIFY:** run "Search a Folder (Recursive)" at a broad scope containing a deliberately duplicate
+  filename — the row should show "N found elsewhere — pick one" instead of a plain "no match"; the status
+  message should mention the skip counts.
+
+- **Batch E part 3 @ v0.2.35 — Batch 5: N-panel retired, everything now lives under Properties > Scene,
+  BUILT, needs live-Blender verify.** User chose (2026-06-23): delete the VIEW_3D N-panel in the same
+  pass (no parity-check period), native `bl_parent_id` child panels (not inline boxes) appended after the
+  Reports selector in `ASSETDOCTOR_PT_scene_deps`, UIList virtualization of the Missing/Duplicate lists
+  split off as its own follow-up. `ui/panels.py`: `_FeaturePanel` (VIEW_3D mixin) → `_SceneFeaturePanel`
+  (`PROPERTIES`/`WINDOW`/`scene`, `bl_parent_id="ASSETDOCTOR_PT_scene_deps"`); `ASSETDOCTOR_PT_make_local`/
+  `_materials`/`_orphans`/`_geometry`/`_resource_tools`/`_utilities` re-parented in place (same class
+  names/operators/bl_idname, just re-homed + renumbered `bl_order` 0-5). **Deleted outright** (no
+  replacement needed — already redundant): `ASSETDOCTOR_PT_main` (its progress bar + header were already
+  duplicated by `scene_deps`; the help-doc button moved into `scene_deps.draw_header`), `ASSETDOCTOR_PT_
+  project` (its one button was already in `scene_deps`'s "Project link map" box), `ASSETDOCTOR_PT_report`
+  (its report selector was already duplicated by `scene_deps`'s own Reports section). **Folded in**
+  (content merged into the new Resource Analyzer sub-panel, not just deleted): `ASSETDOCTOR_PT_resources`
+  — its profiled-RAM line + Export + resource `template_list` now draw inline in `ASSETDOCTOR_PT_
+  resource_tools` once a scan has run, instead of needing a second collapsible panel for the same result.
+  **Regression caught + fixed before it shipped:** `scene_deps`'s OWN report selector only ever showed the
+  curated F7/F6/F9 `_F7_FEATURES` subset — deleting `ASSETDOCTOR_PT_report` outright would have made F1
+  (Link Map)/F2 (Make Local)/F3 (Materials)/F4 (Orphans)/Geometry dry-run reports unviewable (they have no
+  other UI surface). Replaced `_F7_FEATURES` with `ops.report_store.available_features(wm)` (the same
+  generic "all features with data" helper the old Report panel used) minus a small explicit `_SELECTOR_
+  EXCLUDE = {"f6dup"}` (preserves the 2026-06-22 #9 fix — f6dup's report is Export-only, the Duplicate
+  Materials/Textures section already shows it inline, so it deliberately doesn't get a selector tab). Also
+  added the report-selector's missing "Clear" (X) button, carried over from the deleted panel's header.
+  `ui/__init__.py`: `REGISTER_CLASSES` reordered so `ASSETDOCTOR_PT_scene_deps` registers BEFORE its new
+  children (Blender errors if a `bl_parent_id` target isn't registered yet) — registering it LAST never
+  mattered before since it had no children. `tests/smoke_utils.py` updated: sub-panel parent check now
+  targets `scene_deps` (was `_main`, now gone), a new check confirms the 4 retired class names are gone
+  from `bpy.types`, and a new check confirms `f3` (Materials) surfaces through the generalized selector.
+  **bl_label "AssetDoctor — Dependencies" intentionally left AS-IS** (the panel now hosts the whole add-on,
+  not just dependency tools, but renaming it was already a separate, deferred decision — see "DEFERRED UI
+  BATCH (a)" further down — not reopened here). **VERIFY (this is the riskiest change this session —
+  RESTART Blender, don't Reload Scripts):** every legacy feature (Make Local/Duplicate Materials/Orphans/
+  Geometry/Resource Analyzer/Utilities) appears as a native collapsible sub-panel under Properties > Scene
+  > AssetDoctor, in that order, after the Reports selector; the VIEW_3D "AssetDoctor" N-panel tab is GONE
+  from the 3D viewport sidebar entirely; running Make Local/F3/F4/Geometry's "Report (Dry Run)" buttons
+  makes their report appear as a new tab in the Reports selector; Resource Analyzer's Analyze/Profile
+  buttons populate its own inline tree (no second panel needed); the idle-scan status line (if enabled)
+  still shows under Utilities.
+
+- **Batch E parts 1-2 @ v0.2.34 — node-graph substitute-material confidence + idle-scan prototype, BUILT,
+  needs live-Blender verify.** (1) **Examine Library now compares node graphs, not just names.**
+  `ops/examine_library._material_graph_match` reuses the F3 fingerprinter
+  (`core.fingerprint.fingerprint_material` + `ops.extract.extract_material`, resolution-agnostic) to
+  compare a Material row's examined block against its auto-suggested local/library replacement (both are
+  already loaded in memory — unlike a missing image file, nothing here is unrecoverable) and tags the row
+  `graph_match = "identical" | "differs" | ""`. `ASSETDOCTOR_PG_examine_row` gained the field;
+  `ui/panels._graph_match_suffix` + `_draw_examine_library` append "(identical)"/CHECKMARK or "(graph
+  differs)"/ERROR to the suggestion line. Per-node diff for the "differs" case is still Phase 2, deferred.
+  New `tests/smoke_examine_library.py` (links a same-named "Shared" + "Diff" material pair from a
+  throwaway source .blend into a session that already has local materials of the same names — one
+  identical graph at a different texture resolution, one genuinely different — and checks the populated
+  rows land on "identical"/"differs"). (2) **Idle-scan feasibility prototype.** `core/idle.py` (bpy-free,
+  5 tests): `seconds_since_input()` via `ctypes`/`GetLastInputInfo` on Windows (`None` elsewhere — never
+  treated as idle) + `is_idle(seconds, threshold)`. `ops/idle_scan.py`: the **first app timer this add-on
+  has ever registered** (`bpy.app.timers`, 5s tick, `persistent=True`), gated behind a new, default-OFF
+  `AssetDoctorPreferences.idle_scan_enabled` (+`idle_scan_threshold`, default 120s) — while enabled and no
+  AssetDoctor modal is running, it sets `WindowManager.assetdoctor_idle_seconds`/`assetdoctor_idle_detected`
+  for a status line under the (now Scene-panel) Utilities section. **It does not trigger any scan** — this
+  only proves the OS poll is safe to run from inside Blender (doesn't freeze/crash on file load —
+  `register_idle_timer`/`unregister_idle_timer` are wired into add-on register()/unregister() so nothing
+  survives a disable/reload). `tests/smoke_idle_scan.py` exercises register → disabled-tick-is-noop →
+  enabled-tick-sets-seconds → skipped-while-a-modal-is-active → unregister. Wiring a REAL idle-triggered
+  scan (chunked/modal, never during a render) is still future work, same caveats as the original TODO item.
+  **VERIFY:** enable the prototype in Preferences, watch the Utilities status line tick up while idle and
+  reset on input; confirm Examine Library's graph-match labels on a real same-named-but-different Material
+  pair.
+
+**Still open (not part of Batch E, do whenever convenient):** UIList virtualization of the Missing/
+Duplicate/Examine Library/Datablock Reconnect custom-drawn lists (split off this session, see "BATCH 5"
+below); KEKey/shape-key half of Batch C #3; Examine Library's deferred folder-wide search; the rest of
+"LIVE-TEST FEEDBACK BATCH 2" (#1 synonym-table+inverse-pairs design, #2/#10 report-formatting pass, #4
+auto-suggest feasibility).
+**Previously, Batch D @ v0.2.33 — headless dry-run render for warnings (#12), BUILT, needs live-Blender verify.**
   `core/dryrun.py` (bpy-free, 11 tests): `build_dryrun_script`/`build_dryrun_command` build a throwaway
   low-res (10%, 1 sample), `write_still=False` render script + the subprocess argv (`--background
   --factory-startup <blend> --python <script>` — factory-startup deliberately keeps unrelated add-on
@@ -16,10 +129,11 @@
   first guard, same idiom as Scan Deps), polls non-blockingly (small sleep avoids busy-spin in both modal
   and synchronous-drain paths) with a 5-minute timeout, parses the log, stashes report `"f9"`. New "Dry-run
   render" box in `ASSETDOCTOR_PT_scene_deps` (after Duplicate Textures, before the Reports selector);
-  `"f9"` added to `report_store.FEATURES` + the panel's `_F7_FEATURES` + `core/tree._CATEGORY_TITLES`.
-  Distinct from F5's in-process Profile Render (`ops/resource.py`) — this never touches the live session.
-  **VERIFY:** run it on a file with a missing texture or a broken driver → report lists them; a clean file
-  → ✓ no warnings; Cancel/ESC kills the subprocess cleanly.
+  `"f9"` added to `report_store.FEATURES` + `core/tree._CATEGORY_TITLES` (the panel's old curated
+  `_F7_FEATURES` selector subset was replaced by the generic `available_features()` in Batch E part 3 —
+  see above). Distinct from F5's in-process Profile Render (`ops/resource.py`) — this never touches the
+  live session. **VERIFY:** run it on a file with a missing texture or a broken driver → report lists
+  them; a clean file → ✓ no warnings; Cancel/ESC kills the subprocess cleanly.
 
 **Previously, Batch C @ v0.2.30–0.2.32** (all BUILT + WIRED, still needs live-Blender verify — mutates
 links/datablocks, see "★ BATCH C" below for exact test steps per feature): **#2** missing-data-block
@@ -300,13 +414,22 @@ reconnect" plan — build them together.
   at the top of this file (SESSION RESUME) for full build notes + the live-verify checklist.
 
 ### BATCH E — finish Batch 4 leftovers + Batch 5
-- Node-graph substitute-material confidence (reuse `core/fingerprint.fingerprint_material`).
-- Idle-scan feasibility prototype (Windows `GetLastInputInfo`, gated).
-- **Batch 5:** N-panel → Properties migration + **UIList virtualization** of the Missing/Duplicate lists.
+- **Node-graph substitute-material confidence — DONE @ v0.2.34, needs live-Blender verify.** Reused
+  `core/fingerprint.fingerprint_material` via `ops/examine_library._material_graph_match`; see the
+  "SESSION RESUME" entry at the top of this file for the full build note + verify steps.
+- **Idle-scan feasibility prototype — DONE @ v0.2.34, needs live-Blender verify.** `core/idle.py`
+  (Windows `GetLastInputInfo`, gated behind a default-off preference) + `ops/idle_scan.py`'s app timer;
+  see the "SESSION RESUME" entry at the top for the full build note + verify steps. Does NOT trigger any
+  scan yet — that's still its own follow-up (chunked/modal, never during a render).
+- **Batch 5 — DONE @ v0.2.35, needs live-Blender verify (the riskiest change this session).** N-panel →
+  Properties migration. User's scope decisions (2026-06-23): delete the VIEW_3D N-panel in the same pass
+  (no parity period); native `bl_parent_id` child panels (not inline boxes), appended after the Reports
+  selector, same order as the old N-panel; **UIList virtualization of the Missing/Duplicate lists split
+  off as its own follow-up** (not done — still future work, see "SCHEDULED" under SESSION 4 below). Full
+  build note + verify checklist in the "SESSION RESUME" entry at the top of this file.
 
-**NEXT BUILD (agreed 2026-06-23): DATABLOCK RECONNECT** for missing data-blocks — see Batch 4. Auto-suggest
-closest name + user override; link via `bpy.data.libraries.load` + `user_remap` the placeholder; needs an
-editable missing-data-blocks list (mirror broken-libs). Mutates links → live-verify WITH the user.
+(The stale "NEXT BUILD: DATABLOCK RECONNECT" note that used to live here was leftover from before Batch C
+#2 shipped it back in v0.2.30 — removed.)
 
 **v0.2.25 — live-test feedback fixes (user, 2026-06-23):** (1) F8 **Hierarchical layout INVERTED** —
 `assign_depths` now measures from the LEAVES so pure assets (linked-by-others, link nothing) sit at the top
@@ -352,18 +475,26 @@ corrupt-but-byte-identical files still merge. Nothing to fix; could optionally s
   `scan_missing_datablocks`, feature `f7miss`); F8 graph zoom/hierarchy (+/−/Fit, Ctrl-gated wheel,
   Hierarchical via `assign_depths`); reverse-dependency "safe to delete?" (`core/reversedep.py` +
   `ops/reversedep.py`, feature `f7rev`, "Safe to delete?" box).
-- **Batch 4 — IN PROGRESS** (v0.2.24–0.2.26): **material eyedropper** (v0.2.24) + v0.2.25 live-test fixes +
-  **search-another-.blend for TEXTURES DONE** (v0.2.26, `harvest_image_paths` + `suggest_from_blend`).
-  **REMAINING:** **datablock RECONNECT** (design agreed, auto-suggest+override; next increment — editable
-  missing-data-blocks list + link/`user_remap` op), node-graph substitute confidence, idle-scan feasibility.
-- **Batch 5 — NOT STARTED.** N-panel→Properties migration + **UIList virtualization** of the Missing/Duplicate
-  lists (scheduled here from B1).
+- **Batch 4 — DONE** (v0.2.24–0.2.26, remaining items closed out under other batch labels by v0.2.34):
+  **material eyedropper** (v0.2.24) + v0.2.25 live-test fixes + **search-another-.blend for TEXTURES**
+  (v0.2.26, `harvest_image_paths` + `suggest_from_blend`); **datablock RECONNECT** shipped as Batch C #2
+  @ v0.2.30 (`core/reconnect.py` + `ops/datablock_reconnect.py`); **node-graph substitute confidence** +
+  **idle-scan feasibility** shipped as Batch E parts 1–2 @ v0.2.34 (`ops/examine_library._material_graph_
+  match`, `core/idle.py` + `ops/idle_scan.py`). All three "remaining" items were genuinely built, just under
+  the lettered-batch names — confirmed present in the working tree + suite 307 green (2026-06-24).
+- **Batch 5 — DONE @ v0.2.35** (N-panel→Properties migration; shipped as Batch E part 3 — see "BATCH E"
+  above). **UIList virtualization** of the Missing/Duplicate lists (scheduled here from B1) split off as
+  its own follow-up, NOT done.
 
-**Immediate next actions next session:** (1) user live-verifies Batch 3 (v0.2.21–0.2.23: Missing button, F8
-graph controls, Safe-to-delete) + the new **B4 material eyedropper** (v0.2.24: eyedrop a good material →
-Suggest → Possible Matches) — plus the still-pending **Find content dups** / **modal folder search** /
-**crash repro** (Solid vs Material). (2) Continue **Batch 4**: search-another-.blend corpus (reuses
-`propose_from_paths`), node-graph substitute confidence, idle-scan feasibility.
+**Immediate next actions next session:** all 5 numbered batches + the lettered A–E batches are now code-
+complete. What's left, by priority: (1) the live-Blender verify sweep across this entire local-dev range
+(v0.2.5→v0.2.36 — nothing has been exercised in the actual Blender UI beyond a few early screenshots);
+(2) the still-open side quests independent of the batches — Batch 2's relink/merge **crash repro** (Solid
+vs Material shading, needs USER repro), Batch 5's **UIList virtualization** follow-up, the **KEKey/shape-
+key half of Batch C #3**, Examine Library's deferred folder-wide search, and the rest of "LIVE-TEST
+FEEDBACK BATCH 2" (#1 synonym-table+inverse-pairs design, #2/#10 report-formatting pass, #4 auto-suggest
+feasibility); (3) the ROADMAP items (Automated Cleanup pipeline, Archive Project, material-override→
+real node-tree reassignment).
 
 **Big pending live-verify backlog (none of v0.2.7–v0.2.19 confirmed beyond the keeper dropdown + the
 material-attribution screenshots):** see the per-version notes below.
@@ -462,7 +593,9 @@ Detailed specs for every line live in the sections further down this file.
     `tree._CATEGORY_TITLES` (direct_dependent / indirect_dependent). Closes the deleted-19GB-
     ThePiazzaSanMarco incident. **VERIFY live:** set Project Folder + pick a linked file → lists its
     dependents; pick a root scene → ✓ safe. **BATCH 3 COMPLETE.**
-- **BATCH 4 — Possible Matches power-ups + idle-scan feasibility. IN PROGRESS (v0.2.24).**
+- **BATCH 4 — Possible Matches power-ups + idle-scan feasibility. DONE (v0.2.24–v0.2.34; the last three
+  items below shipped under Batch C #2 / Batch E rather than as literal "Batch 4" commits — cross-
+  referenced where each landed).**
   - **Eyedropper/material datablock-picker — DONE @ v0.2.24, relabeled @ v0.2.25.** WM
     `assetdoctor_tex_source_material` (PointerProperty→Material) + op `ASSETDOCTOR_OT_suggest_from_material`
     (`ops/image_relink.py`): harvest the picked material's on-disk textures (recursing node groups via
@@ -485,29 +618,26 @@ Detailed specs for every line live in the sections further down this file.
     Blender linking. **VERIFY live:** pick a .blend whose textures exist → its files appear as Possible
     Matches. **Materials-as-substitution-source (linking a specific datablock) = the DATABLOCK RECONNECT
     feature below, separate from textures.**
-  - **DATABLOCK RECONNECT (missing data-blocks) — DESIGN AGREED @ 2026-06-23, NOT built (next increment).**
-    The parallel "search another .blend" for missing DATA-BLOCKS (materials/objects), which unlike textures
-    must actually LINK. Mechanics: pick a source .blend (default = the library the block should come from) →
-    enumerate its datablocks of the matching type via `with bpy.data.libraries.load(path, link=True) as
-    (data_from, data_to): data_from.materials` (names only, no load) → **auto-suggest the closest name**
-    (exact → `.NNN` copy of the same base e.g. GeometricStichDesign→GeometricStichDesign.001 → fuzzy affinity;
-    user can OVERRIDE by picking another) → on Apply (backup first): `data_to.<coll> = [chosen]` to LINK it,
-    then `placeholder.user_remap(linked)` + remove the placeholder. Needs: make the missing-data-blocks output
-    an EDITABLE list (mirror the broken-libs PG/UIList pattern: kind, name, library, source_blend picker,
-    auto-suggested target + override, Apply Selected). Build core (`suggest_reconnect`/`plan_reconnects`,
-    bpy-free + tested) + the editable list + the mutating link/remap op together; live-verify WITH the user
-    (mutates links).
-  - **Node-graph introspection** (reuse `core/fingerprint.fingerprint_material`) for substitute-
-    material confidence.
-  - **Idle-scan feasibility prototype** (Windows `GetLastInputInfo` via an app timer; gated,
-    Windows-only, prototype).
-- **BATCH 5 — N-panel → Properties migration + cleanup (LAST, after panels settle).**
-  - Parent Scene panel hosting the shared progress + report lists once; re-home each feature as a
-    Scene sub-panel; delete the redundant Project/Resource N-panel sections; final live-verify
-    sweep (v0.2.7–current); retire the VIEW_3D panels.
+  - **DATABLOCK RECONNECT (missing data-blocks) — DONE, shipped as Batch C #2 @ v0.2.30.** Design matched
+    what's below exactly: `core/reconnect.py` (`suggest_reconnect`/`ranked_candidates`/`plan_reconnects`) +
+    `ops/datablock_reconnect.py` (`scan_reconnect_targets`/`reconnect_pick_source`/`reconnect_selected`) +
+    "Datablock Reconnect" box. See "★ BATCH C" #2 above for the full build note + verify steps.
+  - **Node-graph introspection for substitute-material confidence — DONE, shipped as Batch E part 1
+    @ v0.2.34.** `ops/examine_library._material_graph_match` reuses `core/fingerprint.fingerprint_material`.
+    See "BATCH E" above.
+  - **Idle-scan feasibility prototype — DONE, shipped as Batch E part 2 @ v0.2.34.** `core/idle.py`
+    (Windows `GetLastInputInfo`) + `ops/idle_scan.py`'s app timer, gated behind a default-off preference.
+    See "BATCH E" above.
+- **BATCH 5 — N-panel → Properties migration + cleanup — DONE @ v0.2.35 (shipped as Batch E part 3).**
+  - Done: each feature re-homed as a native Scene sub-panel under `ASSETDOCTOR_PT_scene_deps` (which
+    already hosted the shared progress + report lists, so no separate new parent panel was needed); the
+    redundant Project/Resource/Report N-panel sections deleted (Resource's tree folded into the new
+    Resource Analyzer sub-panel instead of just deleted); the VIEW_3D panels retired entirely. Still
+    needs the live-verify sweep (v0.2.7–current, plus this change itself).
   - **Virtualize the Missing + Duplicate lists to scrollable UILists** (user-scheduled @ v0.2.18) —
     fixed-height + scrollbar via `template_list`; flatten each hierarchy into one heterogeneous row
     collection drawn by a custom `draw_item` that still hosts checkbox / keeper dropdown / pickers.
+    **Deliberately split off as its OWN follow-up (user, 2026-06-23)** — NOT done, still future work.
 
 **ROADMAP — separate NEW FEATURES, NOT part of "finish-up" (schedule after the 5 batches):**
 Automated Cleanup pipeline; Archive Project (BAT `pack`→zip); footprint reduction (Layer 2
@@ -599,24 +729,15 @@ textures). It worked. Feedback batch + a crash:
     evaluate: defer the forced `tag_redraw` after bulk image mutation; call a depsgraph/view-layer
     update + `image.gpu_flush`/`buffers_free` before returning; or relink with an explicit "engine
     quiet" step. None proven yet — do not claim a fix until reproduced.
-- **TODO — N-panel → Properties migration plan (#7).** Goal: consolidate everything into
-  **Properties › Scene** (the `ASSETDOCTOR_PT_scene_deps` hub), retire the VIEW_3D/N-panel, delete
-  redundancies. Current split:
-  - **N-panel (VIEW_3D/UI/"AssetDoctor"):** `ASSETDOCTOR_PT_main` (header + shared progress bar) →
-    children `_project`, `_make_local`, `_materials`, `_orphans`, `_geometry`, `_resource_tools`,
-    `_utilities`; plus `ASSETDOCTOR_PT_report` and `ASSETDOCTOR_PT_resources`.
-  - **Properties › Scene:** `ASSETDOCTOR_PT_scene_deps` (F7/F6 hub — deps scan, broken links, path
-    norm, missing textures, possible matches, dup textures, report selector).
-  - **Redundancies to delete:** the N-panel **Project link map** (folder→graph) is already in
-    scene_deps; **Resource analysis** appears in both `_resource_tools` and `_resources`; the shared
-    **progress bar**/Report UIList are drawn in BOTH panel roots.
-  - **PLAN (phased, low-risk):** (1) add a parent Scene panel `ASSETDOCTOR_PT_scene_root`
-    (PROPERTIES/WINDOW/scene) that hosts the shared progress bar + Report/Resource UILists once;
-    (2) re-home each feature box as a Scene sub-panel via `bl_parent_id` (Make Local, Materials,
-    Orphans, Geometry, Resource Analyzer, Utilities), default-collapsed; (3) delete the duplicate
-    Project + Resource N-panel sections; (4) drop the VIEW_3D panels once parity is confirmed live.
-    Keep one change per version + live-verify each (registration is fragile — RESTART Blender).
-    **Needs user sign-off on ordering + which N-panel items (if any) stay in the 3D view.**
+- **DONE @ v0.2.35 (Batch E part 3) — N-panel → Properties migration plan (#7).** Shipped close to plan,
+  with one simplification: skipped the separate `ASSETDOCTOR_PT_scene_root` step (1) since
+  `ASSETDOCTOR_PT_scene_deps` already hosted the shared progress bar + Report UIList, so it could be the
+  parent directly. Did: (2) re-homed Make Local/Materials/Orphans/Geometry/Resource Analyzer/Utilities as
+  Scene sub-panels via `bl_parent_id`; (3) deleted the duplicate Project/Report N-panel sections outright,
+  folded Resource's tree into Resource Analyzer instead of just deleting it; (4) dropped the VIEW_3D
+  panels in the SAME pass (user chose no parity-check period, see "SESSION RESUME" / "BATCH E" for the
+  full note). Still needs the live-Blender verify (registration is fragile — RESTART Blender, don't rely
+  on Reload Scripts).
 
 ## NEW BACKLOG — session 2, 2026-06-22 (documented, NOT built; resume here next session)
 

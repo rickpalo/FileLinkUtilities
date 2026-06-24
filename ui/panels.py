@@ -138,6 +138,11 @@ class ASSETDOCTOR_PG_broken_lib(bpy.types.PropertyGroup):
     proposal: bpy.props.StringProperty()  # type: ignore[valid-type]
     proposal_confidence: bpy.props.StringProperty()  # type: ignore[valid-type]
     proposal_res_mismatch: bpy.props.BoolProperty()  # type: ignore[valid-type]
+    # Set by the recursive folder-search worker (ops.image_relink._run_exact) when
+    # this row has NO target: how many files elsewhere in the scanned tree share its
+    # filename (2+ = the row was skipped as ambiguous, not because nothing matched —
+    # this is what made a drive-level search miss textures a narrower one found).
+    ambiguous_count: bpy.props.IntProperty(default=0)  # type: ignore[valid-type]
 
 
 # Keeps a strong reference to each row's keeper-enum items list. Dynamic
@@ -267,6 +272,18 @@ def _examine_target_items(self, context):
     return items
 
 
+def _graph_match_suffix(base: str, graph_match: str) -> tuple[str, str]:
+    """Append the node-graph comparison (Material rows only) to an Examine
+    Library suggestion line: "identical" keeps the plain checkmark, "differs"
+    warns that the same-named substitute looks different, anything else (not a
+    Material, or comparison failed) leaves the base text untouched."""
+    if graph_match == "identical":
+        return f"{base} (identical)", "CHECKMARK"
+    if graph_match == "differs":
+        return f"{base} (graph differs)", "ERROR"
+    return base, "CHECKMARK"
+
+
 class ASSETDOCTOR_PG_examine_row(bpy.types.PropertyGroup):
     """One datablock the EXAMINED library currently provides (Examine Library —
     distinct from the missing-data-block reconnect list: these links are NOT
@@ -283,6 +300,7 @@ class ASSETDOCTOR_PG_examine_row(bpy.types.PropertyGroup):
     suggested_kind: bpy.props.StringProperty(default="none")  # "local" | "library" | "none"  # type: ignore[valid-type]
     suggested_name: bpy.props.StringProperty()  # type: ignore[valid-type]
     suggested_library: bpy.props.StringProperty()  # filepath, when suggested_kind == "library"  # type: ignore[valid-type]
+    graph_match: bpy.props.StringProperty()  # "identical" | "differs" | "" — Material rows only  # type: ignore[valid-type]
     use_suggested: bpy.props.BoolProperty(default=False)  # type: ignore[valid-type]
     make_local: bpy.props.BoolProperty(
         default=False, name="",
@@ -346,55 +364,23 @@ class ASSETDOCTOR_UL_broken_imgs(bpy.types.UIList):
         row.operator("assetdoctor.relink_pick_texture", text="", icon="FILEBROWSER").index = index
 
 
-class ASSETDOCTOR_PT_main(bpy.types.Panel):
-    bl_label = "AssetDoctor"
-    bl_idname = "ASSETDOCTOR_PT_main"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "AssetDoctor"
-
-    def draw_header(self, context):
-        # Title (bl_label) at left, then version, then the doc icon pinned far right.
-        layout = self.layout
-        layout.label(text=f"v{_addon_version()}")
-        sub = layout.row()
-        sub.alignment = "RIGHT"
-        sub.operator("wm.url_open", text="", icon="HELP", emboss=False).url = DOC_URL
-
-    def draw(self, context):
-        # Shared live progress (shown only while a modal op — scan, make-local… —
-        # runs). Kept on the parent panel so it stays visible above every section.
-        _draw_progress(self.layout, context.window_manager)
+class _SceneFeaturePanel:
+    """Shared bl_* attributes for the legacy-feature Scene sub-panels (Make
+    Local, Duplicate Materials, Orphans, Geometry, Resource Analyzer,
+    Utilities) — migrated off the old VIEW_3D N-panel (Batch 5, 2026-06-23) so
+    everything lives under Properties > Scene > AssetDoctor. Each is a child of
+    ASSETDOCTOR_PT_scene_deps, which gives it a native collapse triangle and
+    remembers its open/closed state per-file, same as the N-panel did."""
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "scene"
+    bl_parent_id = "ASSETDOCTOR_PT_scene_deps"
 
 
-class _FeaturePanel:
-    """Shared bl_* attributes for the collapsible feature sub-panels.
-
-    Each feature is a child panel of ASSETDOCTOR_PT_main so Blender gives it a
-    native collapse triangle and remembers its open/closed state per-file."""
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "AssetDoctor"
-    bl_parent_id = "ASSETDOCTOR_PT_main"
-
-
-class ASSETDOCTOR_PT_project(_FeaturePanel, bpy.types.Panel):
-    bl_label = "Project (folder)"
-    bl_idname = "ASSETDOCTOR_PT_project"
-    bl_order = 0
-
-    def draw(self, context):
-        layout = self.layout
-        scene = context.scene
-        layout.prop(scene, "assetdoctor_scan_dir", text="")
-        op = layout.operator("assetdoctor.scan_folder", text="Scan Link Map", icon="VIEWZOOM")
-        op.directory = scene.assetdoctor_scan_dir
-
-
-class ASSETDOCTOR_PT_make_local(_FeaturePanel, bpy.types.Panel):
+class ASSETDOCTOR_PT_make_local(_SceneFeaturePanel, bpy.types.Panel):
     bl_label = "Make Local"
     bl_idname = "ASSETDOCTOR_PT_make_local"
-    bl_order = 1
+    bl_order = 0
 
     def draw(self, context):
         layout = self.layout
@@ -408,10 +394,10 @@ class ASSETDOCTOR_PT_make_local(_FeaturePanel, bpy.types.Panel):
         op.mode = "IN_PLACE"
 
 
-class ASSETDOCTOR_PT_materials(_FeaturePanel, bpy.types.Panel):
+class ASSETDOCTOR_PT_materials(_SceneFeaturePanel, bpy.types.Panel):
     bl_label = "Duplicate Materials"
     bl_idname = "ASSETDOCTOR_PT_materials"
-    bl_order = 2
+    bl_order = 1
 
     def draw(self, context):
         layout = self.layout
@@ -419,10 +405,10 @@ class ASSETDOCTOR_PT_materials(_FeaturePanel, bpy.types.Panel):
         layout.operator("assetdoctor.material_dedup", text="Dedup & Remap (Apply)").apply = True
 
 
-class ASSETDOCTOR_PT_orphans(_FeaturePanel, bpy.types.Panel):
+class ASSETDOCTOR_PT_orphans(_SceneFeaturePanel, bpy.types.Panel):
     bl_label = "Orphans & Fake Users"
     bl_idname = "ASSETDOCTOR_PT_orphans"
-    bl_order = 3
+    bl_order = 2
 
     def draw(self, context):
         layout = self.layout
@@ -430,10 +416,10 @@ class ASSETDOCTOR_PT_orphans(_FeaturePanel, bpy.types.Panel):
         layout.operator("assetdoctor.scan_orphans", text="Scan + Purge Orphans").purge_orphans = True
 
 
-class ASSETDOCTOR_PT_geometry(_FeaturePanel, bpy.types.Panel):
+class ASSETDOCTOR_PT_geometry(_SceneFeaturePanel, bpy.types.Panel):
     bl_label = "Duplicate Geometry"
     bl_idname = "ASSETDOCTOR_PT_geometry"
-    bl_order = 4
+    bl_order = 3
 
     def draw(self, context):
         layout = self.layout
@@ -441,79 +427,57 @@ class ASSETDOCTOR_PT_geometry(_FeaturePanel, bpy.types.Panel):
         layout.operator("assetdoctor.instance_geometry", text="Instance & Merge (Apply)").apply = True
 
 
-class ASSETDOCTOR_PT_resource_tools(_FeaturePanel, bpy.types.Panel):
+class ASSETDOCTOR_PT_resource_tools(_SceneFeaturePanel, bpy.types.Panel):
     bl_label = "Resource Analyzer"
     bl_idname = "ASSETDOCTOR_PT_resource_tools"
-    bl_order = 5
+    bl_order = 4
 
     def draw(self, context):
         layout = self.layout
+        wm = context.window_manager
         layout.operator("assetdoctor.analyze_resources", text="Analyze Memory/Disk", icon="VIEWZOOM")
         layout.operator("assetdoctor.profile_render", text="Profile Render (Real RAM)", icon="RENDER_STILL")
 
+        # Folded in from the old standalone "Resource Usage" N-panel (Batch 5) —
+        # it was only ever a second view onto this same scan/profile result.
+        if not wm.assetdoctor_resource_tree:
+            return
+        layout.separator()
+        layout.label(text="RAM / VRAM estimated; disk accurate", icon="INFO")
+        if wm.assetdoctor_profiled_ram:
+            layout.label(text=f"Profiled real peak RAM: {wm.assetdoctor_profiled_ram}",
+                         icon="RENDER_STILL")
+        layout.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "resource"
+        layout.template_list(
+            "ASSETDOCTOR_UL_tree", "resource",
+            wm, "assetdoctor_resource_rows",
+            wm, "assetdoctor_resource_index",
+            rows=12, sort_lock=True,
+        )
 
-class ASSETDOCTOR_PT_utilities(_FeaturePanel, bpy.types.Panel):
+
+class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
     bl_label = "Utilities"
     bl_idname = "ASSETDOCTOR_PT_utilities"
-    bl_order = 6
+    bl_order = 5
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
+        from ..prefs import get_prefs
+
         layout = self.layout
         layout.prop(context.scene, "assetdoctor_debug_log")
         layout.operator("assetdoctor.open_preferences",
                         text="Lists & Backups: Add-on Preferences…", icon="PREFERENCES")
 
-
-class ASSETDOCTOR_PT_report(bpy.types.Panel):
-    bl_label = "Report"
-    bl_idname = "ASSETDOCTOR_PT_report"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "AssetDoctor"
-    bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 1
-
-    @classmethod
-    def poll(cls, context):
-        from ..ops.report_store import available_features
-
-        return bool(available_features(context.window_manager))
-
-    def draw_header(self, context):
-        self.layout.operator("assetdoctor.report_clear", text="", icon="X", emboss=False)
-
-    def draw(self, context):
-        from ..core.report import Report
-        from ..ops.report_store import (
-            active_feature, available_features, data_prop,
-        )
-
-        layout = self.layout
-        wm = context.window_manager
-        avail = available_features(wm)
-        active = active_feature(wm)
-
-        # Persistent-report selector: one button per report that exists.
-        selrow = layout.row(align=True)
-        for key, label in avail:
-            selrow.operator("assetdoctor.report_select", text=label,
-                            depress=(key == active)).feature = key
-        layout.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "report"
-
-        try:
-            report = Report.from_json(getattr(wm, data_prop(active)))
-        except Exception:
-            layout.label(text="(could not read report)", icon="ERROR")
-            return
-
-        layout.label(text=report.title, icon="PRESET")
-        layout.template_list(
-            "ASSETDOCTOR_UL_tree", "report",
-            wm, "assetdoctor_report_rows",
-            wm, "assetdoctor_report_index",
-            rows=12, sort_lock=True,
-        )
+        prefs = get_prefs(context)
+        if prefs is not None and prefs.idle_scan_enabled:
+            wm = context.window_manager
+            secs = getattr(wm, "assetdoctor_idle_seconds", 0.0)
+            detected = getattr(wm, "assetdoctor_idle_detected", False)
+            layout.separator()
+            layout.label(text=f"Idle-scan prototype — {secs:.0f}s since input"
+                        + (" (idle)" if detected else ""), icon="TIME")
 
 
 def _libraries_at_a_glance():
@@ -555,9 +519,11 @@ def _draw_progress(layout, wm):
 
 
 class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
-    """F7 Link & Dependency Doctor, in Properties > Scene (this is scene-data
-    hygiene, not a 3D/render activity). The N-panel keeps the legacy tools for now;
-    features migrate here one at a time."""
+    """The whole add-on, in Properties > Scene (this is scene-data hygiene, not a
+    3D/render activity). Started as the F7 Link & Dependency Doctor hub; the
+    legacy VIEW_3D N-panel features (Make Local, Duplicate Materials, Orphans,
+    Geometry, Resource Analyzer, Utilities) joined as native collapsible child
+    panels in Batch 5 (2026-06-23), and the N-panel itself was retired."""
 
     bl_label = "AssetDoctor — Dependencies"
     bl_idname = "ASSETDOCTOR_PT_scene_deps"
@@ -566,22 +532,29 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
     bl_context = "scene"
 
     def draw_header(self, context):
-        self.layout.label(text=f"v{_addon_version()}", icon="LINKED")
+        # Title (bl_label) at left, then version, then the doc icon pinned far
+        # right — same as the old N-panel root's header (ASSETDOCTOR_PT_main,
+        # retired in Batch 5).
+        layout = self.layout
+        layout.label(text=f"v{_addon_version()}", icon="LINKED")
+        sub = layout.row()
+        sub.alignment = "RIGHT"
+        sub.operator("wm.url_open", text="", icon="HELP", emboss=False).url = DOC_URL
 
-    # The F7 reports this panel can show (offline scan, live analysis, path fixes).
     # f6tex (the old before/after Missing-Textures report) is gone — the Missing
-    # Textures section now lists everything inline, so no separate report is needed.
-    # f6dup is intentionally NOT here — the Duplicate Materials/Textures section now
-    # lists everything inline (with a keeper dropdown), so it needs no report slot in
-    # the selector; the report is still built + stashed for the inline Export button.
-    _F7_FEATURES = (("f7", "Dependencies"), ("f7live", "Overrides & Dups"),
-                    ("f7miss", "Missing Data-blocks"), ("f7rev", "Safe to Delete?"),
-                    ("f7links", "Broken Links"), ("f7fix", "Path Fixes"),
-                    ("f6res", "Resolution Variants"), ("f9", "Dry-Run Render Warnings"))
+    # Textures section now lists everything inline, so no separate report is
+    # needed. f6dup is excluded from the Reports selector below — the Duplicate
+    # Materials/Textures section already lists everything inline (with a keeper
+    # dropdown), so its report is only kept around for the inline Export button,
+    # and showing it as a selectable tab would just be a second, redundant route
+    # to the same data (see the 2026-06-23 #9 fix this preserves).
+    _SELECTOR_EXCLUDE = frozenset({"f6dup"})
 
     def draw(self, context):
         from ..core.report import Report
-        from ..ops.report_store import TREE_FEATURES, active_feature, data_prop, exp_prop
+        from ..ops.report_store import (
+            TREE_FEATURES, active_feature, available_features, data_prop, exp_prop,
+        )
 
         layout = self.layout
         wm = context.window_manager
@@ -717,12 +690,17 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
         dry.operator("assetdoctor.dryrun_render", text="Run Dry-Run Render",
                      icon="RENDER_STILL")
 
-        # Which F7 reports exist; a small selector when more than one. The Reports
-        # area always gets its own header so a lone report isn't mistaken for part of
-        # the section above it (user, 2026-06-23).
+        # Every report that currently has data (ALL features, not just F7/F6/F9 —
+        # this absorbed the old N-panel's standalone Report panel in Batch 5, so
+        # F1/F2/F3/F4/Geometry dry-run reports need a home here too); a small
+        # selector when more than one. The Reports area always gets its own header
+        # so a lone report isn't mistaken for part of the section above it (user,
+        # 2026-06-23).
         layout.separator()
-        layout.label(text="Reports", icon="PRESET")
-        present = [(k, lbl) for k, lbl in self._F7_FEATURES if getattr(wm, data_prop(k), "")]
+        hrow = layout.row(align=True)
+        hrow.label(text="Reports", icon="PRESET")
+        hrow.operator("assetdoctor.report_clear", text="", icon="X", emboss=False)
+        present = [(k, lbl) for k, lbl in available_features(wm) if k not in self._SELECTOR_EXCLUDE]
         if not present:
             layout.label(text="Run a scan or analysis to see results.", icon="INFO")
             return
@@ -878,6 +856,9 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
                 tgt.alignment = "RIGHT"
                 if item.target:
                     tgt.label(text=os.path.basename(item.target) or item.target, icon="CHECKMARK")
+                elif item.ambiguous_count > 1:
+                    tgt.label(text=f"{item.ambiguous_count} found elsewhere — pick one",
+                             icon="ERROR")
                 else:
                     tgt.label(text="no match", icon="QUESTION")
                 frow.operator("assetdoctor.relink_pick_texture", text="",
@@ -1169,12 +1150,15 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
                 elif item.use_suggested and item.suggested_kind == "local":
                     s = frow.row()
                     s.alignment = "RIGHT"
-                    s.label(text=f"local: {item.suggested_name}", icon="CHECKMARK")
+                    text, icon = _graph_match_suffix(f"local: {item.suggested_name}", item.graph_match)
+                    s.label(text=text, icon=icon)
                 elif item.use_suggested and item.suggested_kind == "library":
                     s = frow.row()
                     s.alignment = "RIGHT"
-                    s.label(text=f"{os.path.basename(item.suggested_library)}: "
-                                f"{item.suggested_name}", icon="CHECKMARK")
+                    base = (f"{os.path.basename(item.suggested_library)}: "
+                            f"{item.suggested_name}")
+                    text, icon = _graph_match_suffix(base, item.graph_match)
+                    s.label(text=text, icon=icon)
                 elif item.source_blend:
                     frow.prop(item, "target", text="")
                 else:
@@ -1304,33 +1288,3 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
                     r = dup.row(align=True)
                     r.separator(factor=2.0)
                     r.label(text=ln, icon="DOT")
-
-
-class ASSETDOCTOR_PT_resources(bpy.types.Panel):
-    bl_label = "Resource Usage (estimate)"
-    bl_idname = "ASSETDOCTOR_PT_resources"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "AssetDoctor"
-    bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 2
-
-    @classmethod
-    def poll(cls, context):
-        return bool(context.window_manager.assetdoctor_resource_tree)
-
-    def draw(self, context):
-        layout = self.layout
-        wm = context.window_manager
-
-        layout.label(text="RAM / VRAM estimated; disk accurate", icon="INFO")
-        if wm.assetdoctor_profiled_ram:
-            layout.label(text=f"Profiled real peak RAM: {wm.assetdoctor_profiled_ram}",
-                         icon="RENDER_STILL")
-        layout.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "resource"
-        layout.template_list(
-            "ASSETDOCTOR_UL_tree", "resource",
-            wm, "assetdoctor_resource_rows",
-            wm, "assetdoctor_resource_index",
-            rows=12, sort_lock=True,
-        )

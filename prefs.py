@@ -49,6 +49,23 @@ class AssetDoctorPreferences(bpy.types.AddonPreferences):
         default="",
     )  # type: ignore[valid-type]
 
+    # Batch E feasibility prototype — see core.idle / ops.idle_scan. Off by
+    # default: it only proves the OS-idle poll works from inside Blender, it
+    # does NOT trigger any scan yet.
+    idle_scan_enabled: bpy.props.BoolProperty(
+        name="Idle-scan prototype (experimental)",
+        description="Poll Windows for how long the keyboard/mouse have been idle and show it "
+        "below — a feasibility check only, no scan is triggered yet",
+        default=False,
+    )  # type: ignore[valid-type]
+
+    idle_scan_threshold: bpy.props.IntProperty(
+        name="Idle Threshold (seconds)",
+        description="How long the user must be idle before the prototype flags it",
+        default=120,
+        min=10,
+    )  # type: ignore[valid-type]
+
     def draw(self, context):
         layout = self.layout
         col = layout.column()
@@ -59,6 +76,12 @@ class AssetDoctorPreferences(bpy.types.AddonPreferences):
         col.label(text="Material dedup (F3):")
         col.prop(self, "material_whitelist")
         col.prop(self, "material_blacklist")
+        col.separator()
+        col.label(text="Idle-scan (experimental prototype, Windows only):")
+        col.prop(self, "idle_scan_enabled")
+        sub = col.column()
+        sub.enabled = self.idle_scan_enabled
+        sub.prop(self, "idle_scan_threshold")
 
 
 def get_prefs(context=None):

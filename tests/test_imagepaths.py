@@ -165,3 +165,47 @@ def test_scan_dir_into_matches_index_dirs(tmp_path):
     index, seen = {}, set()
     imagepaths._scan_dir_into(index, seen, str(tmp_path))
     assert index == imagepaths._index_dirs([str(tmp_path)])
+
+
+# --- recursion-limit investigation (user, 2026-06-23): why a drive-level search
+# misses files a narrower one finds -----------------------------------------
+
+def test_ambiguous_matches_flags_multi_hit_basenames():
+    index = {"a.png": ["/x/a.png", "/y/a.png"], "b.png": ["/x/b.png"]}
+    assert imagepaths.ambiguous_matches(index, ["a.png", "b.png", "c.png"]) == \
+        {"a.png": ["/x/a.png", "/y/a.png"]}
+
+
+def test_ambiguous_matches_case_insensitive_lookup():
+    index = {"a.png": ["/x/a.png", "/y/a.png"]}
+    assert imagepaths.ambiguous_matches(index, ["A.PNG"]) == {"A.PNG": ["/x/a.png", "/y/a.png"]}
+
+
+def test_iter_walk_dirs_records_skipped_via_onerror(monkeypatch, tmp_path):
+    # os.walk's onerror is the only hook that fires for a subdirectory it could not
+    # list at all — simulate that without depending on real OS permission behavior.
+    bad = OSError("denied")
+    bad.filename = str(tmp_path / "denied")
+
+    def fake_walk(root, onerror=None):
+        if onerror is not None:
+            onerror(bad)
+        yield (root, [], [])
+
+    monkeypatch.setattr(imagepaths.os, "walk", fake_walk)
+    skipped: list[str] = []
+    list(imagepaths.iter_walk_dirs(str(tmp_path), recursive=True, skipped=skipped))
+    assert skipped == [str(tmp_path / "denied")]
+
+
+def test_iter_walk_dirs_skipped_none_is_a_noop(monkeypatch, tmp_path):
+    # Existing callers that don't pass `skipped` must keep working unchanged.
+    bad = OSError("denied")
+
+    def fake_walk(root, onerror=None):
+        if onerror is not None:
+            onerror(bad)
+        yield (root, [], [])
+
+    monkeypatch.setattr(imagepaths.os, "walk", fake_walk)
+    assert list(imagepaths.iter_walk_dirs(str(tmp_path), recursive=True)) == [str(tmp_path)]

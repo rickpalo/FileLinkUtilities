@@ -15,7 +15,7 @@ unclear memory/disk usage.
   - [F4 — Orphans & Fake Users](#f4--orphans--fake-users)
   - [Duplicate Geometry (instancing)](#duplicate-geometry-instancing)
   - [F5 — Resource Analyzer](#f5--resource-analyzer)
-- [The Report panel](#the-report-panel)
+- [The Reports section](#the-reports-section)
 - [Preferences](#preferences)
 - [Utilities & the debug log](#utilities--the-debug-log)
 - [The find_datablocks dev tool](#the-find_datablocks-dev-tool)
@@ -59,16 +59,19 @@ reinstalling newer zips.
   (`<name>_assetdoctor_<timestamp>.blend`) next to your file (or to a folder you set in
   Preferences). In-session changes also support **Undo (Ctrl+Z)**.
 - **Where results go.** A summary pops up in Blender's header; the **full detail** appears in
-  the [Report panel](#the-report-panel), the System Console (Window → Toggle System Console),
+  the [Reports section](#the-reports-section), the System Console (Window → Toggle System Console),
   and — if enabled — the [debug log](#utilities--the-debug-log).
 
 ---
 
 ## The AssetDoctor panel
 
-Open the 3D viewport sidebar (**press `N`**) and pick the **AssetDoctor** tab.
+Open **Properties → Scene** and look for the **AssetDoctor** panel (the link icon, next to the
+version number in its header).
 
-![The AssetDoctor N-panel](images/panel-overview.png)
+![The AssetDoctor panel](images/panel-overview.png)
+> Screenshot shows an earlier layout (the 3D-viewport sidebar). As of v0.2.35 every feature
+> lives under Properties → Scene instead — same sections, same buttons, new location.
 
 The header shows the **version** and a **? documentation icon** (opens this repo). Each section
 is **collapsible** — click its header to expand/collapse it; Blender remembers the state.
@@ -108,7 +111,7 @@ Tracer — no files are opened in Blender) and maps which file links which.
 
 ![Scan progress](images/scan-progress.png)
 
-**Reports** (in the [Report panel](#the-report-panel), under "Link Map") and exports to
+**Reports** (in the [Reports section](#the-reports-section), under "Link Map") and exports to
 `<folder>/.assetdoctor/linkmap_<timestamp>.{json,csv,dot}`:
 - **broken links** — a file references a library that's missing,
 - **absolute paths** — non-portable links that should be relative,
@@ -208,15 +211,16 @@ datablock type** (Images, Meshes, …), each datablock counted **once**, biggest
 
 ---
 
-## The Report panel
+## The Reports section
 
-Below the main panel, the **Report** panel (collapsed by default) shows results as an
-**expandable tree** (category → finding → item).
+Below the feature sections, a **Reports** area shows results as an **expandable tree**
+(category → finding → item).
 
 ![The Report panel](images/report-panel.png)
 
 - **Persistent per feature.** Each scan keeps its own report — a Materials report survives a
-  later Geometry scan. Use the **selector row** at the top to switch between the reports you've run.
+  later Geometry scan. Use the **selector row** to switch between the reports you've run, and
+  the **X** beside it to clear the shown one.
 - **Tooltips.** Hover any row to see the **full text** (e.g. a full broken-link path) even when
   the narrow panel truncates it.
 
@@ -226,9 +230,9 @@ Below the main panel, the **Report** panel (collapsed by default) shows results 
   Orphan/unused data with no object users shows a hint to view it via Outliner → Blender File /
   Orphan Data.
 - **Export…** writes the current report to a **`.txt`** (indented) or **`.csv`** file.
-- The **X** in the panel header clears the shown report.
 
-The **Resource Usage** panel uses the same tree, with size columns and its own **Export…**.
+The **Resource Analyzer** section's results use the same tree, with size columns and its own
+**Export…**.
 
 ---
 

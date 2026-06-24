@@ -204,9 +204,20 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_examine_scanned = bpy.props.BoolProperty(default=False)
     bpy.types.WindowManager.assetdoctor_examine_expanded = bpy.props.StringProperty(default="")
 
+    # Batch E — idle-scan feasibility prototype (gated off by default in prefs).
+    bpy.types.WindowManager.assetdoctor_idle_seconds = bpy.props.FloatProperty(default=0.0)
+    bpy.types.WindowManager.assetdoctor_idle_detected = bpy.props.BoolProperty(default=False)
+    from .ops.idle_scan import register_idle_timer
+
+    register_idle_timer()
+
 
 def unregister() -> None:
     import bpy
+
+    from .ops.idle_scan import unregister_idle_timer
+
+    unregister_idle_timer()
 
     global _load_post_handler
     if _load_post_handler is not None and _load_post_handler in bpy.app.handlers.load_post:
@@ -243,7 +254,8 @@ def unregister() -> None:
                 "assetdoctor_datablock_expanded",
                 "assetdoctor_examine_library_pick", "assetdoctor_examine_library",
                 "assetdoctor_examine_rows", "assetdoctor_examine_index",
-                "assetdoctor_examine_scanned", "assetdoctor_examine_expanded"]
+                "assetdoctor_examine_scanned", "assetdoctor_examine_expanded",
+                "assetdoctor_idle_seconds", "assetdoctor_idle_detected"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]
     for attr in wm_attrs:

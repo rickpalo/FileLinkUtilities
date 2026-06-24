@@ -15,6 +15,15 @@ all for that path) → where nothing matches, the row offers Make Local or a
 per-row manual override: pick ANY source .blend and ANY datablock within it (not
 just an auto-suggested name — e.g. relinking a Cube to a Sphere from another
 file is a deliberate, valid choice here, not a mistake to guess around).
+
+A name match is only a guess that two datablocks are "the same thing, renamed" —
+for Materials we can do better, because (unlike a missing image file) BOTH sides
+of an in-memory suggestion still have their full node graph loaded. ``_material_
+graph_match`` reuses the F3 fingerprinter (``core.fingerprint.fingerprint_
+material``, resolution-agnostic) to compare the examined material against the
+suggested replacement and tags the row "identical" or "differs" so the user can
+tell a safe rename apart from a same-named-but-different look (Phase 2 — a
+per-node diff for the "differs" case — is deferred).
 """
 
 from __future__ import annotations
@@ -42,6 +51,26 @@ def _iter_library_blocks(library):
                 break  # not a data-block collection — skip it
             if block.library is library:
                 yield attr, block
+
+
+def _material_graph_match(context, original, candidate) -> str:
+    """``"identical"``/``"differs"`` node-graph comparison between two Material
+    datablocks (both must already be loaded — never used for an unloaded/missing
+    side), or ``""`` if either isn't a Material or extraction fails."""
+    if not (isinstance(original, bpy.types.Material) and isinstance(candidate, bpy.types.Material)):
+        return ""
+    from ..core.fingerprint import fingerprint_material
+    from ..prefs import get_prefs
+    from .extract import extract_material
+
+    try:
+        prefs = get_prefs(context)
+        res_pattern = prefs.resolution_token_regex if prefs else None
+        fp_a = fingerprint_material(extract_material(original, res_pattern))
+        fp_b = fingerprint_material(extract_material(candidate, res_pattern))
+    except Exception:
+        return ""
+    return "identical" if fp_a == fp_b else "differs"
 
 
 def _in_memory_pools(attr: str, exclude_library) -> tuple[list[str], dict[str, str]]:
@@ -78,19 +107,28 @@ def _populate_examine_rows(context, library) -> int:
         # WORKING link at an unrelated datablock, so only an unambiguous match
         # auto-applies; anything else needs the user's explicit Make Local or pick.
         sug = rc.suggest_reconnect(block.name, local_names, allow_fuzzy=False)
+        candidate = None
         if sug.target:
             row.suggested_kind = "local"
             row.suggested_name = sug.target
+            candidate = getattr(bpy.data, attr).get(sug.target)
+            if candidate is not None and candidate.library is not None:
+                candidate = None  # name collision with a linked block — not our local pool
         else:
             sug2 = rc.suggest_reconnect(block.name, list(other_by_name), allow_fuzzy=False)
             if sug2.target:
                 row.suggested_kind = "library"
                 row.suggested_name = sug2.target
                 row.suggested_library = other_by_name[sug2.target]
+                candidate = next((b for b in getattr(bpy.data, attr)
+                                  if b.name == sug2.target and b.library is not None
+                                  and b.library.filepath == row.suggested_library), None)
             else:
                 row.suggested_kind = "none"
         row.use_suggested = row.suggested_kind != "none"
         row.selected = row.use_suggested
+        if candidate is not None:
+            row.graph_match = _material_graph_match(context, block, candidate)
     wm.assetdoctor_examine_index = 0
     wm.assetdoctor_examine_library = library.name if library else ""
     wm.assetdoctor_examine_scanned = True

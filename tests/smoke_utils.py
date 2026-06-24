@@ -65,16 +65,36 @@ def main():
                        hasattr(bpy.types, "ASSETDOCTOR_OT_open_preferences")
                        and hasattr(bpy.ops.assetdoctor, "open_preferences")))
 
-        # Collapsible feature sub-panels registered + parented to the main panel.
-        sub_ids = ["ASSETDOCTOR_PT_project", "ASSETDOCTOR_PT_make_local",
+        # Collapsible feature sub-panels registered + parented to the Scene panel
+        # (Batch 5, 2026-06-23 — migrated off the retired VIEW_3D N-panel root).
+        sub_ids = ["ASSETDOCTOR_PT_make_local",
                    "ASSETDOCTOR_PT_materials", "ASSETDOCTOR_PT_orphans",
                    "ASSETDOCTOR_PT_geometry", "ASSETDOCTOR_PT_resource_tools",
                    "ASSETDOCTOR_PT_utilities"]
         panels_ok = all(
-            getattr(getattr(bpy.types, pid, None), "bl_parent_id", None) == "ASSETDOCTOR_PT_main"
+            getattr(getattr(bpy.types, pid, None), "bl_parent_id", None) == "ASSETDOCTOR_PT_scene_deps"
             for pid in sub_ids
         )
-        checks.append((f"{len(sub_ids)} collapsible sub-panels parented to main", panels_ok))
+        checks.append((f"{len(sub_ids)} collapsible sub-panels parented to scene_deps", panels_ok))
+
+        # The retired VIEW_3D N-panel root + its now-redundant standalone Report/
+        # Resource panels must not still be registered (Batch 5).
+        retired_ids = ["ASSETDOCTOR_PT_main", "ASSETDOCTOR_PT_project",
+                       "ASSETDOCTOR_PT_report", "ASSETDOCTOR_PT_resources"]
+        checks.append(("retired N-panel classes are gone",
+                       all(not hasattr(bpy.types, pid) for pid in retired_ids)))
+
+        # The generalized Reports selector picks up F1-F4/Geometry too, not just
+        # the F7/F6/F9 subset — these used to only be visible via the now-deleted
+        # standalone Report panel.
+        wm.assetdoctor_rep_f3 = '{"title": "t", "findings": []}'
+        report_store = __import__(f"{PKG}.ops.report_store", fromlist=["x"])
+        scene_panel = __import__(f"{PKG}.ui.panels", fromlist=["x"]).ASSETDOCTOR_PT_scene_deps
+        present = [k for k, _ in report_store.available_features(wm)
+                   if k not in scene_panel._SELECTOR_EXCLUDE]
+        checks.append(("f3 (Materials) report surfaces in the generalized selector",
+                       "f3" in present))
+        wm.assetdoctor_rep_f3 = ""
 
         ok = all(p for _, p in checks)
         for label, p in checks:

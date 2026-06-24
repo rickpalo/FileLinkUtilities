@@ -116,3 +116,53 @@ def test_iter_resolve_group_yields_folder_progress(tmp_path):
         members, str(tmp_path), recursive=True))
     # One yield per folder walked (root + "a"), monotonically increasing.
     assert counts == [1, 2]
+
+
+# --- recursion-limit investigation (user, 2026-06-23): surface WHY a folder
+# search skipped a member instead of just leaving it unmatched ---------------
+
+def test_iter_resolve_group_reports_ambiguous_basename(tmp_path):
+    s1 = tmp_path / "p" / "one"
+    s2 = tmp_path / "p" / "two"
+    s1.mkdir(parents=True)
+    s2.mkdir(parents=True)
+    (s1 / "a.png").write_bytes(b"x")
+    (s2 / "a.png").write_bytes(b"x")
+    members = [_img("a.png", str(tmp_path / "gone" / "a.png"))]
+    ambiguous: dict = {}
+    found = _drain(imagefamily.iter_resolve_group_in_dir(
+        members, str(tmp_path / "p"), recursive=True, ambiguous=ambiguous))
+    assert found == {}  # unchanged behaviour: still never guesses
+    assert set(ambiguous) == {"a.png"}
+    assert len(ambiguous["a.png"]) == 2
+
+
+def test_iter_resolve_group_no_ambiguity_when_unique(tmp_path):
+    d = tmp_path / "beard"
+    d.mkdir()
+    (d / "a.png").write_bytes(b"x")
+    members = [_img("a.png", str(tmp_path / "gone" / "a.png"))]
+    ambiguous: dict = {}
+    found = _drain(imagefamily.iter_resolve_group_in_dir(
+        members, str(d), ambiguous=ambiguous))
+    assert found == {"a.png": os.path.normpath(str(d / "a.png"))}
+    assert ambiguous == {}
+
+
+def test_iter_resolve_group_reports_skipped_dirs(tmp_path, monkeypatch):
+    from core import imagepaths
+
+    bad = OSError("denied")
+    bad.filename = str(tmp_path / "denied")
+
+    def fake_walk(root, onerror=None):
+        if onerror is not None:
+            onerror(bad)
+        yield (root, [], [])
+
+    monkeypatch.setattr(imagepaths.os, "walk", fake_walk)
+    members = [_img("a.png", str(tmp_path / "gone" / "a.png"))]
+    skipped: list = []
+    _drain(imagefamily.iter_resolve_group_in_dir(
+        members, str(tmp_path), recursive=True, skipped_dirs=skipped))
+    assert skipped == [str(tmp_path / "denied")]
