@@ -23,9 +23,16 @@ import bpy
 from .progress import ModalProgressMixin
 from .report_store import stash_report
 
-# Generous but bounded — a low-res single-frame render should finish in seconds;
-# this guards against a hung subprocess (e.g. a driver stuck in an infinite loop).
-_TIMEOUT_SECONDS = 300
+# Bounded — guards against a genuinely hung subprocess (e.g. a driver stuck in an
+# infinite loop) — but generous: user-reported 300s timing out on real multi-GB,
+# multi-library files (2026-06-24) — most of that time is loading/resolving the
+# linked libraries and decoding thousands of textures on first access (a low-res
+# single-sample render of an ALREADY-loaded scene is fast; getting the scene
+# loaded on a Synology-synced multi-GB file tree is what's slow, and this
+# subprocess's wall-clock covers both, not just the render call). 30 minutes,
+# matching this project's own documented real load times for single libraries
+# this size (People1 at 15GB ~10+ min just to open+walk its block table).
+_TIMEOUT_SECONDS = 1800
 _POLL_SLEEP = 0.2  # avoid busy-spinning when execute() drains the generator directly
 
 
@@ -81,12 +88,13 @@ class ASSETDOCTOR_OT_dryrun_render(ModalProgressMixin, bpy.types.Operator):
                     if elapsed > _TIMEOUT_SECONDS:
                         proc.kill()
                         self.report({"ERROR"},
-                                   f"Dry-run render timed out after {_TIMEOUT_SECONDS}s")
+                                   f"Dry-run render timed out after {dryrun.format_elapsed(_TIMEOUT_SECONDS)}")
                         return
                     time.sleep(_POLL_SLEEP)
                     fraction = min(0.9, 0.1 + elapsed / _TIMEOUT_SECONDS)
-                    yield (fraction, f"Rendering… ({elapsed:.0f}s)")
+                    yield (fraction, f"Rendering… ({dryrun.format_elapsed(elapsed)})")
 
+            returncode = proc.returncode
             with open(log_path, "r", encoding="utf-8", errors="replace") as log_fh:
                 log_text = log_fh.read()
         finally:
@@ -97,11 +105,15 @@ class ASSETDOCTOR_OT_dryrun_render(ModalProgressMixin, bpy.types.Operator):
                     except OSError:
                         pass
 
-        report = dryrun.parse_render_log(log_text)
+        report = dryrun.parse_render_log(log_text, returncode=returncode)
         stash_report(context, report, "f9")
 
         yield (1.0, "Done")
-        if report.max_severity == "error":
+        if returncode != 0:
+            self.report({"ERROR"},
+                       f"Dry-run render's background Blender process crashed (exit "
+                       f"code {returncode}) — see the report for details")
+        elif report.max_severity == "error":
             self.report({"WARNING"},
                        f"Dry-run render found {report.count('error')} error(s)")
         elif report.max_severity == "warning":

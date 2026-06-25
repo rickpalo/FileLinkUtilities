@@ -21,6 +21,7 @@ renamed-at-source case) beats a fuzzy token-affinity guess.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from .datablock_graph import strip_dup_suffix
@@ -88,6 +89,28 @@ def ranked_candidates(wanted: str, candidates: list[str]) -> list[str]:
     return [suggestion.target, *rest]
 
 
+def find_sibling_library(missing_path: str, resolving_paths: list[str]) -> str:
+    """``missing_path`` is a library's stored path that doesn't resolve on this
+    machine. If exactly one path in ``resolving_paths`` (other libraries
+    already loaded and confirmed to resolve) shares its basename, return it —
+    the SAME file, linked via a different/stale path string. Real, documented
+    disease on this project's own files: the same library gets linked many
+    times under different path strings (absolute vs ``//``-relative, forward
+    vs back slash, or a since-moved folder) — Blender treats each as a
+    separate ``Library`` datablock, so a missing block recorded under a STALE
+    duplicate path string would otherwise never auto-match even though the
+    same file resolves fine elsewhere in the very same session.
+
+    Returns ``""`` when there's no match or more than one — never guess when
+    ambiguous (mirrors ``core.imagepaths.find_image_target``'s rule)."""
+    basename = os.path.basename(missing_path.replace("\\", "/")).lower()
+    if not basename:
+        return ""
+    matches = {p for p in resolving_paths
+              if os.path.basename(p.replace("\\", "/")).lower() == basename}
+    return next(iter(matches)) if len(matches) == 1 else ""
+
+
 @dataclass(frozen=True)
 class ReconnectPlan:
     """One missing block paired with its best suggestion."""
@@ -109,6 +132,6 @@ def plan_reconnects(
 
 
 __all__ = [
-    "Suggestion", "suggest_reconnect", "ranked_candidates",
+    "Suggestion", "suggest_reconnect", "ranked_candidates", "find_sibling_library",
     "ReconnectPlan", "plan_reconnects", "FUZZY_FLOOR",
 ]

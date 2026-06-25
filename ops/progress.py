@@ -26,6 +26,20 @@ def set_progress(context, fraction: float = 0.0, status: str = "") -> None:
         context.area.tag_redraw()
 
 
+def set_result(context, message: str, ok: bool = True) -> None:
+    """Leave a STICKY result line in the panel (``assetdoctor_last_result``) —
+    unlike a ``self.report()`` toast (gone once you move the mouse) or the
+    progress bar (hidden once the op finishes), this stays until the next
+    action overwrites it. Plain (non-modal) operators that mutate data should
+    call this with the same text they pass to ``self.report()`` so the panel
+    itself shows what happened, not just the Info editor."""
+    wm = context.window_manager
+    wm.assetdoctor_last_result = message
+    wm.assetdoctor_last_result_ok = ok
+    if context.area is not None:
+        context.area.tag_redraw()
+
+
 def clear_progress(context) -> None:
     """Hide the shared progress bar."""
     wm = context.window_manager

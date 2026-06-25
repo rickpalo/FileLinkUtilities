@@ -23,34 +23,112 @@ import bpy
 
 from ..core import missingdata, reconnect as rc
 from .datablock_inspect import _iter_missing_blocks
+from .pickers import FilePickerMixin, resolve_existing_file
 
 
 def _populate_missing_blocks(context) -> list[missingdata.MissingBlock]:
     """Refill ``assetdoctor_missing_blocks`` from the current file's placeholder
     (``is_missing``) data-blocks. A library group that already had a source .blend
-    picked keeps it across a re-scan (and its suggestions are recomputed) — so
-    re-running the scan after a partial Reconnect doesn't make you re-pick the
-    source for whatever's still left in that group."""
+    picked keeps that source string across a re-scan, so the user doesn't have to
+    re-pick it — but candidates/confidence are NOT auto-recomputed for it here.
+
+    Why not: a crash (EXCEPTION_ACCESS_VIOLATION inside core.imagematch.tokenize,
+    real repro 2026-06-24) traced back to this re-scan calling _enumerate_group
+    -> bpy.data.libraries.load(source, link=True) as a PEEK against a library that
+    ASSETDOCTOR_OT_reconnect_selected had, moments earlier, just REALLY linked
+    real data-blocks from (same source path) on a file independently known to have
+    Blender-core fragility around missing/override data (see docs/TODO.md). Re-
+    peeking an already-linked library right after a real link from it is the
+    suspicious step; an access violation can't be caught in Python, so the only
+    safe mitigation is to not trigger that peek automatically/silently. The user
+    can still refresh a group's suggestions explicitly via Pick Source .blend
+    (re-running _enumerate_group deliberately), which is the same code path but at
+    least not fired silently on every re-scan.
+
+    A group that has NEVER been picked/peeked before is a different, lower-risk
+    case: if the block's STORED library path itself still resolves on disk (the
+    "same library, renamed/numbered block at the source" pattern documented in
+    docs/TODO.md — e.g. a link wants ``GeometricStichDesign`` but the library now
+    only has ``GeometricStichDesign.001``), that library IS the obvious place to
+    look first, and peeking it for the FIRST time carries none of the above
+    "re-peek right after a real link" risk (this matches the two successful real
+    peeks that preceded the crash, not the repeated one that triggered it). So a
+    brand-new group auto-defaults ``source_blend`` to its own stored library path
+    and is auto-enumerated immediately — the user requested this (2026-06-24:
+    "it should automatically look in the original library... so I don't have to
+    [manually pick it]"), and can still override the suggestion or pick a
+    different source via Pick Source .blend, same as before.
+
+    A group's own stored path sometimes does NOT resolve even though the SAME
+    file is reachable via a different library entry in this very session —
+    this project's own files commonly link one .blend many times under
+    different path strings (absolute vs ``//``-relative, slash direction, a
+    since-moved folder), and Blender treats each as a separate ``Library``
+    datablock. User report 2026-06-24: most missing MATERIALS weren't
+    auto-matched even though their library (materialMaster.blend) demonstrably
+    resolves elsewhere in the same file. So a brand-new group whose own path
+    doesn't resolve gets a SECOND chance via ``core.reconnect.
+    find_sibling_library`` against every OTHER already-loaded library that
+    DOES resolve, matched by basename only when unambiguous (never guessed).
+    ``library_found`` records whether the group's OWN path resolves (distinct
+    from a sibling match) so the UI can tell "library genuinely not found
+    anywhere in this session" from "found via the original path" or "found via
+    a sibling" — the user separately asked for this differentiation."""
     wm = context.window_manager
     coll = wm.assetdoctor_missing_blocks
     old_sources = {item.library: item.source_blend for item in coll if item.source_blend}
 
+    # Every already-loaded library that resolves on THIS machine — the sibling-
+    # match candidate pool. Built once per scan, not per block.
+    resolving_lib_paths = []
+    for lib in bpy.data.libraries:
+        if not lib.filepath:
+            continue
+        p = os.path.normpath(bpy.path.abspath(lib.filepath))
+        if os.path.isfile(p):
+            resolving_lib_paths.append(p)
+
     blocks = list(_iter_missing_blocks())
     coll.clear()
+    new_groups: set[str] = set()
+    library_found: dict[str, bool] = {}
+    library_auto_source: dict[str, str] = {}
     for b in blocks:
         item = coll.add()
         item.name = b.name
         item.kind = b.kind
         item.collection = b.collection
         item.library = b.library
-        item.source_blend = old_sources.get(b.library, "")
+        source = old_sources.get(b.library, "")
+        if b.library not in library_found:
+            own_path = os.path.normpath(bpy.path.abspath(b.library))
+            found = os.path.isfile(own_path)
+            library_found[b.library] = found
+            auto = own_path if found else rc.find_sibling_library(own_path, resolving_lib_paths)
+            library_auto_source[b.library] = auto
+            # Only a GENUINELY first-time group (no remembered source from a
+            # prior scan) gets auto-enumerated here — re-peeking an already-
+            # known library on every re-scan is the exact crash-risky pattern
+            # the docstring above describes fixing (v0.2.40), but this `auto`
+            # check alone didn't actually exclude already-known groups, so it
+            # kept re-peeking them every scan after all. Confirmed as the
+            # likely cause of a real 2026-06-25 report: re-running Find
+            # Reconnectable Data-blocks kept re-suggesting the SAME
+            # transitively-missing candidates as fresh "available" matches
+            # (their stuck/"transitive" state from a prior Reconnect attempt
+            # was never remembered), making repeated attempts look like no
+            # progress was made.
+            if auto and b.library not in old_sources:
+                new_groups.add(b.library)
+        if not source:
+            source = library_auto_source.get(b.library, "")
+        item.source_blend = source
+        item.library_found = library_found.get(b.library, False)
     wm.assetdoctor_missing_index = 0
     wm.assetdoctor_missing_scanned = True
 
-    remaining_libs = {item.library for item in coll}
-    for library in old_sources:
-        if library in remaining_libs:
-            _enumerate_group(context, library)
+    for library in new_groups:
+        _enumerate_group(context, library)
     return blocks
 
 
@@ -103,15 +181,19 @@ class ASSETDOCTOR_OT_scan_reconnect_targets(bpy.types.Operator):
             context.area.tag_redraw()
         if blocks:
             libs = len({b.library for b in blocks})
+            coll = context.window_manager.assetdoctor_missing_blocks
+            matched = sum(1 for item in coll if item.confidence != "none")
+            tail = (f" — {matched} auto-matched from their original library; pick a "
+                    "source for the rest" if matched else
+                    " — pick a source per group to suggest reconnects")
             self.report({"INFO"}, f"{len(blocks)} missing data-block(s) from "
-                        f"{libs} librar{'y' if libs == 1 else 'ies'} — pick a source "
-                        "per group to suggest reconnects")
+                        f"{libs} librar{'y' if libs == 1 else 'ies'}{tail}")
         else:
             self.report({"INFO"}, "✓ No missing data-blocks")
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_reconnect_pick_source(bpy.types.Operator):
+class ASSETDOCTOR_OT_reconnect_pick_source(FilePickerMixin, bpy.types.Operator):
     bl_idname = "assetdoctor.reconnect_pick_source"
     bl_label = "Pick Source .blend"
     bl_description = (
@@ -125,13 +207,9 @@ class ASSETDOCTOR_OT_reconnect_pick_source(bpy.types.Operator):
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore[valid-type]
     filter_glob: bpy.props.StringProperty(default="*.blend", options={"HIDDEN"})  # type: ignore[valid-type]
 
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
-
     def execute(self, context):
-        path = os.path.normpath(bpy.path.abspath(self.filepath))
-        if not os.path.isfile(path):
+        path = resolve_existing_file(self.filepath)
+        if not path:
             self.report({"ERROR"}, "Choose a .blend file")
             return {"CANCELLED"}
 
@@ -184,7 +262,17 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
         log = get_logger()
         backup = auto_backup(context)
         reconnected = 0
+        transitively_missing = 0
         warnings: list[str] = []
+        # (collection, name) of every row caught by the transitive-missing check
+        # below — _populate_missing_blocks rebuilds the whole list from scratch
+        # afterward, so this is replayed onto the fresh rows to keep the "found
+        # in the library, but it's ALSO missing upstream" state visible in the UI
+        # (user report 2026-06-24: "did not differentiate between data-blocks
+        # that were missing in linked libraries" — a transitively-missing row
+        # looked identical to an ordinary unmatched one once the count scrolled
+        # off in the status line).
+        transitive_keys: set[tuple[str, str]] = set()
 
         by_source: dict[str, list] = {}
         for item in chosen:
@@ -220,6 +308,28 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
                     warnings.append(f"{row.name}: '{row.target}' not found in "
                                     f"{os.path.basename(source)}")
                     continue
+                if getattr(linked, "is_missing", False):
+                    # The candidate we just linked is ITSELF an unresolved
+                    # placeholder inside the source .blend — it links onward to a
+                    # further-upstream library that isn't available either (real,
+                    # documented disease on this project's own files:
+                    # materialMaster.blend/human_bundle.blend transitively miss
+                    # content from libraries further upstream — see docs/TODO.md
+                    # "MAGENTA = MISSING TEXTURES"). Remapping the placeholder onto
+                    # it would just trade one missing name for another and falsely
+                    # report success (the exact bug reported 2026-06-24: items
+                    # "successfully reconnected" reappeared as missing right after).
+                    # Skip, and drop the orphaned still-missing block we just
+                    # linked rather than leaving it cluttering bpy.data.
+                    transitively_missing += 1
+                    transitive_keys.add((row.collection, row.name))
+                    if linked.users == 0:
+                        target_coll.remove(linked)
+                    warnings.append(f"{row.name}: '{row.target}' in "
+                                    f"{os.path.basename(source)} is itself "
+                                    "unresolved (missing further upstream) — not "
+                                    "actually fixed, skipped")
+                    continue
                 placeholder.user_remap(linked)
                 if placeholder.users == 0:
                     target_coll.remove(placeholder)
@@ -234,15 +344,27 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
             pass
 
         _populate_missing_blocks(context)
+        if transitive_keys:
+            for item in coll:
+                if (item.collection, item.name) in transitive_keys:
+                    item.confidence = "transitive"
+                    item.selected = False
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"
         msg = f"Reconnected {reconnected} data-block(s). Save to persist.{tail}"
+        if transitively_missing:
+            msg += (f" {transitively_missing} candidate(s) were themselves unresolved "
+                    "in the source .blend (missing further upstream — that library "
+                    "doesn't actually have this data either).")
         if warnings:
             msg += f" {len(warnings)} skipped — see debug log."
             for w in warnings:
                 log.warning("Reconnect skipped: %s", w)
         self.report({"INFO"}, msg)
+        from .progress import set_result
+
+        set_result(context, msg, ok=not warnings)
         return {"FINISHED"}
 
 

@@ -52,16 +52,25 @@ def _gather_steps(context):
     for i, mat in enumerate(mats, 1):
         mid = _material_id(mat)
         id_to_mat[mid] = mat
-        try:
-            fp = fingerprint_material(extract_material(mat, res_pattern))
-        except Exception:
-            fp = None
+        # A missing-linked-data placeholder material (ID.is_missing) has no real
+        # node-tree data allocated — walking it is a native access violation, not
+        # a catchable Python exception (same disease confirmed for meshes via
+        # crash4, 2026-06-25 -- see ops/instance_dedup.py). Skip the deep reads
+        # entirely rather than relying on try/except.
+        if getattr(mat, "is_missing", False):
+            fp, max_res = None, 0
+        else:
+            try:
+                fp = fingerprint_material(extract_material(mat, res_pattern))
+            except Exception:
+                fp = None
+            max_res = _max_texture_res(mat)
         items.append({
             "id": mid,
             "name": mat.name,
             "fingerprint": fp,
             "linked": mat.library is not None,
-            "max_res": _max_texture_res(mat),
+            "max_res": max_res,
         })
         if i % _FP_CHUNK == 0:
             yield (0.8 * i / total, f"Fingerprinting materials {i}/{total}…")

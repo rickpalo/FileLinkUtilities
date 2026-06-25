@@ -18,6 +18,7 @@ import bpy
 
 from ..core import imagematch, imagepaths, imagefamily
 from ..core.imagepaths import ImgDesc
+from .pickers import FilePickerMixin, resolve_existing_file
 from .progress import ModalProgressMixin
 
 # Image datablock sources whose filepath points at an external file we can relink.
@@ -78,10 +79,49 @@ def _gather_images() -> list[ImgDesc]:
     return out
 
 
+def _gather_linked_missing_images() -> list[tuple[str, str, str]]:
+    """Every LINKED image whose stored file doesn't resolve: ``[(name, library
+    label, material)]``. These can't be relinked from here — the source library
+    owns that file path, so the real fix is over there (top-down) — this is a
+    READ-ONLY visibility list, never wired to any relink action.
+
+    User report 2026-06-24: a render-time Dry-Run Render found 144 missing
+    images while "List Missing Textures" only ever found 9 — because
+    ``_gather_images`` deliberately skips every linked Image (see its
+    docstring). The render evaluates EVERY image regardless of who owns it, so
+    the static scan was silently undercounting by a lot; this surfaces the gap
+    without pretending it can be fixed in the current file.
+
+    A linked image's relative path is stored relative to ITS OWN library file,
+    not this one — ``bpy.path.abspath(path, library=img.library)`` resolves
+    against the right base directory (plain ``bpy.path.abspath`` would resolve
+    against the CURRENT file and silently mis-flag a perfectly valid relative
+    path as missing)."""
+    mat_map = _image_material_map()
+    out: list[tuple[str, str, str]] = []
+    for img in bpy.data.images:
+        if img.library is None:
+            continue
+        if img.source not in _FILE_SOURCES or img.packed_file is not None:
+            continue
+        stored = img.filepath
+        if not stored:
+            continue
+        resolved = os.path.normpath(bpy.path.abspath(stored, library=img.library))
+        if os.path.isfile(resolved):
+            continue
+        lib_label = img.library.filepath or img.library.name
+        out.append((img.name, lib_label, mat_map.get(img.name, "")))
+    return out
+
+
 def _populate_broken_images(context) -> tuple[int, int]:
     """Refill ``assetdoctor_broken_imgs`` from the current file's missing LOCAL
-    images, each paired with a found target where possible. Returns
-    (missing count, auto-found count)."""
+    images, each paired with a found target where possible, AND the read-only
+    ``assetdoctor_linked_missing_imgs`` companion list (linked images, fix-at-
+    source — see ``_gather_linked_missing_images``). Returns
+    (missing count, auto-found count) for the LOCAL list only — unchanged
+    contract for existing callers."""
     wm = context.window_manager
     coll = wm.assetdoctor_broken_imgs
     coll.clear()
@@ -103,6 +143,15 @@ def _populate_broken_images(context) -> tuple[int, int]:
         item.group = os.path.dirname((img.resolved or img.stored).replace("\\", "/"))
         item.material = mat_map.get(img.name, "")
     wm.assetdoctor_broken_imgs_index = 0
+
+    linked_coll = wm.assetdoctor_linked_missing_imgs
+    linked_coll.clear()
+    for name, lib_label, material in _gather_linked_missing_images():
+        item = linked_coll.add()
+        item.name = name
+        item.library = lib_label
+        item.material = material
+
     return len(missing), len(targets)
 
 
@@ -124,14 +173,18 @@ class ASSETDOCTOR_OT_scan_broken_textures(bpy.types.Operator):
         wm.assetdoctor_tex_initial_missing = missing  # "found" later = initial − still-missing
         if context.area:
             context.area.tag_redraw()
+        linked = len(wm.assetdoctor_linked_missing_imgs)
+        linked_tail = (f"; {linked} more are linked — fix at the source library" if linked else "")
         if not missing:
-            self.report({"INFO"}, "No missing image textures")
+            msg = "No missing image textures" if not linked else "No LOCAL missing textures"
+            self.report({"INFO"}, msg + linked_tail)
         else:
-            self.report({"INFO"}, f"{missing} missing texture(s); {found} with an auto-found match")
+            self.report({"INFO"},
+                       f"{missing} missing texture(s); {found} with an auto-found match{linked_tail}")
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_search_textures_folder(bpy.types.Operator):
+class ASSETDOCTOR_OT_search_textures_folder(FilePickerMixin, bpy.types.Operator):
     """Recursively search ONE folder for ALL the listed missing textures by filename
     and STAGE the matches (set each found texture's target + tick it) without
     changing anything yet — the user reviews, then Relink Selected applies. Unlike
@@ -150,10 +203,6 @@ class ASSETDOCTOR_OT_search_textures_folder(bpy.types.Operator):
         return ("Pick a folder; every missing texture above is searched for by filename "
                 "in it and its subfolders, and matches are staged (target set + ticked). "
                 "Nothing is written until you Relink Selected")
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
 
     def execute(self, context):
         if not self.directory or not os.path.isdir(self.directory):
@@ -343,7 +392,7 @@ class ASSETDOCTOR_OT_relink_folder_search(ModalProgressMixin, bpy.types.Operator
             self.report({"WARNING"}, f"No similar filenames found under {self.directory}.{tail}")
 
 
-class ASSETDOCTOR_OT_suggest_fuzzy_matches(bpy.types.Operator):
+class ASSETDOCTOR_OT_suggest_fuzzy_matches(FilePickerMixin, bpy.types.Operator):
     """F6 step 4 — fuzzy FALLBACK for textures exact search couldn't place. Pick a
     folder; for every missing texture that still has NO target, score the folder's
     files with the rename matcher (``core.imagematch``: stem identity + PBR-channel
@@ -365,10 +414,6 @@ class ASSETDOCTOR_OT_suggest_fuzzy_matches(bpy.types.Operator):
                 "by NAME SIMILARITY (renamed channels, e.g. _ao -> _AO) against the "
                 "files in it and its subfolders. Best guesses are staged as Possible "
                 "Matches to review and Accept — nothing is written here")
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
 
     def execute(self, context):
         if not self.directory or not os.path.isdir(self.directory):
@@ -438,7 +483,7 @@ class ASSETDOCTOR_OT_suggest_from_material(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_suggest_from_blend(bpy.types.Operator):
+class ASSETDOCTOR_OT_suggest_from_blend(FilePickerMixin, bpy.types.Operator):
     """B4 — propose substitutes for the missing textures from the images referenced by
     ANOTHER .blend file. Pick a .blend; its texture FILE PATHS (harvested offline via
     BAT, wherever they point) become the candidate corpus, matched by name against
@@ -460,15 +505,11 @@ class ASSETDOCTOR_OT_suggest_from_blend(bpy.types.Operator):
                 "candidates for the missing textures (matched by name). Staged as "
                 "Possible Matches to review — nothing is written")
 
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
-
     def execute(self, context):
         from ..core import blendscan
 
-        src = os.path.normpath(bpy.path.abspath(self.filepath)) if self.filepath else ""
-        if not src or not os.path.isfile(src):
+        src = resolve_existing_file(self.filepath) if self.filepath else ""
+        if not src:
             self.report({"ERROR"}, "Choose a .blend file")
             return {"CANCELLED"}
         coll = context.window_manager.assetdoctor_broken_imgs
@@ -614,7 +655,7 @@ class ASSETDOCTOR_OT_tex_category_toggle(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_point_group_at_folder(bpy.types.Operator):
+class ASSETDOCTOR_OT_point_group_at_folder(FilePickerMixin, bpy.types.Operator):
     """Follow-up B1 — point a whole GROUP of missing textures at one folder and
     resolve every member by filename within it (directory-level relink). Groups are
     by original directory; the material fallback (``by='MATERIAL'``) lets the user
@@ -639,10 +680,6 @@ class ASSETDOCTOR_OT_point_group_at_folder(bpy.types.Operator):
         return ("Choose a folder; every missing texture in this group is matched by "
                 "filename within it (and subfolders) and its target set. Then Relink "
                 "Selected to apply")
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
 
     def execute(self, context):
         if not self.directory or not os.path.isdir(self.directory):

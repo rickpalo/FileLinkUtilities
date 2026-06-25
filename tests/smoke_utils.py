@@ -66,8 +66,10 @@ def main():
                        and hasattr(bpy.ops.assetdoctor, "open_preferences")))
 
         # Collapsible feature sub-panels registered + parented to the Scene panel
-        # (Batch 5, 2026-06-23 — migrated off the retired VIEW_3D N-panel root).
-        sub_ids = ["ASSETDOCTOR_PT_make_local",
+        # (Batch 5, 2026-06-23 — migrated off the retired VIEW_3D N-panel root;
+        # Current File Data/Analyze added Phase 3a, 2026-06-25).
+        sub_ids = ["ASSETDOCTOR_PT_current_file_data", "ASSETDOCTOR_PT_analyze",
+                   "ASSETDOCTOR_PT_make_local",
                    "ASSETDOCTOR_PT_materials", "ASSETDOCTOR_PT_orphans",
                    "ASSETDOCTOR_PT_geometry", "ASSETDOCTOR_PT_resource_tools",
                    "ASSETDOCTOR_PT_utilities"]

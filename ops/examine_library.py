@@ -33,24 +33,19 @@ import os
 import bpy
 
 from ..core import reconnect as rc
+from .datablock_inspect import _iter_all_blocks
+from .pickers import FilePickerMixin, resolve_existing_file
 
 
 def _iter_library_blocks(library):
     """Yield ``(bpy.data attribute, block)`` for every datablock the CURRENT file
-    links from ``library`` — any type, mirroring the generic walk
-    ``ops.datablock_inspect._iter_missing_blocks`` uses, but keyed on ``library``
-    rather than ``is_missing``."""
-    for attr in dir(bpy.data):
-        if attr.startswith("_"):
-            continue
-        coll = getattr(bpy.data, attr, None)
-        if not isinstance(coll, bpy.types.bpy_prop_collection):
-            continue
-        for block in coll:
-            if not isinstance(block, bpy.types.ID):
-                break  # not a data-block collection — skip it
-            if block.library is library:
-                yield attr, block
+    links from ``library`` — any type. Thin filter over the shared generic walk
+    (Phase 2b, 2026-06-25 — this used to duplicate ``_iter_all_blocks``'s walk
+    near-verbatim, same shape as ``ops.datablock_inspect._iter_missing_blocks``,
+    just a different predicate)."""
+    for attr, block in _iter_all_blocks():
+        if block.library is library:
+            yield attr, block
 
 
 def _material_graph_match(context, original, candidate) -> str:
@@ -165,7 +160,7 @@ class ASSETDOCTOR_OT_examine_library(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_examine_pick_source(bpy.types.Operator):
+class ASSETDOCTOR_OT_examine_pick_source(FilePickerMixin, bpy.types.Operator):
     bl_idname = "assetdoctor.examine_pick_source"
     bl_label = "Pick a Specific Item"
     bl_description = (
@@ -179,17 +174,13 @@ class ASSETDOCTOR_OT_examine_pick_source(bpy.types.Operator):
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore[valid-type]
     filter_glob: bpy.props.StringProperty(default="*.blend", options={"HIDDEN"})  # type: ignore[valid-type]
 
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
-
     def execute(self, context):
         coll = context.window_manager.assetdoctor_examine_rows
         if not (0 <= self.index < len(coll)):
             return {"CANCELLED"}
         row = coll[self.index]
-        path = os.path.normpath(bpy.path.abspath(self.filepath))
-        if not os.path.isfile(path):
+        path = resolve_existing_file(self.filepath)
+        if not path:
             self.report({"ERROR"}, "Choose a .blend file")
             return {"CANCELLED"}
         try:

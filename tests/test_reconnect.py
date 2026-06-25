@@ -77,3 +77,31 @@ def test_plan_reconnects_missing_collection_yields_no_candidates():
     blocks = [MissingBlock(kind="Image", name="Leaf", library="", collection="images")]
     plans = reconnect.plan_reconnects(blocks, {})
     assert plans[0].suggestion == reconnect.Suggestion("", "none")
+
+
+def test_find_sibling_library_matches_by_basename():
+    # Same file, linked via a stale absolute path vs a resolving relative one.
+    missing = "D:\\Old\\materialMaster.blend"
+    resolving = ["E:\\BlenderSync\\SynologyDrive\\libraries\\materialMaster.blend"]
+    assert reconnect.find_sibling_library(missing, resolving) == resolving[0]
+
+
+def test_find_sibling_library_case_and_slash_insensitive():
+    missing = "//../../materialMaster.BLEND"
+    resolving = ["E:/lib/MaterialMaster.blend"]
+    assert reconnect.find_sibling_library(missing, resolving) == resolving[0]
+
+
+def test_find_sibling_library_no_match_returns_empty():
+    assert reconnect.find_sibling_library("//gone.blend", ["E:/lib/other.blend"]) == ""
+
+
+def test_find_sibling_library_ambiguous_never_guesses():
+    missing = "//gone/materialMaster.blend"
+    resolving = ["E:/a/materialMaster.blend", "E:/b/materialMaster.blend"]
+    assert reconnect.find_sibling_library(missing, resolving) == ""
+
+
+def test_find_sibling_library_empty_inputs():
+    assert reconnect.find_sibling_library("", ["E:/lib/x.blend"]) == ""
+    assert reconnect.find_sibling_library("//x.blend", []) == ""

@@ -91,6 +91,13 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_op_paused = bpy.props.BoolProperty(default=False)
     # Cancel flag, set by the panel's Cancel button; the modal stops at the next step.
     bpy.types.WindowManager.assetdoctor_op_cancel = bpy.props.BoolProperty(default=False)
+    # Sticky last-result line: unlike the transient self.report() toast (gone once
+    # you move the mouse) or the progress bar (hidden once the op finishes), this
+    # STAYS in the panel until the next action overwrites it — user feedback
+    # (2026-06-24): Reconnect Selected gave no in-panel confirmation of what
+    # happened. See ops.progress.set_result.
+    bpy.types.WindowManager.assetdoctor_last_result = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.assetdoctor_last_result_ok = bpy.props.BoolProperty(default=True)
 
     # Persistent per-feature reports: data JSON + expanded keys per feature, plus
     # the currently-shown feature key. See ops/report_store.FEATURES.
@@ -113,8 +120,9 @@ def register() -> None:
     # (virtualized + scrollable — fixes blank rows on large reports). Rebuilt by
     # ops.report_store from the JSON above whenever a report or its expansion
     # changes. WM-scoped (ephemeral), matching the report JSON's lifetime.
-    from .ui.panels import (ASSETDOCTOR_PG_broken_lib, ASSETDOCTOR_PG_datablock_family,
-                            ASSETDOCTOR_PG_dup_family, ASSETDOCTOR_PG_examine_row,
+    from .ui.panels import (ASSETDOCTOR_PG_analyze_step, ASSETDOCTOR_PG_broken_lib,
+                            ASSETDOCTOR_PG_datablock_family, ASSETDOCTOR_PG_dup_family,
+                            ASSETDOCTOR_PG_examine_row, ASSETDOCTOR_PG_flatten_candidate,
                             ASSETDOCTOR_PG_missing_block, ASSETDOCTOR_PG_tree_row)
 
     bpy.types.WindowManager.assetdoctor_report_rows = bpy.props.CollectionProperty(
@@ -134,6 +142,13 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_broken_imgs = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_broken_lib)
     bpy.types.WindowManager.assetdoctor_broken_imgs_index = bpy.props.IntProperty(default=0)
+    # F6 read-only companion list: missing textures whose Image is LINKED (owned by
+    # another library) — can't be relinked from here, but the user asked for them
+    # to be visible (a render-time dry run found far more missing images than this
+    # scan counted, because linked images were silently excluded). See
+    # ops.image_relink._gather_linked_missing_images.
+    bpy.types.WindowManager.assetdoctor_linked_missing_imgs = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_broken_lib)
     # F6 B1: how the missing-texture categories group (by original folder or by
     # the material that uses each texture).
     bpy.types.WindowManager.assetdoctor_tex_group_by = bpy.props.EnumProperty(
@@ -163,9 +178,6 @@ def register() -> None:
         type=ASSETDOCTOR_PG_dup_family)
     bpy.types.WindowManager.assetdoctor_dup_index = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_dup_scanned = bpy.props.BoolProperty(default=False)
-    # Which scan produced the current Duplicate list: "NNN" (fast, name-family only)
-    # or "CONTENT" (deep, hashes every image). Merge refreshes accordingly.
-    bpy.types.WindowManager.assetdoctor_dup_scan_mode = bpy.props.StringProperty(default="NNN")
     bpy.types.WindowManager.assetdoctor_dup_expanded = bpy.props.StringProperty(default="")
     bpy.types.WindowManager.assetdoctor_dup_removable = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_dup_conflicts = bpy.props.IntProperty(default=0)
@@ -204,6 +216,22 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_examine_scanned = bpy.props.BoolProperty(default=False)
     bpy.types.WindowManager.assetdoctor_examine_expanded = bpy.props.StringProperty(default="")
 
+    # Phase 3a — Analyze section's "Analyze All" sequencer: per-step status
+    # (pending/running/done/error), rebuilt by ops.analyze_all at the start of
+    # each run so the panel can show a per-step icon while it works.
+    bpy.types.WindowManager.assetdoctor_analyze_steps = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_analyze_step)
+    bpy.types.WindowManager.assetdoctor_analyze_index = bpy.props.IntProperty(default=0)
+
+    # F7 Phase 4-B: the character picker for Build Flatten Plan. Scanning caches
+    # every candidate's full plan as JSON (assetdoctor_flatten_plans_json) so
+    # picking one row later doesn't require rescanning the whole file. See
+    # ops.linkchain.
+    bpy.types.WindowManager.assetdoctor_flatten_candidates = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_flatten_candidate)
+    bpy.types.WindowManager.assetdoctor_flatten_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_flatten_plans_json = bpy.props.StringProperty(default="")
+
     # Batch E — idle-scan feasibility prototype (gated off by default in prefs).
     bpy.types.WindowManager.assetdoctor_idle_seconds = bpy.props.FloatProperty(default=0.0)
     bpy.types.WindowManager.assetdoctor_idle_detected = bpy.props.BoolProperty(default=False)
@@ -231,17 +259,19 @@ def unregister() -> None:
 
     wm_attrs = ["assetdoctor_op_active", "assetdoctor_op_progress", "assetdoctor_op_status",
                 "assetdoctor_op_paused", "assetdoctor_op_cancel",
+                "assetdoctor_last_result", "assetdoctor_last_result_ok",
                 "assetdoctor_active_report", "assetdoctor_resource_tree",
                 "assetdoctor_resource_expanded", "assetdoctor_profiled_ram",
                 "assetdoctor_report_rows", "assetdoctor_report_index",
                 "assetdoctor_resource_rows", "assetdoctor_resource_index",
                 "assetdoctor_broken_libs", "assetdoctor_broken_index",
                 "assetdoctor_broken_imgs", "assetdoctor_broken_imgs_index",
+                "assetdoctor_linked_missing_imgs",
                 "assetdoctor_tex_group_by", "assetdoctor_tex_scanned",
                 "assetdoctor_tex_initial_missing", "assetdoctor_tex_expanded",
                 "assetdoctor_tex_source_material",
                 "assetdoctor_dup_families", "assetdoctor_dup_index",
-                "assetdoctor_dup_scanned", "assetdoctor_dup_scan_mode",
+                "assetdoctor_dup_scanned",
                 "assetdoctor_dup_expanded",
                 "assetdoctor_dup_removable", "assetdoctor_dup_conflicts",
                 "assetdoctor_dup_conflicts_text",
@@ -255,6 +285,9 @@ def unregister() -> None:
                 "assetdoctor_examine_library_pick", "assetdoctor_examine_library",
                 "assetdoctor_examine_rows", "assetdoctor_examine_index",
                 "assetdoctor_examine_scanned", "assetdoctor_examine_expanded",
+                "assetdoctor_analyze_steps", "assetdoctor_analyze_index",
+                "assetdoctor_flatten_candidates", "assetdoctor_flatten_index",
+                "assetdoctor_flatten_plans_json",
                 "assetdoctor_idle_seconds", "assetdoctor_idle_detected"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]

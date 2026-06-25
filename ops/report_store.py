@@ -18,6 +18,7 @@ from ..core.tree import (
     report_to_tree,
     top_level_keys,
 )
+from .pickers import FilePickerMixin
 
 # (key, label) for each feature that produces a report. F5 resource is separate.
 FEATURES = [
@@ -27,8 +28,9 @@ FEATURES = [
     ("f4", "Orphans"),
     ("geo", "Geometry"),
     ("f7", "Dependencies"),
+    ("f7chain", "Link Chain Analysis"),
+    ("f7flatten", "Flatten Plan"),
     ("f7live", "Overrides & Dups"),
-    ("f7miss", "Missing Data-blocks"),
     ("f7rev", "Safe to Delete?"),
     ("f7links", "Broken Links"),
     ("f7fix", "Path Fixes"),
@@ -323,11 +325,23 @@ class ASSETDOCTOR_OT_row_label(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _reveal_in_outliner(context) -> None:
+def _reveal_in_outliner(context, filter_name: str = "") -> None:
     """Best-effort: frame + expand the active object's hierarchy in an open
     Outliner, the same as typing its name there. ``outliner.show_active`` needs
     an Outliner area/region in the override context, which this panel's own
-    Properties-editor context doesn't have — find one if the user has it open."""
+    Properties-editor context doesn't have — find one if the user has it open.
+
+    ``outliner.show_active`` only ever reveals the ACTIVE OBJECT — Blender has
+    no public API to scroll-to/highlight an arbitrary non-object ID (a
+    Material, an Image) directly, in ANY display mode, including Blend File /
+    Orphan Data (user-confirmed 2026-06-24: setting the active material slot
+    alone did not focus the material there). ``filter_name``, when given, is
+    set as the Outliner's own name filter (``SpaceOutliner.filter_text`` — the
+    same search box the header's magnifying-glass icon opens) on every open
+    Outliner, narrowing its rows to matches regardless of display mode. This
+    DOES mutate persistent Outliner UI state (the filter stays set until
+    cleared/replaced) — the deliberate, only-available alternative once
+    ``show_active`` alone is confirmed insufficient for a non-object target."""
     for window in context.window_manager.windows:
         for area in window.screen.areas:
             if area.type != "OUTLINER":
@@ -340,6 +354,11 @@ def _reveal_in_outliner(context) -> None:
                     bpy.ops.outliner.show_active()
             except Exception:
                 pass
+            if filter_name:
+                try:
+                    area.spaces[0].filter_text = filter_name
+                except Exception:
+                    pass
             return
 
 
@@ -353,7 +372,7 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
     name: bpy.props.StringProperty()  # type: ignore[valid-type]
 
     def execute(self, context):
-        targets = self._find_objects(context)
+        targets, materials = self._find_objects(context)
         if not targets:
             # Non-intrusive: don't open/rearrange editors; hint where to look.
             self.report(
@@ -369,16 +388,28 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
             obj.select_set(True)
         context.view_layer.objects.active = targets[0]
 
-        # For a material, also highlight its slot on the active object.
-        if self.type == "Material":
-            mat = bpy.data.materials.get(self.name)
+        # Highlight the connecting Material's slot on the active object — covers
+        # both a direct Material click AND something deeper (e.g. an Image two
+        # hops below the Material it's used in, user report 2026-06-24: clicking a
+        # missing texture didn't highlight "the material from whence it came").
+        # CONFIRMED (live test, 2026-06-24) that alone doesn't focus the material
+        # in the Outliner — show_active is active-OBJECT-only — so for anything
+        # that isn't a direct Object click, ALSO narrow the Outliner via its own
+        # name filter (the connecting material's name, else the clicked target's
+        # own name) so it's findable regardless of display mode.
+        filter_name = ""
+        if self.type != "Object":
             for i, slot in enumerate(targets[0].material_slots):
-                if slot.material == mat:
+                if slot.material in materials:
                     targets[0].active_material_index = i
+                    filter_name = slot.material.name
                     break
+            if not filter_name:
+                filter_name = self.name
 
-        _reveal_in_outliner(context)
-        self.report({"INFO"}, f"Selected {len(targets)} object(s) using {self.name}")
+        _reveal_in_outliner(context, filter_name)
+        tail = f" — Outliner filtered to '{filter_name}'" if filter_name else ""
+        self.report({"INFO"}, f"Selected {len(targets)} object(s) using {self.name}{tail}")
         return {"FINISHED"}
 
     def _resolve_target(self):
@@ -398,17 +429,21 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
         return None
 
     def _find_objects(self, context):
-        """Scene objects that use the datablock, directly or transitively.
+        """Scene objects that use the datablock, directly or transitively, plus any
+        Material(s) found ALONG THE WAY (so a Material slot can be highlighted on
+        the resulting active object even when the click started from something
+        deeper than a Material — e.g. an Image used by a Material used by an
+        Object: ``(objects, materials)``.
 
-        e.g. an Image used by a Material used by a Mesh used by an Object resolves
-        to that Object. ``bpy.data.user_map()`` maps each id -> the set of ids that
-        USE it, so we walk it forward from the target up to the using objects."""
+        ``bpy.data.user_map()`` maps each id -> the set of ids that USE it, so we
+        walk it forward from the target up to the using objects."""
         scene_objs = set(context.view_layer.objects)
         target = self._resolve_target()
         if target is None:
-            return []
+            return [], set()
         if isinstance(target, bpy.types.Object):
-            return [target] if target in scene_objs else []
+            return ([target] if target in scene_objs else []), set()
+        materials = {target} if isinstance(target, bpy.types.Material) else set()
 
         user_map = bpy.data.user_map()
         found, seen, stack = [], set(), [target]
@@ -418,12 +453,14 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
                 if user in seen:
                     continue
                 seen.add(user)
+                if isinstance(user, bpy.types.Material):
+                    materials.add(user)
                 if isinstance(user, bpy.types.Object):
                     if user in scene_objs and user not in found:
                         found.append(user)
                 else:
                     stack.append(user)
-        return found
+        return found, materials
 
 
 def _tree_to_text(nodes, title: str) -> str:
@@ -436,7 +473,7 @@ def _tree_to_text(nodes, title: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-class ASSETDOCTOR_OT_export_report(bpy.types.Operator):
+class ASSETDOCTOR_OT_export_report(FilePickerMixin, bpy.types.Operator):
     bl_idname = "assetdoctor.export_report"
     bl_label = "Export Report"
     bl_description = "Save the report to a text file (for printing or sharing)"
@@ -450,10 +487,6 @@ class ASSETDOCTOR_OT_export_report(bpy.types.Operator):
     feature: bpy.props.StringProperty(default="")  # type: ignore[valid-type]
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore[valid-type]
     filename: bpy.props.StringProperty(default="AssetDoctorReport.txt")  # type: ignore[valid-type]
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
 
     def execute(self, context):
         wm = context.window_manager

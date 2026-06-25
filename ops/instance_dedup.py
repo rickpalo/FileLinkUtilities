@@ -37,10 +37,19 @@ def _gather_steps(context):
     for i, me in enumerate(meshes, 1):
         mid = _mesh_id(me)
         id_to_db[mid] = me
-        try:
-            fp = fingerprint_mesh(extract_mesh(me))
-        except Exception:
+        # A missing-linked-data placeholder mesh (ID.is_missing) has no real
+        # vertex/polygon arrays allocated — reading them is a native access
+        # violation, not a catchable Python exception (confirmed via crash4,
+        # 2026-06-25: EXCEPTION_ACCESS_VIOLATION inside extract_mesh while
+        # walking bpy.data.meshes during Analyze All). Skip before extracting,
+        # same as every other generic bpy.data walk in this project already does.
+        if getattr(me, "is_missing", False):
             fp = None
+        else:
+            try:
+                fp = fingerprint_mesh(extract_mesh(me))
+            except Exception:
+                fp = None
         items.append({
             "id": mid,
             "name": me.name,

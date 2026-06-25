@@ -71,6 +71,19 @@ def test_build_live_report():
     assert dup.items == ["Body", "Body.001", "Body.002"]
 
 
+def test_build_live_report_strips_type_prefix_for_display():
+    # The ops layer feeds "Type/Name"-prefixed members (click-to-select ref);
+    # the message/base should read clean while items keep the full ref string.
+    extract = LiveExtract(
+        duplicates={"Mesh": {"Mesh/Cube": ["Mesh/Cube", "Mesh/Cube.001"]}},
+    )
+    report = dg.build_live_report(extract, "test.blend")
+    dup = [f for f in report.findings if f.category == "duplicate_family"][0]
+    assert dup.message == "Mesh: Cube ×2"
+    assert dup.items == ["Mesh/Cube", "Mesh/Cube.001"]
+    assert dup.data["base"] == "Cube"
+
+
 def test_build_live_report_loops_skipped():
     extract = LiveExtract(loops_skipped="graph too large (250000 nodes)")
     report = dg.build_live_report(extract)

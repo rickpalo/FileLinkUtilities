@@ -1,17 +1,22 @@
-"""F6 Layer 2 (step 3) — lossless merge of ``.NNN`` duplicate image datablocks.
+"""F6 Layer 2/3 — lossless content-overlap merge of duplicate image datablocks.
 
-The image analogue of F3 material dedup: when the same image is loaded more than
-once Blender makes ``Leather``, ``Leather.001``, … — content-identical datablocks
-that waste memory. This module groups local images into ``.NNN`` name-families
-(reusing :func:`core.datablock_graph.duplicate_families`) and, WITHIN a family,
-partitions by a **content fingerprint the operator supplies** (dimensions + a
-file/packed hash). Only a fingerprint-identical subset (2+ members) is offered for
-LOSSLESS merge; members of the same name-family that differ in content — or that
-couldn't be hashed — are reported, never merged. This is the SAFETY RULE: name
-similarity finds candidates; content identity is verified before any merge.
+The image analogue of F3 material dedup: the same image imported more than once
+(under the same name — ``Leather``, ``Leather.001`` — or under a totally
+different one across folders) wastes memory as content-identical datablocks.
+This module groups LOCAL images by a **content fingerprint the operator
+supplies** (dimensions + a file/packed hash) regardless of name; any group of
+2+ identical-content datablocks is offered for LOSSLESS merge. This is the
+SAFETY RULE: content identity is verified before any merge — name is never
+trusted alone.
 
-Resolution variants (``Leather_1k`` vs ``_2k``) have DIFFERENT names, so they do
-not land in a ``.NNN`` family here — they are step 4's lossy standardize, kept
+(History: an earlier, narrower ``.NNN``-name-family-only scan, "Find .NNN",
+was removed 2026-06-24 — confirmed redundant, since this content-based scan
+uses the identical fingerprint over a strict superset of images and so always
+finds everything the narrower scan did, plus cross-name/cross-folder
+duplicates it couldn't see at all.)
+
+Resolution variants (``Leather_1k`` vs ``_2k``) have DIFFERENT content, so they
+never land in a merge group here — they are step 4's lossy standardize, kept
 separate by design so a 1k/2k pair is never collapsed by accident.
 """
 
@@ -19,8 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .datablock_dedup import FamilyConflict, MemberInfo, MergePlan
-from .datablock_dedup import plan_merges as _plan_merges
+from .datablock_dedup import FamilyConflict, MergePlan
 from .datablock_dedup import removable_count as removable_count
 from .datablock_dedup import victims_for_keeper as victims_for_keeper
 from .report import Finding, Report
@@ -36,24 +40,11 @@ class ImgInfo:
     users: int = 0
 
 
-def plan_dup_merges(images: list[ImgInfo]
-                    ) -> tuple[list[MergePlan], list[FamilyConflict]]:
-    """``(merge plans, conflicts)``. Within each ``.NNN`` family, group members by
-    fingerprint; any fingerprint-group of 2+ is a lossless :class:`MergePlan`. A
-    family with more than one distinct content (or unverifiable members) is also
-    surfaced as a :class:`FamilyConflict` so the user sees what wasn't merged.
-
-    Thin image-flavored wrapper over :func:`core.datablock_dedup.plan_merges` (the
-    grouping logic isn't image-specific — every type's dedup tool shares it)."""
-    return _plan_merges([MemberInfo(i.name, i.fingerprint, i.users) for i in images])
-
-
 def plan_content_merges(images: list[ImgInfo]) -> list[MergePlan]:
-    """F6 Layer 3 — group images by CONTENT fingerprint regardless of name; any
-    group of 2+ identical-content datablocks is a LOSSLESS merge. Unlike
-    :func:`plan_dup_merges` (which only looks WITHIN a ``.NNN`` name-family) this
-    crosses names and folders, so the same texture imported under different names
-    across many CC4 folders collapses to one. Canonical = most-used, then shortest
+    """Group images by CONTENT fingerprint regardless of name; any group of 2+
+    identical-content datablocks is a LOSSLESS merge — crosses names and
+    folders, so the same texture imported under different names across many
+    CC4 folders collapses to one. Canonical = most-used, then shortest
     name, then lexical (deterministic). Images with no fingerprint are skipped."""
     by_fp: dict[str, list[ImgInfo]] = {}
     for i in images:
@@ -88,7 +79,7 @@ def build_dedup_report(plans: list[MergePlan], conflicts: list[FamilyConflict],
     purge = removable_count(plans)
     if not plans and not conflicts:
         report.add(Finding(category="clean",
-                           message="✓ No duplicate (.NNN) image datablocks",
+                           message="✓ No duplicate image datablocks",
                            severity="info"))
     else:
         report.add(Finding(category="summary",
@@ -98,6 +89,6 @@ def build_dedup_report(plans: list[MergePlan], conflicts: list[FamilyConflict],
     return report
 
 
-__all__ = ["ImgInfo", "MergePlan", "FamilyConflict", "plan_dup_merges",
+__all__ = ["ImgInfo", "MergePlan", "FamilyConflict",
            "plan_content_merges", "removable_count", "victims_for_keeper",
            "build_dedup_report"]

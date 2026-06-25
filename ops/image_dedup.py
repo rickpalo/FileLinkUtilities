@@ -1,10 +1,16 @@
-"""F6 Layer 2 (step 3) — lossless ``.NNN`` image-datablock merge (report + apply).
+"""F6 Layer 2/3 — lossless content-overlap image-datablock merge (report + apply).
 
-Mirrors F3 material dedup: find content-identical ``.NNN`` duplicate images, keep
-one canonical, ``user_remap`` the rest onto it, and remove the now-unused local
-copies. Content identity is VERIFIED by a fingerprint (dimensions + a file/packed
-hash) before any merge — name similarity alone never triggers a merge. Only local
-images are touched; linked images belong to their source library.
+Mirrors F3 material dedup: find content-identical duplicate images regardless of
+name, keep one canonical, ``user_remap`` the rest onto it, and remove the now-
+unused local copies. Content identity is VERIFIED by a fingerprint (dimensions +
+a file/packed hash) before any merge — name similarity alone never triggers a
+merge. Only local images are touched; linked images belong to their source
+library.
+
+(History: a narrower, name-only ".NNN family" fast-path scan — "Find .NNN" —
+was removed 2026-06-24: confirmed redundant with the content scan below, which
+uses the identical fingerprint over every local image, a strict superset of
+what the narrower scan ever looked at.)
 """
 
 from __future__ import annotations
@@ -16,7 +22,6 @@ import bpy
 
 from ..core import imagededup
 from ..core.imagededup import ImgInfo
-from ..core.datablock_graph import duplicate_families
 from .progress import ModalProgressMixin
 
 # Session cache: (path, size, mtime) -> file hash, so repeated scans don't re-read.
@@ -61,21 +66,10 @@ def _fingerprint(img) -> str:
     return f"{dims}:{content}" if content else ""
 
 
-def _family_member_infos() -> list[ImgInfo]:
-    """:class:`ImgInfo` for the members of every local ``.NNN`` name-family — only
-    those need fingerprinting (the rest can't be duplicates), so a big file isn't
-    fully hashed for Layer 2."""
-    local = [img for img in bpy.data.images if img.library is None]
-    fams = duplicate_families([img.name for img in local])
-    family_names = {n for members in fams.values() for n in members}
-    return [ImgInfo(name=img.name, fingerprint=_fingerprint(img), users=img.users)
-            for img in local if img.name in family_names]
-
-
 def _fill_families(context, plans, conflicts):
-    """Fill ``assetdoctor_dup_families`` + the summary counts from a set of merge
-    plans (shared by the fast ``.NNN`` scan and the deep content scan). Each row
-    carries its members (for the keeper dropdown) and a representative material."""
+    """Fill ``assetdoctor_dup_families`` + the summary counts from a content-merge
+    plan. Each row carries its members (for the keeper dropdown) and a
+    representative material."""
     from .image_relink import _image_material_map
 
     wm = context.window_manager
@@ -98,44 +92,6 @@ def _fill_families(context, plans, conflicts):
     wm.assetdoctor_dup_conflicts_text = "\n".join(f"{c.base} — {c.reason}" for c in conflicts)
 
 
-def _populate_dup_families(context):
-    """Fast ``.NNN`` scan: content-identical name-families only (hashes just family
-    members). Returns (plans, conflicts) for the caller to report/export."""
-    plans, conflicts = imagededup.plan_dup_merges(_family_member_infos())
-    _fill_families(context, plans, conflicts)
-    return plans, conflicts
-
-
-class ASSETDOCTOR_OT_scan_dup_textures(bpy.types.Operator):
-    bl_idname = "assetdoctor.scan_dup_textures"
-    bl_label = "Find Duplicate Textures"
-    bl_description = ("Find content-identical .NNN duplicate image datablocks (verified "
-                      "by dimensions + hash), grouped by material, so you can pick a "
-                      "keeper per family and merge the rest. Nothing is changed")
-    bl_options = {"REGISTER"}
-
-    def execute(self, context):
-        from . import report_store
-
-        blend_name = os.path.basename(bpy.data.filepath) or "current file"
-        plans, conflicts = _populate_dup_families(context)
-        report_store.stash_report(
-            context, imagededup.build_dedup_report(plans, conflicts, blend_name), "f6dup",
-            set_active=False)
-        wm = context.window_manager
-        wm.assetdoctor_dup_scanned = True
-        wm.assetdoctor_dup_scan_mode = "NNN"
-        if context.area:
-            context.area.tag_redraw()
-        n = imagededup.removable_count(plans)
-        if not plans and not conflicts:
-            self.report({"INFO"}, "✓ No duplicate (.NNN) image datablocks")
-        else:
-            self.report({"INFO"}, f"{len(plans)} merge group(s); ~{n} removable, "
-                        f"{len(conflicts)} differing-content.")
-        return {"FINISHED"}
-
-
 class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
     bl_idname = "assetdoctor.merge_dup_selected"
     bl_label = "Merge Selected Duplicates"
@@ -144,7 +100,6 @@ class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
     bl_options = {"REGISTER"}
 
     def execute(self, context):
-        from . import report_store
         from .safety import auto_backup
 
         wm = context.window_manager
@@ -179,27 +134,18 @@ class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
         except Exception:
             pass
 
+        # A deep content scan is too heavy to re-run synchronously here; clear the
+        # (now partly-merged) list and let the user re-run Find Content Dups.
         wm = context.window_manager
-        blend_name = os.path.basename(bpy.data.filepath) or "current file"
-        if wm.assetdoctor_dup_scan_mode == "CONTENT":
-            # A deep content scan is too heavy to re-run synchronously here; clear the
-            # (now partly-merged) list and let the user re-run Find content dups.
-            wm.assetdoctor_dup_families.clear()
-            wm.assetdoctor_dup_removable = 0
-            wm.assetdoctor_dup_conflicts = 0
-            wm.assetdoctor_dup_conflicts_text = ""
-        else:
-            plans, conflicts = _populate_dup_families(context)
-            report_store.stash_report(
-                context, imagededup.build_dedup_report(plans, conflicts, blend_name), "f6dup",
-                set_active=False)
+        wm.assetdoctor_dup_families.clear()
+        wm.assetdoctor_dup_removable = 0
+        wm.assetdoctor_dup_conflicts = 0
+        wm.assetdoctor_dup_conflicts_text = ""
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"
-        more = (" Re-run Find content dups to see any remaining."
-                if wm.assetdoctor_dup_scan_mode == "CONTENT" else "")
         self.report({"INFO"}, f"Merged and removed {removed} duplicate texture(s). "
-                    f"Save to persist.{tail}{more}")
+                    f"Save to persist.{tail} Re-run Find Content Dups to see any remaining.")
         return {"FINISHED"}
 
 
@@ -267,7 +213,6 @@ class ASSETDOCTOR_OT_scan_content_dups(ModalProgressMixin, bpy.types.Operator):
             set_active=False)
         wm = context.window_manager
         wm.assetdoctor_dup_scanned = True
-        wm.assetdoctor_dup_scan_mode = "CONTENT"
         yield (1.0, "Done")
         n = imagededup.removable_count(plans)
         if plans:

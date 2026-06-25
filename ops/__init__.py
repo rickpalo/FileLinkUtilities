@@ -7,12 +7,17 @@ are scaffold stubs that register cleanly; feature logic arrives per-milestone.
 
 from .scan_folder import ASSETDOCTOR_OT_scan_folder
 from .dep_scan import ASSETDOCTOR_OT_scan_dependencies
+from .linkchain import (
+    ASSETDOCTOR_OT_build_flatten_plan,
+    ASSETDOCTOR_OT_scan_flatten_candidates,
+    ASSETDOCTOR_OT_scan_link_chains,
+)
 from .reversedep import ASSETDOCTOR_OT_check_dependents
 from .datablock_inspect import (
     ASSETDOCTOR_OT_analyze_overrides,
-    ASSETDOCTOR_OT_scan_missing_datablocks,
     ASSETDOCTOR_OT_scan_all_missing,
 )
+from .analyze_all import ASSETDOCTOR_OT_analyze_all
 from .relink import (
     ASSETDOCTOR_OT_normalize_library_paths,
     ASSETDOCTOR_OT_relink_pick_file,
@@ -52,7 +57,6 @@ from .image_relink import (
     ASSETDOCTOR_OT_relink_textures_selected,
 )
 from .image_dedup import (
-    ASSETDOCTOR_OT_scan_dup_textures,
     ASSETDOCTOR_OT_scan_content_dups,
     ASSETDOCTOR_OT_merge_dup_selected,
     ASSETDOCTOR_OT_dup_material_keeper,
@@ -80,9 +84,12 @@ from .report_store import (
 REGISTER_CLASSES = (
     ASSETDOCTOR_OT_scan_folder,
     ASSETDOCTOR_OT_scan_dependencies,
+    ASSETDOCTOR_OT_scan_link_chains,
+    ASSETDOCTOR_OT_scan_flatten_candidates,
+    ASSETDOCTOR_OT_build_flatten_plan,
     ASSETDOCTOR_OT_check_dependents,
     ASSETDOCTOR_OT_analyze_overrides,
-    ASSETDOCTOR_OT_scan_missing_datablocks,
+    ASSETDOCTOR_OT_analyze_all,
     ASSETDOCTOR_OT_scan_all_missing,
     ASSETDOCTOR_OT_scan_broken_links,
     ASSETDOCTOR_OT_relink_pick_file,
@@ -112,7 +119,6 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_point_group_at_folder,
     ASSETDOCTOR_OT_relink_pick_texture,
     ASSETDOCTOR_OT_relink_textures_selected,
-    ASSETDOCTOR_OT_scan_dup_textures,
     ASSETDOCTOR_OT_scan_content_dups,
     ASSETDOCTOR_OT_merge_dup_selected,
     ASSETDOCTOR_OT_dup_material_keeper,

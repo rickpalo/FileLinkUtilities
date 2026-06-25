@@ -107,11 +107,15 @@ def build_live_report(extract: LiveExtract, file_label: str = "current file") ->
         fams = extract.duplicates[type_label]
         for base in sorted(fams, key=lambda b: -len(fams[b])):
             members = fams[base]
+            # The ops layer feeds "Type/Name"-prefixed strings (so core.tree._parse_ref
+            # wires up click-to-select on each member); strip that prefix back off for
+            # the human-readable message/base, members keep it for selection.
+            display_base = base.split("/", 1)[-1] if "/" in base else base
             report.add(Finding(category="duplicate_family",
-                               message=f"{type_label}: {base} ×{len(members)}",
+                               message=f"{type_label}: {display_base} ×{len(members)}",
                                severity="warning",
                                items=members, detail=f"{len(members)}",
-                               data={"type": type_label, "base": base}))
+                               data={"type": type_label, "base": display_base}))
 
     # Library blocks (how many datablocks come from each library).
     for lib, n in extract.library_counts:

@@ -22,6 +22,7 @@ import bpy
 
 from ..core import relink
 from ..core.relink import LibDesc
+from .pickers import FilePickerMixin
 
 
 def _gather_libs() -> list[LibDesc]:
@@ -98,7 +99,7 @@ class ASSETDOCTOR_OT_scan_broken_links(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_relink_pick_file(bpy.types.Operator):
+class ASSETDOCTOR_OT_relink_pick_file(FilePickerMixin, bpy.types.Operator):
     bl_idname = "assetdoctor.relink_pick_file"
     bl_label = "Pick Library File"
     bl_description = "Choose the .blend file to relink this broken library to"
@@ -107,10 +108,6 @@ class ASSETDOCTOR_OT_relink_pick_file(bpy.types.Operator):
     index: bpy.props.IntProperty()  # type: ignore[valid-type]
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore[valid-type]
     filter_glob: bpy.props.StringProperty(default="*.blend", options={"HIDDEN"})  # type: ignore[valid-type]
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
 
     def execute(self, context):
         coll = context.window_manager.assetdoctor_broken_libs
