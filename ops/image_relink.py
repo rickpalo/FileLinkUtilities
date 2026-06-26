@@ -189,7 +189,7 @@ class ASSETDOCTOR_OT_search_textures_folder(FilePickerMixin, bpy.types.Operator)
     and STAGE the matches (set each found texture's target + tick it) without
     changing anything yet — the user reviews, then Relink Selected applies. Unlike
     Blender's native find-missing-files this touches only the textures listed here
-    (libraries have their own Broken Links section) and never writes until applied."""
+    (libraries have their own Broken Library Links section) and never writes until applied."""
 
     bl_idname = "assetdoctor.search_textures_folder"
     bl_label = "Search a Folder (recursive)"

@@ -41,6 +41,7 @@ from __future__ import annotations
 import pathlib
 from dataclasses import asdict, dataclass
 
+from . import blendscan
 from .depscan import DepGraph
 from .report import Finding, Report
 
@@ -140,7 +141,12 @@ def read_override_reference(ov_block) -> OverrideReference | None:
 
 @dataclass(frozen=True)
 class ObjectPosingInfo:
-    """Raw, unjudged signals read off one local Object block."""
+    """Raw, unjudged signals read off one local Object block.
+
+    ``source_file`` (added when the census was extended to every file in a
+    multi-hop chain, not just the root — see ``classify_objects``) names which
+    .blend this object is LOCAL to. Defaults to "" for any pre-existing caller
+    that only ever read one already-known file and didn't need to say so."""
 
     name: str
     has_override: bool = False
@@ -150,9 +156,10 @@ class ObjectPosingInfo:
     quat: tuple[float, ...] | None = None
     size: tuple[float, ...] | None = None
     reference: OverrideReference | None = None
+    source_file: str = ""
 
 
-def read_object_posing(block) -> ObjectPosingInfo:
+def read_object_posing(block, source_file: str = "") -> ObjectPosingInfo:
     """Read posing signals off one already-open Object (``OB``) BAT block.
 
     DNA paths confirmed against real production files (2026-06-24 + 2026-06-25
@@ -173,24 +180,66 @@ def read_object_posing(block) -> ObjectPosingInfo:
     quat = tuple(block.get((b"quat",), default=[1.0, 0.0, 0.0, 0.0]))
     size = tuple(block.get((b"size",), default=[1.0, 1.0, 1.0]))
     return ObjectPosingInfo(name=name, has_override=has_override, has_modifier=has_modifier,
-                            loc=loc, rot=rot, quat=quat, size=size, reference=reference)
+                            loc=loc, rot=rot, quat=quat, size=size, reference=reference,
+                            source_file=source_file)
 
 
 def classify_objects(blend_path) -> list[ObjectPosingInfo]:
     """Read + return posing info for every LOCAL Object in ``blend_path``
     (on-demand, one whole-file BAT read — same cost profile as
-    :func:`core.datablock_links.linked_datablocks`; call on the one file
-    already on disk that the user is checking, not across a whole scan)."""
+    :func:`core.datablock_links.linked_datablocks`). Each result's
+    ``source_file`` is stamped with ``blend_path`` so a caller censusing
+    several files (see ``ops.linkchain``'s chain-wide census) can tell them
+    apart."""
     from blender_asset_tracer import blendfile
 
     out: list[ObjectPosingInfo] = []
     bfile = blendfile.BlendFile(pathlib.Path(blend_path))
     try:
         for block in bfile.find_blocks_from_code(b"OB"):
-            out.append(read_object_posing(block))
+            out.append(read_object_posing(block, source_file=str(blend_path)))
     finally:
         bfile.close()
     return out
+
+
+def scan_links_and_objects(
+    blend_path,
+) -> tuple[list[blendscan.LinkRef], list[ObjectPosingInfo]]:
+    """``blendscan.scan_file`` (LI blocks) + :func:`classify_objects` (OB
+    blocks), but sharing ONE ``BlendFile`` open instead of two (perf fix,
+    2026-06-25 user feedback: Find Flattenable Link Chains used to open every
+    file in the chain TWICE, paying BAT's block-table-index cost — the
+    dominant per-file cost on a multi-GB file, see docs/TODO.md — once for
+    each pass, for no reason once both reads land in the same function). An
+    object-read failure is swallowed (posing info for that file is just
+    empty) rather than propagated, matching the old call site's behaviour —
+    a file with flaky OB blocks but readable LI blocks should still let the
+    chain walk continue through it; a link-read failure still propagates,
+    same as plain ``scan_file``, so depscan's own per-file error handling is
+    unchanged."""
+    from blender_asset_tracer import blendfile
+
+    path = pathlib.Path(blend_path)
+    bfile = blendfile.BlendFile(path)
+    try:
+        refs: list[blendscan.LinkRef] = []
+        for block in bfile.find_blocks_from_code(b"LI"):
+            stored = block.get(b"name", as_str=True, default="")
+            if not stored:
+                continue
+            resolved, is_rel = blendscan.resolve_blend_relative(stored, path)
+            refs.append(blendscan.LinkRef(
+                stored_path=stored, resolved_path=resolved, is_relative=is_rel,
+                exists=pathlib.Path(resolved).is_file() if resolved else False))
+        try:
+            objects = [read_object_posing(block, source_file=str(blend_path))
+                       for block in bfile.find_blocks_from_code(b"OB")]
+        except Exception:
+            objects = []
+        return refs, objects
+    finally:
+        bfile.close()
 
 
 # --- 2b. posing classify (pure) ---------------------------------------------
@@ -254,9 +303,13 @@ def _basename(path: str) -> str:
 
 def build_chain_report(graph: DepGraph, root: str, posing: list[ObjectPosingInfo]) -> Report:
     """Combine the multi-hop routes from ``root`` with a posing-mechanism
-    census of ``root``'s own local objects into one Phase-4-A report. The two
-    findings are NOT yet cross-referenced (see module docstring) — this is a
-    "here's what exists" census, not yet "here's exactly what to flatten"."""
+    census into one Phase-4-A report. ``posing`` may span EVERY file visited
+    during the chain scan, not just ``root`` (2026-06-25 fix — the real
+    characters live several hops deep, e.g. in ``People1.blend``, not in a
+    Stage file that itself holds zero overrides; censusing only ``root`` found
+    nothing to test). Each ``ObjectPosingInfo.source_file`` (when set) is
+    named in its Finding so it's clear which file an object lives in when
+    several files are mixed together."""
     report = Report(title=f"Link Chain Analysis: {_name(root)}", feature="f7chain")
 
     routes = multihop_routes(graph, root)
@@ -287,9 +340,10 @@ def build_chain_report(graph: DepGraph, root: str, posing: list[ObjectPosingInfo
 
     route_basenames = {_basename(target): target for target in routes}
     for info, mech in classified:
+        file_tag = f" (in {_display_name(info.source_file)})" if info.source_file else ""
         if mech == OVERRIDE_WITH_TRANSFORM:
-            msg = (f"Object/{info.name} is a Library Override with an adjusted transform "
-                   "— a flatten candidate")
+            msg = (f"Object/{info.name}{file_tag} is a Library Override with an adjusted "
+                   "transform — a flatten candidate")
             ref = info.reference
             if ref and ref.library:
                 ref_base = _basename(ref.library)
@@ -308,8 +362,9 @@ def build_chain_report(graph: DepGraph, root: str, posing: list[ObjectPosingInfo
         elif mech == MODIFIER_DRIVEN:
             report.add(Finding(
                 category="posing_modifier",
-                message=f"Object/{info.name} is posed via a modifier, not an override "
-                         "— not flattenable by the override mechanism (Phase C, deferred)",
+                message=f"Object/{info.name}{file_tag} is posed via a modifier, not an "
+                         "override — not flattenable by the override mechanism (Phase C, "
+                         "deferred)",
                 severity="info", items=[f"Object/{info.name}"]))
 
     if not routes and by_mechanism[OVERRIDE_WITH_TRANSFORM] == 0:
@@ -454,7 +509,7 @@ def build_flatten_plan_report(plans: list[FlattenPlan]) -> Report:
             chain_str = " -> ".join(_name(n) for n in plan.route)
             msg += f" (currently routed via {chain_str})"
         n = len(plan.properties)
-        msg += f", replay {n} overridden propert{'y' if n == 1 else 'ies'}"
+        msg += f" — {summarize_properties(plan.properties)}"
         report.add(Finding(
             category="flatten_plan", message=msg,
             severity="warning" if plan.warnings else "info",
@@ -478,11 +533,134 @@ def build_flatten_plan_report(plans: list[FlattenPlan]) -> Report:
     return report
 
 
+# --- Phase 4 Apply (mutating — the real flatten/reapply step) ---------------
+#
+# Pure result type + report renderer only; the actual mutation (link direct,
+# bpy.types.ID.override_hierarchy_create, IDOverrideLibraryProperties.add +
+# value replay, ID.user_remap) has to call live bpy and lives in
+# ops/linkchain.py, same split as the rest of this module.
+
+@dataclass(frozen=True)
+class FlattenApplyResult:
+    """One member object's outcome after an Apply attempt."""
+
+    object_name: str
+    ok: bool
+    message: str
+    properties_applied: int = 0
+    properties_failed: int = 0
+
+
+def build_flatten_apply_report(rig: str, results: list[FlattenApplyResult]) -> Report:
+    """Render Apply's outcome into the same ``f7flatten`` report slot the
+    preview uses (report-first/apply-after pattern every other Apply feature
+    in this codebase follows) — "here's what I actually did."""
+    report = Report(title=f"Flatten Apply: {rig}", feature="f7flatten")
+    ok = sum(1 for r in results if r.ok)
+
+    if results:
+        report.add(Finding(
+            category="overview",
+            message=f"{ok} of {len(results)} part(s) flattened for {rig}. Save to persist.",
+            severity="info" if ok == len(results) else "warning",
+        ))
+
+    for r in results:
+        msg = f"Object/{r.object_name}: {r.message}"
+        report.add(Finding(
+            category="flatten_applied" if r.ok else "flatten_warning",
+            message=msg, severity="info" if r.ok else "warning",
+            items=[f"Object/{r.object_name}"]))
+
+    if not results:
+        report.add(Finding(category="clean", message=f"Nothing to flatten for {rig}",
+                           severity="info"))
+
+    return report
+
+
+# --- property rollup (2026-06-25 user feedback) -----------------------------
+#
+# A raw "replay N overridden properties" count wasn't useful for deciding
+# whether flattening a character is worth it — the user wants to know WHAT
+# kind of overrides are involved (posed bones, an assigned action, a
+# reparent, ...). Pure/bpy-free so it's testable with crafted properties,
+# same split as the rest of this module.
+
+def _pose_bone_name(rna_path: str) -> str | None:
+    """``pose.bones["Name"].location`` -> ``Name``; ``None`` for anything else."""
+    if not rna_path.startswith("pose.bones["):
+        return None
+    end = rna_path.find("]", 11)
+    if end == -1:
+        return None
+    return rna_path[12:end].strip("\"'")
+
+
+def summarize_properties(properties: list[OverrideProperty]) -> str:
+    """One human-readable line rolling up what a flatten plan would actually
+    replay, grouped by what the override affects rather than a bare count."""
+    bones: set[str] = set()
+    has_action = False
+    transform_n = 0
+    material_n = 0
+    modifier_n = 0
+    parent_n = 0
+    other_n = 0
+    for p in properties:
+        path = p.rna_path
+        bone = _pose_bone_name(path)
+        if bone is not None:
+            bones.add(bone)
+        elif path.startswith("animation_data."):
+            has_action = True
+        elif path in ("location", "rotation_euler", "rotation_quaternion", "scale"):
+            transform_n += 1
+        elif path.startswith("material_slots[") or path == "active_material":
+            material_n += 1
+        elif path.startswith("modifiers["):
+            modifier_n += 1
+        elif path == "parent":
+            parent_n += 1
+        else:
+            other_n += 1
+
+    bits = []
+    if bones:
+        bits.append(f"{len(bones)} bone(s) posed")
+    if has_action:
+        bits.append("animation override")
+    if transform_n:
+        bits.append(f"{transform_n} transform adjustment(s)")
+    if material_n:
+        bits.append(f"{material_n} material override(s)")
+    if modifier_n:
+        bits.append(f"{modifier_n} modifier override(s)")
+    if parent_n:
+        bits.append("reparented")
+    if other_n:
+        bits.append(f"{other_n} other propert{'y' if other_n == 1 else 'ies'}")
+    return " · ".join(bits) if bits else "no override properties found to replay"
+
+
+def build_rig_rollup(plans: list[FlattenPlan]) -> str:
+    """Combine every member object's properties under one rig/character into
+    a single rolled-up line (the picker shows this directly below the rig's
+    row — no separate report tab needed to judge whether flattening it is
+    worth it)."""
+    if not plans:
+        return "no data"
+    all_props = [p for plan in plans for p in plan.properties]
+    ready = sum(1 for p in plans if p.route and p.properties)
+    return f"{ready}/{len(plans)} part(s) ready — {summarize_properties(all_props)}"
+
+
 __all__ = [
     "OVERRIDE_WITH_TRANSFORM", "MODIFIER_DRIVEN", "UNCLASSIFIED",
     "ObjectPosingInfo", "OverrideReference", "OverrideProperty", "FlattenPlan",
     "find_chains", "multihop_routes", "read_object_posing", "read_override_reference",
     "classify_objects", "classify_posing", "transform_differs_from_identity",
     "build_chain_report", "build_flatten_plan", "routes_from_report", "build_flatten_plan_report",
-    "flatten_plan_to_dict", "flatten_plan_from_dict",
+    "flatten_plan_to_dict", "flatten_plan_from_dict", "summarize_properties", "build_rig_rollup",
+    "FlattenApplyResult", "build_flatten_apply_report",
 ]

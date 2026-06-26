@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 # Unique extension id (no spaces). Becomes the python package name on install.
 id = "assetdoctor"
-version = "0.2.54"
+version = "0.2.63"
 name = "AssetDoctor"
 tagline = "Map & clean linked assets, materials and orphan data"
 maintainer = "rickpalo <rap2010@comcast.net>"

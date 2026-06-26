@@ -65,8 +65,8 @@ def _populate_broken_links(context) -> tuple[int, int]:
 
 def _refresh_broken_links(context) -> tuple[int, int]:
     """Repopulate the broken-link list AND stash the persistent report, so a scan
-    always leaves a visible result — including a "No broken links found" status
-    when the file is clean (user rule, 2026-06-22). Returns (broken, auto-matched)."""
+    always leaves a visible result — including a "No broken library links found"
+    status when the file is clean (user rule, 2026-06-22). Returns (broken, auto-matched)."""
     from .report_store import stash_report
 
     broken, found = _populate_broken_links(context)
@@ -80,7 +80,7 @@ def _refresh_broken_links(context) -> tuple[int, int]:
 
 class ASSETDOCTOR_OT_scan_broken_links(bpy.types.Operator):
     bl_idname = "assetdoctor.scan_broken_links"
-    bl_label = "Find Broken Links"
+    bl_label = "Find Broken Library Links"
     bl_description = ("List this file's broken/missing library links so you can relink "
                       "them individually (with an auto-found match where possible)")
     bl_options = {"REGISTER"}
@@ -93,7 +93,7 @@ class ASSETDOCTOR_OT_scan_broken_links(bpy.types.Operator):
         if context.area:
             context.area.tag_redraw()
         if not broken:
-            self.report({"INFO"}, "No broken links found — see the Broken Links report")
+            self.report({"INFO"}, "No broken library links found — see the Broken Library Links report")
         else:
             self.report({"INFO"}, f"{broken} broken link(s); {found} with an auto-found match")
         return {"FINISHED"}
@@ -189,7 +189,7 @@ class ASSETDOCTOR_OT_normalize_library_paths(bpy.types.Operator):
         if properties.apply:
             return ("Normalize this file's library paths (absolute→relative, fix "
                     "backslashes) where safe. Does NOT relink — broken links are "
-                    "handled by Find Broken Links. Takes a backup first")
+                    "handled by Find Broken Library Links. Takes a backup first")
         return ("Report which library paths would be normalized and which libraries "
                 "are duplicated (no changes, no relinking)")
 

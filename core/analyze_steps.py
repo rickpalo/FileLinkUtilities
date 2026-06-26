@@ -36,7 +36,7 @@ STEPS: tuple[AnalyzeStep, ...] = (
                 "assetdoctor.scan_link_chains", {}),
     AnalyzeStep("find_duplicate_datablocks", "Find Duplicate Data-blocks",
                 "assetdoctor.scan_datablock_dups", {}),
-    AnalyzeStep("find_broken_links", "Find Broken Links", "assetdoctor.scan_broken_links", {}),
+    AnalyzeStep("find_broken_links", "Find Broken Library Links", "assetdoctor.scan_broken_links", {}),
     AnalyzeStep("find_reconnectable", "Find Reconnectable Data-blocks",
                 "assetdoctor.scan_reconnect_targets", {}),
     AnalyzeStep("find_missing_textures", "Find Missing Textures",

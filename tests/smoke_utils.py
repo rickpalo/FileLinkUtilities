@@ -67,12 +67,13 @@ def main():
 
         # Collapsible feature sub-panels registered + parented to the Scene panel
         # (Batch 5, 2026-06-23 — migrated off the retired VIEW_3D N-panel root;
-        # Current File Data/Analyze added Phase 3a, 2026-06-25).
+        # Current File Data/Analyze added Phase 3a, 2026-06-25; Results added
+        # v0.2.56, 2026-06-25, when the inline Duplicate-Data-blocks..Reports
+        # block was moved out of the parent's own draw() into its own panel).
         sub_ids = ["ASSETDOCTOR_PT_current_file_data", "ASSETDOCTOR_PT_analyze",
-                   "ASSETDOCTOR_PT_make_local",
-                   "ASSETDOCTOR_PT_materials", "ASSETDOCTOR_PT_orphans",
-                   "ASSETDOCTOR_PT_geometry", "ASSETDOCTOR_PT_resource_tools",
-                   "ASSETDOCTOR_PT_utilities"]
+                   "ASSETDOCTOR_PT_orphans",
+                   "ASSETDOCTOR_PT_geometry",
+                   "ASSETDOCTOR_PT_utilities", "ASSETDOCTOR_PT_results"]
         panels_ok = all(
             getattr(getattr(bpy.types, pid, None), "bl_parent_id", None) == "ASSETDOCTOR_PT_scene_deps"
             for pid in sub_ids
@@ -80,9 +81,13 @@ def main():
         checks.append((f"{len(sub_ids)} collapsible sub-panels parented to scene_deps", panels_ok))
 
         # The retired VIEW_3D N-panel root + its now-redundant standalone Report/
-        # Resource panels must not still be registered (Batch 5).
+        # Resource panels must not still be registered (Batch 5). The Resource
+        # Analyzer SCENE sub-panel joined this list later (its by-type breakdown
+        # moved into the Analyze panel's "Analyze Memory/Disk" row instead).
         retired_ids = ["ASSETDOCTOR_PT_main", "ASSETDOCTOR_PT_project",
-                       "ASSETDOCTOR_PT_report", "ASSETDOCTOR_PT_resources"]
+                       "ASSETDOCTOR_PT_report", "ASSETDOCTOR_PT_resources",
+                       "ASSETDOCTOR_PT_resource_tools", "ASSETDOCTOR_PT_make_local",
+                       "ASSETDOCTOR_PT_materials"]
         checks.append(("retired N-panel classes are gone",
                        all(not hasattr(bpy.types, pid) for pid in retired_ids)))
 
@@ -91,9 +96,11 @@ def main():
         # standalone Report panel.
         wm.assetdoctor_rep_f3 = '{"title": "t", "findings": []}'
         report_store = __import__(f"{PKG}.ops.report_store", fromlist=["x"])
-        scene_panel = __import__(f"{PKG}.ui.panels", fromlist=["x"]).ASSETDOCTOR_PT_scene_deps
+        # _SELECTOR_EXCLUDE moved from scene_deps to results when the Reports
+        # selector itself moved there (v0.2.56).
+        results_panel = __import__(f"{PKG}.ui.panels", fromlist=["x"]).ASSETDOCTOR_PT_results
         present = [k for k, _ in report_store.available_features(wm)
-                   if k not in scene_panel._SELECTOR_EXCLUDE]
+                   if k not in results_panel._SELECTOR_EXCLUDE]
         checks.append(("f3 (Materials) report surfaces in the generalized selector",
                        "f3" in present))
         wm.assetdoctor_rep_f3 = ""

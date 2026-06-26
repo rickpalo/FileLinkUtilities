@@ -9,6 +9,7 @@ from .scan_folder import ASSETDOCTOR_OT_scan_folder
 from .dep_scan import ASSETDOCTOR_OT_scan_dependencies
 from .linkchain import (
     ASSETDOCTOR_OT_build_flatten_plan,
+    ASSETDOCTOR_OT_flatten_category_toggle,
     ASSETDOCTOR_OT_scan_flatten_candidates,
     ASSETDOCTOR_OT_scan_link_chains,
 )
@@ -65,7 +66,7 @@ from .image_dedup import (
 )
 from .progress import ASSETDOCTOR_OT_toggle_pause, ASSETDOCTOR_OT_request_cancel
 from .make_local import ASSETDOCTOR_OT_make_local
-from .material_dedup import ASSETDOCTOR_OT_material_dedup
+from .material_dedup import ASSETDOCTOR_OT_material_dedup, ASSETDOCTOR_OT_merge_material_selected
 from .orphans import ASSETDOCTOR_OT_scan_orphans
 from .instance_dedup import ASSETDOCTOR_OT_instance_geometry
 from .resource import ASSETDOCTOR_OT_analyze_resources, ASSETDOCTOR_OT_profile_render
@@ -79,6 +80,7 @@ from .report_store import (
     ASSETDOCTOR_OT_report_toggle,
     ASSETDOCTOR_OT_row_label,
     ASSETDOCTOR_OT_select_datablock,
+    ASSETDOCTOR_OT_toggle_inline_detail,
 )
 
 REGISTER_CLASSES = (
@@ -87,6 +89,7 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_scan_link_chains,
     ASSETDOCTOR_OT_scan_flatten_candidates,
     ASSETDOCTOR_OT_build_flatten_plan,
+    ASSETDOCTOR_OT_flatten_category_toggle,
     ASSETDOCTOR_OT_check_dependents,
     ASSETDOCTOR_OT_analyze_overrides,
     ASSETDOCTOR_OT_analyze_all,
@@ -128,6 +131,7 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_request_cancel,
     ASSETDOCTOR_OT_make_local,
     ASSETDOCTOR_OT_material_dedup,
+    ASSETDOCTOR_OT_merge_material_selected,
     ASSETDOCTOR_OT_scan_orphans,
     ASSETDOCTOR_OT_instance_geometry,
     ASSETDOCTOR_OT_analyze_resources,
@@ -140,5 +144,6 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_report_clear,
     ASSETDOCTOR_OT_row_label,
     ASSETDOCTOR_OT_select_datablock,
+    ASSETDOCTOR_OT_toggle_inline_detail,
     ASSETDOCTOR_OT_export_report,
 )

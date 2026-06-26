@@ -19,6 +19,7 @@ from ..core.tree import (
     top_level_keys,
 )
 from .pickers import FilePickerMixin
+from .progress import set_result
 
 # (key, label) for each feature that produces a report. F5 resource is separate.
 FEATURES = [
@@ -32,7 +33,7 @@ FEATURES = [
     ("f7flatten", "Flatten Plan"),
     ("f7live", "Overrides & Dups"),
     ("f7rev", "Safe to Delete?"),
-    ("f7links", "Broken Links"),
+    ("f7links", "Broken Library Links"),
     ("f7fix", "Path Fixes"),
     ("f6tex", "Missing Textures"),
     ("f6dup", "Duplicate Textures"),
@@ -213,6 +214,29 @@ class ASSETDOCTOR_OT_report_toggle(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class ASSETDOCTOR_OT_toggle_inline_detail(bpy.types.Operator):
+    """Expand/collapse one Analyze button's inline "Details" disclosure
+    (user feedback, 2026-06-25 item d) — a single shared newline-joined set
+    on the WindowManager, mirroring every other collapsible-list toggle in
+    this addon (assetdoctor_tex_expanded and friends), keyed by feature so
+    several can be open at once independently."""
+
+    bl_idname = "assetdoctor.toggle_inline_detail"
+    bl_label = "Show/Hide Details"
+    bl_options = {"INTERNAL"}
+
+    key: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+    def execute(self, context):
+        wm = context.window_manager
+        keys = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+        keys.discard(self.key) if self.key in keys else keys.add(self.key)
+        wm.assetdoctor_detail_expanded = "\n".join(sorted(keys))
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}
+
+
 class ASSETDOCTOR_OT_report_expand_all(bpy.types.Operator):
     """Expand or collapse every node of the CURRENTLY SHOWN report at once (e.g.
     the F7 File Map can run many levels deep — drilling in one row at a time
@@ -362,6 +386,26 @@ def _reveal_in_outliner(context, filter_name: str = "") -> None:
             return
 
 
+def resolve_datablock(type_name: str, name: str):
+    """Find the ID datablock matching a "Type/Name" ref (generic walk over every
+    ``bpy.data`` collection) — shared by click-to-select here and Phase 4's
+    flatten-apply (resolving an overridden pointer property's coerced
+    "Type/Name" string back to a real datablock)."""
+    for prop in bpy.data.bl_rna.properties:
+        if prop.type != "COLLECTION":
+            continue
+        coll = getattr(bpy.data, prop.identifier, None)
+        if coll is None:
+            continue
+        try:
+            cand = coll.get(name)
+        except (TypeError, AttributeError):
+            continue
+        if cand is not None and type(cand).__name__ == type_name:
+            return cand
+    return None
+
+
 class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
     bl_idname = "assetdoctor.select_datablock"
     bl_label = "Select"
@@ -375,11 +419,18 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
         targets, materials = self._find_objects(context)
         if not targets:
             # Non-intrusive: don't open/rearrange editors; hint where to look.
-            self.report(
-                {"INFO"},
-                f"{self.type}/{self.name} has no users in the scene — view it via "
-                "Outliner → Display Mode → Blender File / Orphan Data",
-            )
+            # STICKY (not just a self.report() toast, user feedback 2026-06-25
+            # item e) — a transient toast is easy to miss and reads as "the
+            # click did nothing" even though this IS the real answer (most
+            # duplicate-family members are exactly this: dead weight with no
+            # real user). Also covers the case where a real user exists but
+            # its collection is excluded from the current view layer, which
+            # "has no users in the scene" technically doesn't distinguish.
+            msg = (f"{self.type}/{self.name}: no user found in the current view "
+                   "layer (it may be unused, or its collection is excluded) — "
+                   "check Outliner → Display Mode → Blender File / Orphan Data")
+            self.report({"INFO"}, msg)
+            set_result(context, msg, ok=False)
             return {"CANCELLED"}
 
         for obj in context.view_layer.objects:
@@ -414,19 +465,7 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
 
     def _resolve_target(self):
         """Find the ID datablock matching this finding's type-name + name."""
-        for prop in bpy.data.bl_rna.properties:
-            if prop.type != "COLLECTION":
-                continue
-            coll = getattr(bpy.data, prop.identifier, None)
-            if coll is None:
-                continue
-            try:
-                cand = coll.get(self.name)
-            except (TypeError, AttributeError):
-                continue
-            if cand is not None and type(cand).__name__ == self.type:
-                return cand
-        return None
+        return resolve_datablock(self.type, self.name)
 
     def _find_objects(self, context):
         """Scene objects that use the datablock, directly or transitively, plus any

@@ -16,7 +16,7 @@ from .report import SEVERITIES, Report
 
 # Prettier titles for known finding categories; falls back to the raw category.
 _CATEGORY_TITLES = {
-    "broken_link": "Broken links",
+    "broken_link": "Broken Library Links",
     "absolute_path": "Absolute paths",
     "circular_link": "Circular references",
     "unreadable_file": "Unreadable files",
@@ -25,6 +25,7 @@ _CATEGORY_TITLES = {
     "fake_only": "Fake-user only",
     "identical": "Identical datablocks",
     "duplicate_group": "Duplicate Materials",
+    "instanceable": "Duplicate Geometry",
     "duplicate_material": "Duplicate Materials",
     "linked_victim": "Linked duplicates",
     "relink_missing": "Relink missing libraries",
@@ -48,6 +49,7 @@ _CATEGORY_TITLES = {
     "posing_modifier": "Modifier-driven (not flattenable yet)",
     "flatten_plan": "Flatten plan (preview — applies nothing)",
     "flatten_warning": "Flatten plan — blocked / needs attention",
+    "flatten_applied": "Flattened",
     "library_block": "Linked data-blocks per library",
     "missing_image": "Missing images (render-time)",
     "driver_error": "Driver errors",

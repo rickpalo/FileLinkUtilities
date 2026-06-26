@@ -1,11 +1,596 @@
 # AssetDoctor — TODO / backlog
 
-## ⏩ NEXT SESSION STARTS HERE: live-verify v0.2.54's Build Flatten Plan (the single-character
-## picker) on a real override-with-transform character (PSM_Stage_v5.2 / People1), then decide
-## whether to triage the held Phase 3 feedback log or continue toward the Phase 4-B mutating Apply
-## step. Also still pending: live-verify v0.2.49-0.2.52 (the whole Phase 3a/3b panel restructure +
-## the crash4/reconnect fixes + the override `reference` DNA path) — see the priority list this
-## session ends with, further down this entry.
+## ⏩ NEXT SESSION STARTS HERE — read this block first, it supersedes earlier "NEXT SESSION" markers
+## further down (those are now history, kept for the detailed record).
+
+**SESSION DIGEST — 2026-06-25, v0.2.61→v0.2.63. Phase 4 Apply LIVE-VERIFIED for the first time
+(headless probe against the real 14.4GB People1_v5.1.blend, no crash) + a live-UI-feedback batch
+(8 items) fixed while the user tested v0.2.61 in Blender. Suite 356→358. COMMITTED this session
+(see commit hash at top of `git log` — bundles the whole v0.2.38→v0.2.63 stack on top of `824d5d1`,
+per the user's explicit "commit everything" at session end).**
+
+### Phase 4 Apply — PROBE RESULTS (the headline finding this session)
+
+Ran the diagnostic-probe pattern (`docs/TODO.md`'s own established technique, see
+[[env_blender_verification]]) against the REAL `ThePiazzaSanMarco - People1_v5.1.blend` (14.4GB,
+712 actual rigs/characters) — registered the real addon, opened the file read-only (never called
+`save_mainfile`, original untouched), ran the real operators in sequence: Find Flattenable Link
+Chains → Find Flattenable Characters → Build Flatten Plan (preview) → Build Flatten Plan
+(apply=True, the real mutation) on rig `CC3_Base_Plus_Rigify_Rigify.017` (9 parts, all "ready").
+Full log + the probe script itself are NOT committed (one-off, throwaway, lived in the scratchpad
+dir) — the findings below are the lasting artifact.
+
+**Timings (real numbers for future budgeting):** open 203.5s; Find Flattenable Link Chains (full
+recursive scan + per-file object census, now ONE BAT open per file after this session's merge fix)
+309.5s for the WHOLE chain — found **24 multi-hop routes, 929 flattenable overrides across 712
+rigs/characters** (732 individual override parts); Find Flattenable Characters (live bpy.data walk)
+0.1s — confirmed genuinely free, no disk I/O; Build Flatten Plan preview: instant; **Apply: 13.1s,
+no crash** for the one 9-part rig.
+
+**Uncertainty 1 (does `override_hierarchy_create` pull sibling parts in directly?) — YES, confirmed
+for 6 of 9 parts.** The rig root + 5 children (CC_Base_EyeOcclusion/TearLine/Teeth/Tongue,
+Side_part_wavy) each got a brand-new override linked DIRECTLY from `human_bundle.blend` (the
+ultimate library, 3 hops past the original `People1 → PSM_Stage_v5.1 → Asset_bundle → human_bundle`
+chain), all sharing the new root's `hierarchy_root` exactly as designed — ONE
+`override_hierarchy_create` call really does pull the connected sub-hierarchy along for free.
+
+**Uncertainty 2 (does hierarchy_root + reference-name matching find every member?) — 6/9 cleanly
+matched; 3/9 (`CC_Base_Body.056`, `CC_Base_Eye.056`, `Smock.003`) is a genuine open anomaly.** The
+apply report claims all 9 parts succeeded (with real, non-zero "properties replayed" counts: 10, 8,
+2 respectively for Body/Eye/Smock) — but the before/after `bpy.data.objects` name diff shows only 6
+NEW objects were created. Since `by_ref_name` is built from objects sharing the brand-new
+`hierarchy_root`, a successful match should be structurally impossible without a new object
+appearing in the diff — this doesn't fit "no match found" (that path reports failure, not a
+property count) or "match found but wrong" cleanly either. **NOT yet root-caused — this is the
+single most important next-session item.** Recommended next step: re-run the same probe with
+per-member instrumentation added directly to a probe-only copy of `_flatten_rig` (print `old_obj`/
+`new_obj` identity + whether `new_obj` was already present in `before_names` at match time, for
+every member, not just a before/after diff at the end) — that will show definitively whether this
+is a real `_flatten_rig` bug (e.g. a `by_ref_name` key collision, or Blender reusing/adopting an
+already-existing override into the new hierarchy) or an artifact of the probe's diff method itself.
+
+**Uncertainty 3 (does the generic setattr property replay handle real rna_path shapes?) — YES,
+cleanly, for all 6 confirmed members, zero failures reported.** 645 properties replayed on the rig
+root alone, including pointer-valued paths like
+`pose.bones["MCH-eyes_parent"].constraints["Copy Transforms"].target` → `Object/CC3_Base_Plus_
+Rigify_Rigify.017` (a self-referencing pointer, correctly coerced back through `resolve_datablock`)
+and plain transform/visibility properties (`location`, `scale`, `hide_render`, `data`). This is the
+strongest of the three results — the generic property-replay design (no per-type special-casing)
+holds up against real production override data.
+
+**Other observations, not concerns:** the file's own `lib.override.resync` warnings at LOAD time
+(`MECC_Base_Body.010/.018/.019/...` "needing resync, isolated from hierarchy root") are pre-existing
+disease, unrelated to our code — confirms this file already has the project's well-documented
+override-resync problem independent of anything Phase 4 does. The "Failed to add relation
+'VFont -> Node'" / Geo-Scatter depsgraph warning appears identically at file-load AND again right
+after Apply's `view_layer.update()` — a pre-existing broken relation elsewhere in the file that any
+depsgraph rebuild re-surfaces, not something Apply introduced.
+
+**Bottom line: Phase 4 Apply is real and doesn't crash on real production data, and 2 of 3
+uncertainties are now confirmed working. The Body/Eye/Smock match anomaly must be resolved before
+trusting Apply on parts beyond the rig root + cleanly-matched siblings — don't run it on a real file
+in the live UI yet for anything where you'd rely on EVERY part being correctly merged.**
+
+### Live-UI-feedback batch fixed this session (while the user tested v0.2.61 in Blender)
+
+1. **Bare-title summary leaks fixed**: `_missing_textures_headline`/`_duplicate_textures_headline`/
+   `_datablock_dups_headline`/`_reconnect_headline` now return `""` (hidden) instead of the bare
+   category title before their own scan has run — they were reading like stray section separators.
+2. **Legacy "Make Local" panel deleted** (Report Dry Run/→New File/→In Place) — no replacement Apply
+   UI exists yet in Cleanup & Fixes, flagged to the user, they accepted the gap for now.
+3. **Generic inline "Details" disclosure** (item d, the big one): every `_report_feature_summary`-
+   backed Analyze row (Check Link Chain, Audit This File, Find Flattenable Link Chains, Find Broken
+   Library Links, Find Duplicate Materials→since reformatted, Find Resolution Variants, Find
+   Duplicate Geometry, Find Orphans, Make Local Impact) now has a collapsed "▶ Details" line under
+   its one-line summary showing the full report tree inline (click-to-select included), via new
+   `ui.panels._draw_report_detail`/`_feature_tree_nodes` + `ops.report_store.
+   ASSETDOCTOR_OT_toggle_inline_detail` + WM `assetdoctor_detail_expanded`.
+4. **(e) "No scene users" click result now persists** (`ops.report_store.ASSETDOCTOR_OT_
+   select_datablock` calls `set_result()`, not just a missable `self.report()` toast) — likely cause
+   was a genuinely-unused duplicate-family member (CC_Base_Body.031), not a bug; user moved on
+   without re-confirming the exact message.
+5. **(2)/(3a) Scan-merge perf fix**: `core.linkchain.scan_links_and_objects` reads a file's LI
+   (links) AND OB (objects) blocks in ONE BAT open instead of two — Find Flattenable Link Chains
+   used to open every file in the chain twice (once via `blendscan.scan_file`, once via
+   `classify_objects`), paying BAT's block-index-build cost (confirmed the dominant per-file cost)
+   twice for nothing. Confirmed via the probe: did NOT increase memory (the cross-file accumulation
+   was already happening) and materially reduced scan time. +2 tests (suite 356→358).
+6. **Duplicate Data-blocks box relocated** from the Results holding pen to directly under its own
+   Analyze button, unchanged otherwise (`ui.panels._draw_datablock_dups`, now a free function).
+7. **Find Duplicate Materials reformatted** from a single blind "Dedup & Remap (Apply)" button (no
+   way to choose what's kept) into the same keeper-dropdown + Merge Selected shape every other dedup
+   tool already has — new `ASSETDOCTOR_PG_material_family` + `ops.material_dedup.
+   ASSETDOCTOR_OT_merge_material_selected` + `_draw_material_dups`/`_material_dups_headline`, reusing
+   the EXISTING `core.f3_materials.build_dedup_plan` clustering (fingerprint-identical groups, not
+   `.NNN`-name families — two differently-named materials can land in one group). Old "Duplicate
+   Materials" panel deleted (fully superseded, no capability lost this time).
+8. **"No fingerprint available" explained** (not a bug): only Actions have a real content fingerprint
+   built (`core.fingerprint.fingerprint_action`) — every other generic-dedup type is listed for
+   visibility but never auto-merged until it gets one too.
+
+**Phase 3b (3b discoverability note, NOT acted on):** user couldn't find a select+flatten interface
+while testing Find Flattenable Link Chains — it exists one button below, "Find Flattenable
+Characters" (the per-rig picker + Flatten button). Flagged for next time, not changed.
+
+**SESSION END 2026-06-25 — user said "that's enough UI for this version," ending the live-feedback
+loop for now; instructed "once the probe is done, document those results, commit everything and
+then tidy up for the next session" — this block + the commit are that.** Recommended next-session
+priority, in order: (1) root-cause the Body/Eye/Smock match anomaly above — the one thing standing
+between Phase 4 and being trustworthy; (2) the 13-item live-test feedback's still-open Phase 3
+sections 3-5 (Reporting & Recommendations / Cleanup & Fixes / Info & Utilities — still need a
+before/after proposal); (3) the deferred discoverability note above, if it recurs.
+
+---
+
+**OLDER SESSION DIGEST (history, kept for the detailed record) — 2026-06-25, v0.2.60→v0.2.61.
+Closed out the Phase 3 live-test feedback batch (items a-e) and then built Phase 4's Apply step for
+real — the first override-creation mutation in this codebase. Suite 353 → 356.**
+
+- **Phase 3 feedback batch, triaged with the user before touching anything (some items were
+  factually wrong, not just stylistic):**
+  - **(a) Profile Render vs Dry-run Render — NOT duplicates, user confirmed keep both.** Profile
+    Render renders the CURRENT file in-process for real peak RAM; Dry-run Render launches a
+    SEPARATE background Blender process and parses the log for render-time warnings (missing
+    textures, driver errors) — the only thing in the addon that catches that class of bug. No
+    code changed.
+  - **(b)/(c) Missing Materials/Textures, Duplicate Materials/Textures, Broken Library Links &
+    missing data-blocks — NOT deleted.** These boxes only LOOK empty/redundant because their Find
+    triggers + headline summaries already moved into the Analyze panel (Phase 3a) — the boxes
+    themselves still hold the ONLY working Apply controls (Relink Selected, per-row pickers,
+    keeper dropdowns, Merge Selected). Deleting them would have removed real capability with no
+    replacement, since Cleanup & Fixes (the section meant to absorb this job) isn't designed yet.
+    **User decision: keep as-is for now — their controls will move up into the Analyze section
+    later, revisit details then.** No code changed.
+  - **(d) FIXED — real bug, the "Summary (1)" text on Find Duplicate Geometry/Find Orphans/Make
+    Local Impact (and latently Find Duplicate Materials).** Root cause: `core/geometry_dedup.py`/
+    `core/f4_orphans.py`/`core/f2_makelocal.py`/`core/f3_materials.py` tag their `Report` with an
+    UPPERCASE feature id ("F5"/"F4"/"F2"/"F3") while `ui/panels.py::_report_feature_summary` is
+    called with the LOWERCASE stash key ("geo"/"f4"/"f2"/"f3") and hardcoded that string as the
+    tree-node-key prefix to exclude the Summary category from the rollup — the exclusion check
+    silently never matched, so a bare `"Summary (1)"` (or whatever the finding count was) leaked
+    into the inline result line instead of being filtered out. Fixed by deriving the real prefix
+    from `nodes[0].key` (the data already carries `report.feature`'s actual casing) instead of
+    assuming it equals the function's `feature` argument — one generic fix, no per-feature
+    special-casing, and no `Report(feature=...)` strings changed (those have their own asserting
+    tests in test_blendscan.py/test_depscan.py, unrelated to this bug).
+  - **(e) BUILT — Resource Analyzer's by-type breakdown rolled up under "Analyze Memory/Disk",
+    Resource Analyzer panel DELETED.** New `ui/panels._draw_resource_breakdown` draws the SAME
+    `template_list`(`ASSETDOCTOR_UL_tree`/`assetdoctor_resource_rows`) + Export button, just
+    relocated to a child row directly below the Analyze Memory/Disk button (same shape as the
+    Flatten Characters picker's per-rig rollup) instead of in its own standalone sub-panel.
+    `ASSETDOCTOR_PT_resource_tools` deleted outright (its "Profiled real peak RAM" line was
+    already duplicated by Profile Render's own inline summary, so nothing lost). Updated
+    `ui/__init__.py` REGISTER_CLASSES + `tests/smoke_utils.py` (moved from the parented-sub-panel
+    list to the retired-classes list, same pattern Batch 5 used for the other deleted panels).
+  - Also extracted `ops/report_store.py::resolve_datablock(type_name, name)` out of
+    `ASSETDOCTOR_OT_select_datablock._resolve_target` (behavior-preserving) — needed by Phase 4
+    Apply below to resolve a coerced "Type/Name" pointer-property value back to a real datablock,
+    and there was already exactly this generic bl_rna-collection walk to reuse rather than
+    duplicate.
+- **Phase 4 Apply — BUILT (v0.2.61), the first Library-Override-creation mutation ever written in
+  this codebase. NEEDS LIVE-BLENDER VERIFY — no synthetic override fixture exists (same long-
+  documented caveat as the rest of core/linkchain.py), so this could only be grounded against
+  Blender's official API docs, not a real override.** Confirmed via the Blender Python API docs
+  before writing anything (not guessed): `bpy.types.ID.override_create(remap_local_usages)`,
+  `bpy.types.ID.override_hierarchy_create(scene, view_layer, reference=, do_fully_editable=)` →
+  new root override, `bpy.types.IDOverrideLibrary.hierarchy_root` (every override created by ONE
+  `override_hierarchy_create` call shares this back-pointer to the root it returned — the key fact
+  the sibling-matching logic below depends on), `IDOverrideLibraryProperties.add(rna_path)`, and
+  `ID.user_remap(new_id)`.
+  - **Mechanics (`ops/linkchain.py::_flatten_rig`):** for a chosen rig/character group, (1) link
+    the rig's own reference datablock DIRECTLY from `ultimate_library` — reusing an already-loaded
+    `Library` for the same resolved path if one exists (`_resolve_library`/`_link_direct`), so this
+    doesn't ADD to the project's own well-documented duplicate-library-block disease; (2) call
+    `override_hierarchy_create` ONCE on that direct link, passing the OLD multi-hop override object
+    as the `reference` hint — Blender's own API is explicitly designed to create overrides for a
+    WHOLE linked hierarchy from one root call, so calling it once per member would each
+    independently re-walk and duplicate the same hierarchy; (3) find every sibling override the
+    single call created (same `override_library.hierarchy_root`), matched to each plan member by
+    its own recorded `OverrideReference.name`; (4) per member, `properties.add(rna_path)` +
+    `_set_override_value` (generic setattr via path-split, reversing the JSON-friendly "Type/Name"
+    pointer-coercion back to a real datablock via the new `resolve_datablock` helper) for every
+    recorded property, then `old_obj.user_remap(new_obj)` — never force-removing the old multi-hop
+    object, same pattern Examine Library already established.
+  - **Deliberately NOT supported yet (scoped, not guessed at):** a rig whose ARMATURE itself isn't
+    a flattenable override (only its children are) has no anchor object to call
+    `override_hierarchy_create` from — Apply reports a clear "the rig/armature's own override isn't
+    a ready flatten candidate" message instead of attempting something structurally uncertain. No
+    real case has surfaced this shape yet; revisit if one does.
+  - **Wired exactly like every other Apply feature in this codebase:** `ASSETDOCTOR_OT_
+    build_flatten_plan` gained `apply: BoolProperty(default=False)` (report-only preview unchanged
+    when False); `apply=True` backs up first (`ops/safety.auto_backup`), then mutates, then stashes
+    a NEW `core.linkchain.build_flatten_apply_report` (pure, +3 tests) into the same `f7flatten`
+    report slot the preview uses. UI: the picker's per-rig row keeps its small FILE_TEXT preview
+    button; a new "Flatten (creates backup)" button only appears once a rig group is EXPANDED, and
+    only when at least one part is ready — deliberately not one click away from the collapsed list,
+    given this is a brand-new, never-live-tested mutation.
+  - **What to check first when live-testing (priority order):** (1) does `override_hierarchy_create`
+    actually pull in sibling parts (eyes/clothes) directly from the same `ultimate_library`, or does
+    it leave some of them still routed through the old intermediate library — confirms/disproves
+    the "the rest of the hierarchy comes along for free" assumption the design rests on; (2) does
+    the sibling-matching by `hierarchy_root` + reference name actually find every member, or do some
+    come back as "no matching part found"; (3) does `_set_override_value`'s generic setattr
+    correctly replay bone transforms/parenting/material-slot properties, or do some of the real
+    rna_path shapes from this project's own probed data (`pose.bones[...]`, `modifiers["Armature"].
+    object`, `material_slots[N]...`) fail and show up in the "X failed" count. Suite 356 green
+    (pure logic only — the mutation itself is `ast.parse`-checked, not pytest-covered, same as every
+    other bpy-dependent ops module in this project).
+
+**PHASE 3 STATUS (current — supersedes the v0.2.59 estimate further down) — still 2 of 5 named
+sections built:**
+1. ✅ Current File Data — done (v0.2.49).
+2. ✅ Analyze — done (v0.2.49), refined (v0.2.57/v0.2.59); per-button inline results + this
+   session's feedback-batch fixes (a-e above) all landed inside this section.
+3. ❌ **Reporting & Recommendations — NOT built.** Still just the generic Reports selector/tree
+   inside `ASSETDOCTOR_PT_results` (the holding pen).
+4. ❌ **Cleanup & Fixes — NOT built.** Every Apply/Merge Selected/Relink Selected/Reconnect
+   Selected/Normalize button is still scattered across its original box in the Results holding pen
+   or a legacy Make Local/Materials/Orphans/Geometry panel. **Standing user instruction:** once a
+   Fix-it/Apply button for Make Local Impact lands here, DELETE the legacy
+   `ASSETDOCTOR_PT_make_local` panel outright (Report (Dry Run)/→New File/→In Place) — no separate
+   "→ New File" vs "→ In Place" choice needed in the new design, the user decides at apply-time.
+5. ❌ **Info & Utilities — NOT built.** The Utilities panel exists but isn't renamed/reorganized
+   into this section; the doc-help icon is still in the panel title header, not moved into it.
+**"Clean up Phase 3" next session should mean: draft a before/after proposal for sections 3-5 (same
+process as Phase 3a — propose, get sign-off, THEN build code), starting with whichever of the three
+the user wants first. Not assumed here — ask which one.**
+
+**PHASE 4 STATUS — 4-A (multi-hop chain detection) done; 4-B (the Find Flattenable Characters
+picker + Build Flatten Plan preview) done; Apply PROBE-VERIFIED 2026-06-25 against the real
+14.4GB People1_v5.1.blend — no crash, 2 of 3 uncertainties confirmed clean, ONE real anomaly open
+(see the top "PROBE RESULTS" section). No Phase 4-C design exists yet (the modifier-driven posing
+case — deliberately deferred, "no design without a concrete case" per the original plan, and none
+has surfaced). **"Continue Phase 4" next session should mean: root-cause the Body/Eye/Smock match
+anomaly (the probe's own recommended next step: re-run with per-member instrumentation), THEN
+decide whether Phase 4-C is worth scoping** — not jump straight to new design work while that
+anomaly is open, and not yet a green light to run Apply on a real file's FULL part list via the
+live UI (the rig root + cleanly-matched siblings looked solid; don't trust every part yet).
+
+**CONSOLIDATED NEEDS-LIVE-VERIFY checklist, priority order:**
+1. **DONE 2026-06-25 (probe):** does `override_hierarchy_create` pull sibling parts in directly —
+   YES for 6/9 parts. Does hierarchy_root + reference-name matching find every member — 6/9 clean,
+   3/9 anomalous (open, see top section). Does the generic setattr replay handle real rna_path
+   shapes — YES, 645+ properties replayed across all 6 confirmed members, zero failures.
+2. **Find Flattenable Characters' rig grouping + rollup (v0.2.59)** — INDIRECTLY confirmed by the
+   probe (712 rigs, 555 with ready parts, correct body/eyes/clothes grouping under
+   `CC3_Base_Plus_Rigify_Rigify.017` specifically) — still not confirmed via the actual UI widget
+   rendering (panel draw is untestable headless, same caveat as always).
+3. **This session's UI fixes** (bare-title leaks, Details disclosure, Duplicate Data-blocks
+   relocation, Duplicate Materials reformat, click-result persistence) — NONE live-verified yet,
+   same as every other panel change in this project's history; needs the user's next Blender pass.
+4. **Carried over, still unconfirmed:** Find Flattenable Link Chains' multi-file census (v0.2.56;
+   the probe DID exercise this — 24 multi-hop routes, 929 overrides found across the whole chain,
+   so this is now effectively confirmed too), Reconnect Selected's "external"/"fix at the source
+   library" reporting (v0.2.58) — if the "Relink Selected worked" confirmation noted below turns
+   out to be about Reconnect Selected instead of the library-level Relink Selected, re-test this
+   one specifically.
+
+**Commit status: COMMITTED 2026-06-25** (see `git log` — bundles the whole v0.2.38→v0.2.63 stack
+on top of `824d5d1`, per the user's explicit "commit everything" at session end). Suite 358 green.
+
+## ⏩ PREVIOUS SESSION DIGEST (as of v0.2.59, 2026-06-25) — superseded by the status above; kept for
+## the detailed build record.
+
+- **Phase 3c — per-button inline results, built for (effectively) every Analyze button.**
+  `ui/panels.py` gained `_report_feature_summary` (generic: reads a feature's stashed Report/tree via
+  `report_store`, prefers a flat clean/overview headline when the feature already writes one, else
+  joins the top-level issue categories' own counts, falling back to the report's own Summary sentence
+  when there's nothing to break down) + `_f7_dependency_summary` (Check Link Chain's own special case
+  — flattens the severity-tier wrappers down to their category children, e.g. "Circular references
+  (3) · Missing libraries (15) · ..." — the literal ask, replacing the old "Dependencies" report tab
+  as the at-a-glance answer) + four headline extractions (`_missing_textures_headline`,
+  `_duplicate_textures_headline`, `_datablock_dups_headline`, `_reconnect_headline`) pulled out of
+  their existing Results-section boxes so the SAME line shows in both places (no duplicated logic).
+  Every Analyze button now shows its result directly below itself. **Answer to "how much is known
+  from load vs. scan" (asked this session):** `bpy.data.libraries`-level facts (missing/absolute path
+  counts for the CURRENT file's own DIRECT links) are free at load time — that's what "Current File
+  Data" already shows with no scan. Everything Check Link Chain's tiers report (circular refs across
+  files, missing TRANSITIVE libraries, inconsistent paths, backslash paths, most-linked libraries)
+  requires walking the WHOLE recursive subtree via the offline BAT scan — none of it is knowable from
+  the open file alone, since it's about files this one hasn't even loaded.
+- **Layout (Phase 3 feedback a/b/c, this session):** Analyze buttons are now ONE per row (not paired
+  half-width) via the new `_analyze_row` helper, so each has room for its status icon AND its inline
+  result line; a `layout.separator()` now splits Analyze Memory/Disk + Make Local Impact + Profile
+  Render (footprint/impact analyses) from the find-a-problem buttons above; Find Duplicate Materials
+  got a `MATERIAL` icon (was `NONE`).
+- **"Make Local Impact" button added (item d).** Sits above Profile Render; wired to the existing
+  `assetdoctor.make_local(apply=False)` dry-run report (`core/f2_makelocal.py`, unchanged) — literally
+  the old Make Local panel's "Report (Dry Run)" button, relocated. The Make Local panel itself is
+  UNCHANGED for now (still has Report/→New File/→In Place) — per the user's own plan, it gets deleted
+  once a Fix-it/Apply button joins this one in the not-yet-designed Cleanup & Fixes section.
+- **Resource totals were a real negative-output gap, fixed.** `assetdoctor.analyze_resources` only
+  ever reported its RAM/VRAM/disk totals via the transient operator-report popup — nothing persisted,
+  so there was no line to show under the Analyze button (or anywhere) once the popup faded. New WM
+  `assetdoctor_resource_totals` (set in `ops/resource.py::run_steps`) fixes this generally, not just
+  for the new inline summary.
+- **Find Flattenable Characters redesigned end-to-end (user feedback, screenshots from a live test):
+  results weren't useful (every visible row said "no override properties found to replay") and the
+  user wants everything presented in terms of the rig/armature, with body/eyes/clothes rolled up
+  underneath.** Root cause of the unhelpful rows: the candidate filter
+  (`_is_override_with_transform`) only checks the LIVE transform against IDENTITY (0,0,0/no rotation/
+  1,1,1 scale) — true for nearly every placed character regardless of whether anything was actually
+  overridden — so it let through real characters AND empty "override shell" duplicates (this project's
+  long-documented `.NNN` override-bloat disease) side by side, and the empty shells happened to sort
+  first alphabetically. Fixed: `ops/linkchain.py::scan_flatten_candidates` now also requires
+  `read_live_override_properties(obj)` to be non-empty — an override with nothing actually overridden
+  no longer shows up as a candidate at all. New `core/linkchain.py::summarize_properties` (+6 tests)
+  classifies a plan's properties into human buckets (bone(s) posed, animation override, transform
+  adjustment(s), material/modifier override(s), reparented) instead of a bare count — answers the
+  user's literal ask ("17 bones have animation keys, transform/rotation/scale adjustments";
+  note: these are override SNAPSHOTS of posed bones, not literal keyframe data, which lives in Actions
+  and isn't read here — said so rather than mislabeling it). New `_resolve_rig` (own name if ARMATURE,
+  else an Armature modifier's target, else walk `.parent` up to one) groups every candidate by rig;
+  the picker (`_draw_flatten_candidates` in `ui/panels.py`, replacing the flat `template_list` +
+  deleted `ASSETDOCTOR_UL_flatten_candidates`) now shows one collapsible row per rig/character with
+  body/eyes/clothes rolled up underneath when expanded, **and a combined rollup line
+  (`core/linkchain.py::build_rig_rollup`, +2 tests) directly below the rig's own row** — exactly the
+  "I'd like to see the info directly below the armature" ask, no separate report tab needed to judge
+  one character. "Build Plan" (`ASSETDOCTOR_OT_build_flatten_plan`) now takes a RIG name and builds
+  the full per-property `f7flatten` report for every member at once (was one object); new
+  `ASSETDOCTOR_OT_flatten_category_toggle` mirrors every other collapsible-group toggle in this addon.
+  **NEEDS LIVE-BLENDER VERIFY** — never exercised against the real file; in particular confirm the
+  rig grouping actually attributes body/eyes/clothes to the right armature (parent-chain/modifier
+  walk) and that the rollup text reads as useful now.
+- **Confirmed by the user this session: the library-level "Relink Selected" (Find Broken Library
+  Links box) works live** — "the same materials did not continue to appear as potential relinks."
+  *(Recorded as-stated; if this was actually about Reconnect Selected's per-MATERIAL list instead —
+  the wording is a little ambiguous between the two — say so next session and I'll move this note to
+  cover that fix instead; they're different features/buttons, see "BROKEN LINK vs MISSING DATA-BLOCK"
+  further down this file.)*
+- **New TODO (documented only, no code) — Synology conflict-file diff/merge.** See the ROADMAP
+  section below for the full scoping note.
+
+*(The v0.2.59 status estimate that used to follow here — Phase 3 ~40% done, Phase 4 Apply "not yet
+built," a separate verify list — is now folded into the consolidated PHASE 3 STATUS / PHASE 4
+STATUS / NEEDS-LIVE-VERIFY sections at the very top of this file. Removed here to avoid two
+contradictory copies; nothing in it was lost.)*
+
+**v0.2.58 (2026-06-25, same day) — Reconnect Selected's "doesn't work" bug fully root-caused via
+TEN headless probes against the real `PSM_Stage_v5.2.blend`, and FIXED + VERIFIED (not guessed).**
+User pushed back hard on the vague repro from the last few sessions ("this has been a problem for a
+while... I want to ensure we fix it. What's necessary to fix it?") — answered by registering the
+REAL addon inside throwaway `--background` Blender processes and calling the REAL operators
+end-to-end, exactly like the Flatten Plan probe, but iterating much deeper this time since the first
+few hypotheses were each disproven by direct evidence rather than assumed correct.
+- **Confirmed (probe 1-2): the bug is real, not a misreport.** `reconnect_selected` reported
+  "Reconnected 194 data-block(s)" but a byte-for-byte before/after diff of the missing-block list
+  showed the EXACT SAME 208 `(kind, name, library)` keys, completely unchanged. `placeholder.users`
+  stayed > 0 immediately after `user_remap()`, despite no exception.
+- **Disproven (probe 3): NOT an orphan-cleanup gap.** `bpy.data.orphans_purge(do_local_ids=False,
+  do_linked_ids=True, do_recursive=True)` purged 233 OTHER things but didn't touch these — they
+  genuinely still have real users, not just a stale `.users` cache.
+- **Disproven (probe 6): NOT a stale-in-memory-only issue.** A full save-to-throwaway-temp-file +
+  reload round-trip still showed all 208 unchanged — whatever references them is durably written
+  into the actual file data, not a runtime artifact.
+- **Root cause found (probes 4, 7-10): the real referencing Material/node tree is ITSELF LINKED from
+  a DIFFERENT library than the one being fixed from.** Concretely, for the representative case
+  tested: the missing Image (`library=human_bundle.blend`) is referenced by a Material's node
+  (`node[3].image`), and that Material — confirmed via `bpy.data.user_map()`, NOT a name lookup (see
+  below) — is itself **linked from `ThePiazzaSanMarco - People1_v5.1.blend`**, not local to
+  `PSM_Stage_v5.2.blend`. No Library Override is involved (`override_library=None` on both the
+  Material and its node tree) — it's a perfectly ordinary linked node tree. `ID.user_remap()` reports
+  success because it runs without raising, but a pointer that lives inside data you don't own (data
+  linked FROM another file) can't actually be rewritten by editing it from the file that's merely
+  *linking* that data — the fix has to happen by opening `People1_v5.1.blend` directly, where that
+  node tree IS local and genuinely editable. This is the SAME class of "fix it at the source, not
+  here" limitation this project has already documented for "transitively missing" library content
+  (v0.2.43) — just one level different: there the SOURCE LIBRARY doesn't have the data; here the
+  source library DOES have it, but the THING HOLDING THE REFERENCE is itself someone else's linked
+  data, not ours to edit.
+- **Real side-discovery during the hunt (probe 5/8/9, a dead end that's still worth recording):**
+  `bpy.data.materials.get(name)` is genuinely ambiguous on this file — probe 9 found there are
+  literally TWO different Material datablocks both named `"FabricFeltGrey001_1K_bluePants.001"`,
+  one linked from `human_bundle.blend` and one from `People1_v5.1.blend` (Blender's name-uniqueness
+  constraint does not prevent identically-named datablocks arriving from different linked
+  libraries). My own probes 5 and 8 used a bare name lookup and silently inspected the WRONG one for
+  a while, which is exactly why the node-tree dump initially showed no connection at all — the
+  REAL evidence only came from using `bpy.data.user_map()`'s returned object directly (probes 4, 7,
+  10), never a name-only lookup. **This ambiguity risk is noted but NOT separately fixed this
+  session** — `reconnect_selected`'s own placeholder lookup (`target_coll.get(row.name)`) could
+  theoretically hit the same class of bug if two missing blocks ever shared a name across libraries,
+  but probe 9 confirmed the actual MISSING (`is_missing=True`) image in this case was unique — only
+  REAL (already-resolved) datablocks collided here. Flagged for awareness, not a confirmed live bug.
+- **Fix implemented in `ops/datablock_reconnect.py::reconnect_selected`:** after `user_remap()`,
+  checking `placeholder.users == 0` now ACTUALLY gates whether `reconnected` increments (previously
+  it always incremented regardless). When it's still > 0, `bpy.data.user_map(subset={placeholder})`
+  finds the real remaining user(s); if any has `.library is not None`, the row is marked with a NEW
+  confidence state `"external"` (mirrors the existing `"transitive"` state's UI pattern exactly —
+  same ERROR icon, its own label "fix at the source library", excluded from a group's "suggested"
+  count, ticked off so it doesn't get retried pointlessly) and a clear message names which library
+  to go open instead. A genuinely-unexpected case (still referenced, but not by anything linked) gets
+  a distinct "unexpected" warning rather than being silently folded into either bucket. New
+  `externally_linked` counter gets its own clause in the final report message.
+- **VERIFIED via an 11th probe, re-running the exact same before/after diff with the fix in place:**
+  `last_result` now reads *"Reconnected 0 data-block(s). Save to persist. (no backup written) 194
+  candidate(s) are still referenced from another linked file — open that file directly to fix those.
+  207 skipped — see debug log."* — honest, not a false "194 reconnected". The missing-block count is
+  still 208 (correctly — these 207 specific items genuinely cannot be fixed from this file; that's
+  not a regression, it's the report finally telling the truth about a real Blender architecture
+  constraint instead of a fabricated success count).
+- **What this means for the user's actual file, in practice:** the 9-probe investigation didn't find
+  any locally-fixable candidates in `PSM_Stage_v5.2.blend` at all in this sample — everything tested
+  routes back to needing `People1_v5.1.blend` (or possibly other linked files) opened DIRECTLY to fix
+  for real. This is consistent with the Phase 4-B finding that `PSM_Stage_v5.2.blend` itself holds
+  zero local overrides either — the actual character/material data this user needs to fix lives in
+  `People1_v5.1.blend`, not the Stage file. **Recommended next real-world step: open `People1_v5.1.blend`
+  directly and run Find Reconnectable Data-blocks / Reconnect Selected there** — its own missing
+  references should be genuinely local to it and fixable for real, the same way Phase 4-B's
+  characters needed to be read from People1 directly rather than from the Stage file.
+- Suite still 347 (this is bpy-dependent ops/ui code, not pytest-covered per the standing
+  architecture rule; syntax-checked via `ast.parse`, and the fix's actual BEHAVIOR was verified via
+  the headless probe against real data — a stronger check than this project's usual ast-only
+  sign-off for ops code). **Probe scripts are in the session scratchpad, not committed** (throwaway
+  diagnostics, not project code) — eleven of them: `probe_reconnect.py` through `probe_reconnect10.py`
+  plus a verification re-run.
+- **Verbose debug logging (the user's other question — "would it help?"):** not built this session
+  (the headless-probe approach answered the immediate question faster), but worth doing as a
+  durable improvement: today `reconnect_selected` only `log.warning()`s on skip; adding DEBUG-level
+  tracing of the auto-source-default/sibling-match reasoning per group would let a future repro be
+  self-diagnosing from the user's own `AssetDoctorDebugLog.txt` without another multi-probe session.
+  Not started — flag for a future pass if this class of bug recurs elsewhere.
+
+**v0.2.57 (2026-06-25, same day) — Analyze panel buttons resized/reordered/iconed per Phase 3
+feedback items 2/5/6, once the user confirmed the v0.2.56 section-order fix was correct.** Suite
+stays 347 (UI-only, `ast.parse`-checked).
+- **Size/position (item 2):** all 16 buttons (the original 13 + Find Flattenable Link Chains/
+  Find Flattenable Characters added since the draft order was written) now pair two-per-row,
+  half-width, via `row(align=True)` — same shape the Check Link Chain/Audit This File row already
+  used. Reordered to the user's own draft grouping: Check Link Chain/Audit This File →
+  Find Flattenable Link Chains/Find Flattenable Characters (new, slotted in near the top since
+  they're the other "map the chain" tools) → Find Broken Library Links/Find Duplicate Data-blocks →
+  Find Reconnectable Data-blocks/Find All Missing → Find Missing Textures/Find Duplicate Materials →
+  Find Resolution Variants/Find Duplicate Geometry → Find Duplicate Content/Find Orphans (not in the
+  user's original draft list — kept near the other dedup/cleanup-discovery tools) → Analyze
+  Memory/Disk/Profile Render. "Find All Duplicates" (item 4, a NEW grouping button over Materials/
+  Resolution Variants/Geometry/Content) is explicitly NOT built — its slot is commented, not stubbed,
+  since it needs real operator code (a new dispatcher + removing those 4 from the Analyze-All
+  sequencer), not just a layout change.
+- **Status icons (item 5):** new `_analyze_step_status_icon(wm, step_key)` looks up a button's
+  `core.analyze_steps` key in the Analyze-All run's own per-step collection and returns the matching
+  pending/running/done/error icon (same `_ANALYZE_STEP_ICON` map as before) — drawn immediately to
+  the LEFT of each button via a small `row.label(text="", icon=...)`, replacing the OLD separate
+  vertical step-status list above the buttons entirely (per the user's original ask: "replacing the
+  separate progress report area"). Buttons with no corresponding step (Find Flattenable Characters,
+  Find All Missing, Profile Render — all deliberately excluded from the Analyze-All sequencer) show
+  a blank icon gutter so every button in a pair still lines up.
+- **Results placeholder (item 6):** ONE shared placeholder box below the button grid (not 16
+  individual ones — the request was "a placeholder," singular), noting that per-button inline
+  actionable results are a future pass; real results still live in the bottom "Results" section for
+  now. Deliberately minimal — the full per-button result+Fix-it design is Phase 3c, not started.
+- **NEEDS LIVE-BLENDER VERIFY:** confirm the paired rows actually render half-width (not stacked or
+  uneven), the status icons show/update correctly during an Analyze All run, and the icon gutter
+  doesn't visually misalign buttons that don't have one.
+
+## ⏩ Reconnect Selected — ROOT CAUSE DIAGNOSED via headless probe, NOT a guess
+
+## after missing count).
+
+**v0.2.56 (2026-06-25, same day) — live-test round 2: a real panel-layout regression fixed, the
+multi-hop chain census extended to the whole chain (not just root), and Reconnect Selected flagged
+as still-unresolved (needs a repro). Suite 345 → 347.**
+
+**1. Panel layout regression — FIXED.** User restarted Blender on v0.2.54 and reported Current File
+Data/Analyze were STILL below a pile of other content ("Duplicate Data-blocks" through "Reports"),
+contradicting the previous session's assumption that `bl_order` alone would fix this. **Root cause,
+confirmed by re-reading the code:** Phase 3a (v0.2.49) moved the Find-* TRIGGER buttons into the new
+Analyze child panel, but left every RESULTS box (Duplicate Data-blocks/Overrides & Dups, Broken
+Library Links & missing data-blocks, Datablock Reconnect, Examine Library, Path normalization,
+Missing Materials/Textures, Duplicate Materials/Textures, Dry-run render, the generic Reports
+selector) drawing INLINE in the PARENT panel's (`ASSETDOCTOR_PT_scene_deps`) own `draw()` method.
+Blender ALWAYS renders a panel's own body before any of its `bl_parent_id` children, regardless of
+`bl_order` — `bl_order` only orders siblings against each other, never against the parent's own
+draw() content. So that whole inline block was guaranteed to render ahead of Current File Data/
+Analyze/every legacy panel, no matter what `bl_order` said — last session's "probably just needs a
+restart" diagnosis was wrong; this never worked the way it looked like it should.
+- **User's explicit fix request, taken literally:** "take everything from the Duplicate Data-Blocks
+  section through the Reports section and move it to the very bottom of the UI" — extracted the
+  ENTIRE block (draw body + its 7 helper methods: `_draw_datablock_dups`, `_draw_reconnect`,
+  `_draw_examine_library`, `_draw_missing_textures`, `_draw_linked_missing_textures`,
+  `_draw_possible_matches`, `_draw_duplicate_textures`) into a NEW native child panel,
+  `ASSETDOCTOR_PT_results` (`bl_order=8`, after Utilities' 7) — the only way to get content to
+  render below a sibling child panel is to make it ANOTHER child panel with a higher `bl_order`;
+  there's no way to inject parent-drawn content between/after siblings. Content and internal order
+  are UNCHANGED, just relocated wholesale — this is explicitly NOT the Phase 3b/3c 3-way design
+  split (Reporting & Recommendations / Cleanup & Fixes / Info & Utilities), which still hasn't
+  happened; it's a holding pen so the reported regression is fixed NOW. `ASSETDOCTOR_PT_scene_deps`'s
+  own `draw()` now contains ONLY the progress bar + sticky last-result line.
+- Registered in `ui/__init__.py`; fixed `tests/smoke_utils.py`'s sub-panel list (`ASSETDOCTOR_PT_results`
+  added) and its `_SELECTOR_EXCLUDE` reference (moved from `scene_deps` to `results` along with the
+  Reports selector code that uses it — the smoke test would have raised `AttributeError` otherwise).
+- **#1b (progress bar position) reconfirmed correct** under the new structure — still the first call
+  in the parent's now-much-shorter `draw()`, still the highest point achievable.
+- **NEEDS LIVE-BLENDER VERIFY (RESTART, not Reload Scripts — structural panel change):** Current File
+  Data and Analyze should now be the first two collapsible sections directly under the progress bar;
+  Duplicate Data-blocks/Broken Library Links/Reconnect/Examine Library/Path normalization/Missing
+  Textures/Duplicate Textures/Dry-run render/Reports should all appear in ONE "Results" section at
+  the very bottom, in their original relative order. **Button sub-layout/status icons the user also
+  flagged ("missing") are the Analyze panel's own per-step icons + paired-button layout — NOT
+  touched this round; revisit once the layout fix above is confirmed (item 4's "I'm not even sure
+  if I'm testing the correct functionality if the UI is wrong" — this fix is the prerequisite).**
+
+**2. Find Flattenable Link Chains — extended to census EVERY file in the chain, not just the root.**
+User ran "Check Link Chain" (the OLD f7/file-map feature — file-level only BY DESIGN, never shows
+datablocks) and reported "no individual characters" when drilling into human_bundle — expected, since
+that tool was never supposed to show datablocks. But re-checking the SEPARATE "Find Flattenable Link
+Chains" (f7chain, Phase 4-A) found a REAL, separate gap behind that: `classify_objects` was only ever
+called on `bpy.data.filepath` (the ROOT file), even though the SAME operator already recurses (via
+BAT) into every file in the chain to build the file graph. Since the user's actual open file
+(`PSM_Stage_v5.2.blend`) has **zero local Object overrides** (probe-confirmed last session) and the
+real characters live in `People1_v5.1.blend` (several hops in), the posing census could never have
+found anything when run the normal way — there was no way to test multi-hop flattening, exactly
+matching items 3/5.
+- **Fixed:** `core/linkchain.py`'s `ObjectPosingInfo` gained `source_file` (default `""`, so every
+  existing test/caller is unaffected); `classify_objects` stamps it; `build_chain_report` now accepts
+  posing info spanning multiple files and names each object's file in its message (`"(in
+  people1.blend)"`) when set, so a multi-file census doesn't read as ambiguous. `ops/linkchain.py`'s
+  `run_steps` now calls `classify_objects` on every file in `result.order` (every node the recursive
+  scan visited), not just root, with its own per-file progress line. +2 tests, suite 345→347.
+- **Real cost, accepted not hidden:** this reopens every visited file a SECOND time (the link-graph
+  pass only reads `LI` blocks) — on this project's multi-GB files that roughly doubles their share of
+  total scan time. The existing Pause/Cancel still apply; no attempt made to share one BAT open across
+  both passes (would need a deeper `scan_file` contract change — flagged, not done, if this turns out
+  to matter).
+- **Answers item 6** ("not sure what needs tested for the override reference DNA path"): re-run Find
+  Flattenable Link Chains on `PSM_Stage_v5.2.blend` and confirm `posing_override` findings now appear
+  for the REAL People1 characters (e.g. `CC3_Base_Plus_Rigify.029`), each one's message saying
+  `"(in People1...)" ... "overrides Object/X from human_bundle.blend (reached via N hops — see
+  Multi-hop link chains)"` — that "overrides ... from ... reached via N hops" clause is exactly the
+  offline BAT `read_override_reference` path, now exercised through the REAL operator for the first
+  time (previously only confirmed via a one-off standalone probe script, not the shipped feature).
+- **"Find Flattenable Characters" (Phase 4-B's live-bpy picker, v0.2.54) likely does NOT have this
+  same root-only limitation** — reasoned through, not yet confirmed: `bpy.data.objects` in an open
+  Blender session already includes every object from every loaded library at any link depth (there is
+  only ONE `bpy.data` per session), unlike `classify_objects`' offline BAT read (which is scoped to
+  whatever ONE file's own DNA you point it at). So running "Find Flattenable Characters" directly on
+  `PSM_Stage_v5.2.blend` should already see People1's override objects (with `obj.library` pointing at
+  `People1_v5.1.blend`) with no fix needed — but this is reasoning from the Blender data model, NOT
+  verified against the real file. **Ask: just click "Find Flattenable Characters" on
+  `PSM_Stage_v5.2.blend` and report what the picker list shows** — that single test will confirm or
+  correct this reasoning.
+
+**3. Find Reconnectable Data-blocks / Reconnect Selected — NOT YET DIAGNOSED, needs a repro.** User:
+"behaviour hasn't changed. Missing files in the linked library are not obvious. The Reconnect
+Selected does not work." Re-read `core/missingdata.py`, `ops/datablock_inspect.py::_iter_missing_blocks`
+(confirmed: walks ALL of `bpy.data` globally, not file-scoped — so it should already see placeholders
+from anywhere in the session) and `ops/datablock_reconnect.py` end to end — found no NEW bug distinct
+from what's already documented and fixed (v0.2.43 transitively-missing skip, v0.2.48 sibling-library
+matching + the "⚠ missing upstream too"/"library not found anywhere in this session" indicators,
+v0.2.51 re-peek fix). **Most likely explanation, given this exact file's own documented disease**
+(materialMaster/human_bundle transitively missing content from further-upstream libraries, tracked
+since 2026-06-21): most of this file's missing materials may genuinely be stuck in the "transitive"/
+"library not found" states those indicators exist for — which would make Reconnect Selected correctly
+report 0 fixed for those rows (working as designed, not broken) while LOOKING like "doesn't work."
+**Not assumed — needs the user's specifics next time this comes up:** which row(s) were ticked, what
+the Reconnect Selected status message said afterward, and whether the SAME rows show "⚠ missing
+upstream too" / an error icon already. Until then, no code changed for this item — didn't want to
+guess at a fix without knowing what actually happened.
+## resume the Phase 3b/3c design pass (Reporting & Recommendations / Cleanup & Fixes / Info &
+## Utilities) — #1b's layout question is now answered (see v0.2.55 below), so nothing blocks it.
+
+**v0.2.55 (2026-06-25, same day) — closed out the two small Phase-3-feedback items + a requested
+rename, while the user runs the live-Blender-check pass themselves.**
+- **#1b (progress bar position) — RESOLVED, no code change needed.** User's direction: "should go as
+  high in the UI as possible." Confirmed `_draw_progress(layout, wm)` is already the FIRST call in
+  the parent panel's (`ASSETDOCTOR_PT_scene_deps`) own `draw()` — since a parent panel's body always
+  renders before any of its `bl_parent_id` children, this IS the highest point achievable below the
+  panel's own `draw_header()` (title/version/help icon, which can't reasonably hold a multi-line
+  progress bar). Updated the surrounding comment in `ui/panels.py` to record this as a confirmed
+  decision instead of an open question.
+- **#1a (Current File Data/Analyze section order) — unchanged, still just needs the user's live
+  restart+reverify** (the code already has `bl_order` 0/1/2-7 correctly, per last session's check —
+  nothing to build).
+- **Renamed "Find Broken Links" → "Find Broken Library Links"** (user request) — every user-facing
+  occurrence, not just the button: `ops/relink.py` (`bl_label`, the "no broken links" status message,
+  the Normalize-Library-Paths description that names it), `core/relink.py` (`build_broken_links_report`'s
+  title + its clean-state message), `core/tree._CATEGORY_TITLES["broken_link"]` (shared with F1's
+  link-map report — accurate there too, same underlying concept), `ops/report_store.FEATURES`'s
+  `"f7links"` label, `ui/panels.py` (the Analyze button text + the "Broken Library Links & missing
+  data-blocks" box title), `core/analyze_steps.py`'s step label, and the two cosmetic comment/message
+  references in `ops/datablock_inspect.py` and `ops/image_relink.py`. Left every MACHINE-readable
+  identifier unchanged on purpose (`"broken_link"` category key, `"f7links"` feature key,
+  `scan_broken_links`/`_populate_broken_links`/etc. function names, test function names) — only
+  display text changed. Updated `tests/test_relink.py`'s matching substring assertion. Suite still
+  345 green (no count change, one assertion text update).
 
 **v0.2.54 (2026-06-25, same day) — Build Flatten Plan REDESIGNED into a single-character picker,
 per explicit user feedback on v0.2.53 ("I prefer to have the ability to choose a single character
@@ -2214,6 +2799,18 @@ Automated Cleanup pipeline; Archive Project (BAT `pack`→zip); footprint reduct
 resolution-standardize LOSSY + Layer 3 content-overlap hash dedup); reverse-dependency "safe to
 delete?" check; lazy-depth scan; older Make-Local perf / In-Place-localize / shared-library-guard
 bugs. Pull any into a batch on request.
+- **Synology conflict-file diff/merge (user request, 2026-06-25, documentation only — no work
+  started).** Synology Drive sometimes creates a `"... (conflicted copy ...)"` sibling file when the
+  same .blend is edited on two computers and both saves land near-simultaneously. Wanted: open one of
+  the files, pick the conflict sibling, AssetDoctor diffs the two and shows what's different, then
+  lets the user selectively pull individual changes from the conflict copy into the currently open
+  file. Scoping questions for whenever this gets picked up: diffing two arbitrary .blend files needs a
+  datablock-level comparison (reuse `core.fingerprint`'s per-type fingerprinters — already proven for
+  materials/actions — extended to whatever types matter most: objects/meshes/textures?) plus a way to
+  show WHICH properties differ (the override `path_resolve` property-walk built for Phase 4-B's Flatten
+  Plan is the closest existing primitive for "list every differing property between two like-named
+  datablocks"); the "pull this one change in" mutation needs its own per-type apply logic, scoped with
+  the user before building, same as every other mutating feature here.
 
 **AFTER THE 5-BATCH PUSH (user-scheduled 2026-06-22):**
 - **Material override → real node-tree reassignment.** Today the Duplicate section's eyedropper

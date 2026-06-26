@@ -115,4 +115,4 @@ def test_broken_links_report_clean_still_produces_output():
     assert len(report.findings) == 1
     assert report.findings[0].category == "clean"
     assert report.findings[0].severity == "info"
-    assert "No broken links" in report.findings[0].message
+    assert "No broken library links" in report.findings[0].message

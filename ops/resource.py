@@ -21,6 +21,7 @@ from .progress import ModalProgressMixin
 
 RESOURCE_PROP = "assetdoctor_resource_tree"
 RESOURCE_EXPANDED = "assetdoctor_resource_expanded"
+RESOURCE_TOTALS = "assetdoctor_resource_totals"
 
 _EST_CHUNK = 64  # datablocks estimated between progress yields
 
@@ -108,6 +109,10 @@ class ASSETDOCTOR_OT_analyze_resources(ModalProgressMixin, bpy.types.Operator):
 
         msg = (f"Estimated totals — RAM {human_bytes(totals['ram'])}, "
                f"VRAM {human_bytes(totals['vram'])}, disk {human_bytes(totals['disk'])}")
+        # Persisted (not just the transient operator-report popup) so the
+        # Analyze button can show the same line inline after the popup fades
+        # (negative-output principle — a result must stay visible).
+        setattr(wm, RESOURCE_TOTALS, msg)
         log.info("F5 %s", msg)
         self.report({"INFO"}, msg + " (estimates; see Resource panel)")
 

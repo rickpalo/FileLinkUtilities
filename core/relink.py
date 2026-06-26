@@ -120,10 +120,10 @@ def build_broken_links_report(
 
     ``broken`` is ``[(library name, stored path, auto-found candidate or "")]``.
     Always emits at least one finding: an analysis must produce a visible result
-    even when it finds nothing, so a clean file shows "No broken links found"
-    rather than silently doing nothing (user rule, 2026-06-22). Mirrors the ✓
-    "clean" status row :func:`build_libfix_report` produces."""
-    report = Report(title=f"Broken links: {blend_name}", feature="f7links")
+    even when it finds nothing, so a clean file shows "No broken library links
+    found" rather than silently doing nothing (user rule, 2026-06-22). Mirrors
+    the ✓ "clean" status row :func:`build_libfix_report` produces."""
+    report = Report(title=f"Broken Library Links: {blend_name}", feature="f7links")
     for name, stored, candidate in broken:
         if candidate:
             msg = f"{name}:  missing ({stored})  —  auto-match found: {candidate}"
@@ -134,7 +134,7 @@ def build_broken_links_report(
     if not broken:
         report.add(Finding(
             category="clean",
-            message="✓ No broken links found — every linked library resolves on disk",
+            message="✓ No broken library links found — every linked library resolves on disk",
             severity="info"))
     return report
 

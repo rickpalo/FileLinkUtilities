@@ -86,7 +86,7 @@ class ASSETDOCTOR_OT_scan_all_missing(bpy.types.Operator):
         bpy.ops.assetdoctor.scan_reconnect_targets()    # individual placeholder ids
         if context.area:
             context.area.tag_redraw()
-        self.report({"INFO"}, "Checked broken links + reconnectable data-blocks")
+        self.report({"INFO"}, "Checked broken library links + reconnectable data-blocks")
         return {"FINISHED"}
 
 

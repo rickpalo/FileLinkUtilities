@@ -138,6 +138,9 @@ class ASSETDOCTOR_PG_flatten_candidate(bpy.types.PropertyGroup):
     # `name` (built-in) holds the Object's name.
     ready: bpy.props.BoolProperty()  # type: ignore[valid-type]
     status: bpy.props.StringProperty()  # one-line summary or blocking reason  # type: ignore[valid-type]
+    # The ARMATURE/rig this part rolls up under (own name when it IS the rig,
+    # or when no rig could be resolved — see ops.linkchain._resolve_rig).
+    rig: bpy.props.StringProperty()  # type: ignore[valid-type]
 
 
 class ASSETDOCTOR_PG_broken_lib(bpy.types.PropertyGroup):
@@ -283,6 +286,39 @@ def _generic_keeper_items(self, context):
     return items or [("", "", "")]
 
 
+# Same GC-pin trick as _KEEPER_ITEMS_CACHE, separate cache for this list's rows.
+_MATERIAL_KEEPER_CACHE: dict[str, list] = {}
+
+
+def _material_keeper_items(self, context):
+    """Items for a duplicate-material group's keeper dropdown = its member
+    ids (canonical first — see ops.material_dedup._material_id for the
+    "Name [library]" disambiguation a local + linked same-named pair needs)."""
+    names = [n for n in self.members.split("\n") if n]
+    items = [(n, n, "Keep this material; merge the others into it", i)
+             for i, n in enumerate(names)]
+    _MATERIAL_KEEPER_CACHE[self.members] = items  # pin against GC
+    return items or [("", "", "")]
+
+
+class ASSETDOCTOR_PG_material_family(bpy.types.PropertyGroup):
+    """One content-identical duplicate-material group for the reformatted
+    Find Duplicate Materials list (user feedback, 2026-06-25: the old report
+    gave no way to act on what it found). Unlike the .NNN name-family tools,
+    members come from build_dedup_plan's FINGERPRINT clusters directly — two
+    differently-named materials can land in the same group."""
+
+    # `name` (built-in) = the canonical member's id (ops.material_dedup._material_id).
+    members: bpy.props.StringProperty()  # newline-joined ids, canonical first  # type: ignore[valid-type]
+    keeper: bpy.props.EnumProperty(
+        name="Keep", description="Which material to keep; the rest merge into it",
+        items=_material_keeper_items)  # type: ignore[valid-type]
+    selected: bpy.props.BoolProperty(
+        default=True, name="",
+        description="Include this group when you Merge Selected")  # type: ignore[valid-type]
+    removable: bpy.props.IntProperty()  # type: ignore[valid-type]
+
+
 class ASSETDOCTOR_PG_datablock_family(bpy.types.PropertyGroup):
     """One content-identical ``.NNN`` duplicate family for the generic Duplicate
     Data-blocks list (Batch C #3) — any datablock type ``ops.datablock_dup``
@@ -385,31 +421,10 @@ class ASSETDOCTOR_UL_broken_libs(bpy.types.UIList):
         row.operator("assetdoctor.relink_pick_file", text="", icon="FILEBROWSER").index = index
 
 
-class ASSETDOCTOR_UL_flatten_candidates(bpy.types.UIList):
-    """Phase 4-B character picker: one row per override-with-transform Object,
-    its ready/blocked status, and a per-row "Build Plan" button — the user
-    builds a flatten plan for ONE chosen character at a time, not the whole
-    file in one pass."""
-
-    bl_idname = "ASSETDOCTOR_UL_flatten_candidates"
-
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        if self.layout_type == "GRID":
-            layout.alignment = "CENTER"
-            layout.label(text=item.name)
-            return
-        row = layout.row(align=True)
-        row.label(text=item.name, icon="CHECKMARK" if item.ready else "QUESTION")
-        status = row.row()
-        status.alignment = "RIGHT"
-        status.label(text=item.status)
-        row.operator("assetdoctor.build_flatten_plan", text="Build Plan").name = item.name
-
-
 class _SceneFeaturePanel:
     """Shared bl_* attributes for the legacy-feature Scene sub-panels (Make
-    Local, Duplicate Materials, Orphans, Geometry, Resource Analyzer,
-    Utilities) — migrated off the old VIEW_3D N-panel (Batch 5, 2026-06-23) so
+    Local, Duplicate Materials, Orphans, Geometry, Utilities) — migrated off
+    the old VIEW_3D N-panel (Batch 5, 2026-06-23) so
     everything lives under Properties > Scene > AssetDoctor. Each is a child of
     ASSETDOCTOR_PT_scene_deps, which gives it a native collapse triangle and
     remembers its open/closed state per-file, same as the N-panel did."""
@@ -453,14 +468,391 @@ class ASSETDOCTOR_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
                        "from disk)", icon="ERROR")
 
 
+def _analyze_step_status_icon(wm, step_key: str) -> str:
+    """Per-button status icon (Phase 3 item 5, 2026-06-25: "to the LEFT of each
+    Analyze button, a small progress/status indicator" — replaces the old
+    separate vertical step-status list). Looks up ``step_key`` in the
+    Analyze-All run's own per-step collection (rebuilt fresh each run, see
+    ``ops.analyze_all``); ``"BLANK1"`` (no icon) for a step that's never been
+    part of an Analyze-All run yet, or isn't one of its steps at all (Find
+    Flattenable Characters/Find All Missing/Profile Render/the folder-scoped
+    tools at the bottom — see core.analyze_steps' own exclusion list)."""
+    for row in wm.assetdoctor_analyze_steps:
+        if row.key == step_key:
+            return _ANALYZE_STEP_ICON.get(row.status, "BLANK1")
+    return "BLANK1"
+
+
+def _fmt_count(label: str, detail: str) -> str:
+    """``"Circular references (3)"`` for a plain count, ``"Duplicate
+    Materials: 0 (0 Local & 0 Linked)"`` for a feature's own richer detail
+    string (parens would double up)."""
+    return f"{label} ({detail})" if detail.lstrip("-").isdigit() else f"{label}: {detail}"
+
+
+def _f7_dependency_summary(nodes) -> str:
+    """Check Link Chain's own rollup (Phase 3c, 2026-06-25): every severity
+    tier's CATEGORY children (Circular references / Missing libraries / ...),
+    skipping the Summary and File map nodes and the tier wrappers themselves
+    — the issue counts are what answers "is this file safe," not the file/
+    link totals the tier wrappers carry."""
+    parts = []
+    for node in nodes:
+        if node.key in ("f7:summary", "f7:filemap"):
+            continue
+        for child in node.children:
+            if child.detail:
+                parts.append(_fmt_count(child.label, child.detail))
+    if not parts:
+        return "✓ no dependency issues found"
+    text = " · ".join(parts[:5])
+    if len(parts) > 5:
+        text += f" · +{len(parts) - 5} more"
+    return text
+
+
+def _feature_tree_nodes(wm, feature: str) -> tuple[bool, list]:
+    """``(has_run, nodes)`` for a stashed report/tree feature. ``has_run``
+    distinguishes "never scanned" (hide the rollup entirely) from "scanned,
+    found nothing" (negative-output: show a flat ✓ line) — both
+    :func:`_report_feature_summary` and its inline detail disclosure below
+    need that same distinction, so it's factored out once rather than
+    duplicating the raw-fetch/parse dance."""
+    from ..core.report import Report
+    from ..core.tree import nodes_from_json, report_to_tree
+    from ..ops.report_store import TREE_FEATURES, data_prop
+
+    raw = getattr(wm, data_prop(feature), "")
+    if not raw:
+        return False, []
+    try:
+        nodes = (nodes_from_json(raw) if feature in TREE_FEATURES
+                 else report_to_tree(Report.from_json(raw)))
+    except Exception:
+        return False, []
+    return True, nodes
+
+
+def _report_feature_summary(wm, feature: str) -> str:
+    """One-line rollup of a report/tree-based feature's stashed result, shown
+    directly under its Analyze trigger button (Phase 3c, 2026-06-25). "" if
+    the feature has never been run. A flat clean/overview headline (when a
+    feature already writes one, e.g. "12 override loop(s) · ...") IS the
+    one-liner; otherwise join the top-level issue categories' own counts,
+    falling back to the report's own Summary sentence when there's nothing
+    to break down (e.g. "0 orphan, 0 fake-only, 0 identical group(s)")."""
+    has_run, nodes = _feature_tree_nodes(wm, feature)
+    if not has_run:
+        return ""
+    if not nodes:
+        return "✓ nothing found"
+    if feature == "f7":
+        return _f7_dependency_summary(nodes)
+    # Node keys are "<report.feature>:<category>[:i]" — report.feature's own
+    # casing doesn't always match the lowercase key this panel stashes/looks
+    # features up under (e.g. geometry_dedup's Report uses "F5" while this is
+    # called with "geo"; f4_orphans/f2_makelocal/f3_materials use "F4"/"F2"/
+    # "F3"). Derive the real prefix from the data instead of assuming it
+    # equals `feature`, or the "exclude Summary" check below silently never
+    # matches and a bare "Summary (N)" leaks into the rollup.
+    tail = nodes[0].key.split(":", 1)[0] + ":"
+    first = nodes[0]
+    if not first.children and (first.key.startswith(tail + "overview")
+                                or first.key.startswith(tail + "clean")):
+        return first.label
+    summary_key = f"{tail}summary"
+    cats = [n for n in nodes if n.detail and n.key != summary_key]
+    if not cats:
+        summary = next((n for n in nodes if n.key == summary_key), None)
+        if summary and summary.children:
+            return summary.children[0].label
+        return "✓ nothing found"
+    parts = [_fmt_count(n.label, n.detail) for n in cats[:4]]
+    if len(cats) > 4:
+        parts.append(f"+{len(cats) - 4} more")
+    return " · ".join(parts)
+
+
+def _draw_report_detail(layout, wm, feature: str) -> None:
+    """The rollup's details, collapsed under a "Details" disclosure directly
+    below its one-line summary (user feedback, 2026-06-25 item d: every
+    summary should roll up to the same content the dedicated Reports tab
+    shows, without having to leave the Analyze panel). Nothing to disclose
+    (never run) draws nothing — the summary line above is already hidden in
+    that case. Renders fully expanded, no per-node fold/unfold: simplest
+    correct disclosure, not virtualized (same accepted tradeoff as every
+    other custom row list in this file)."""
+    from ..core.tree import all_keys, flatten_visible
+
+    has_run, nodes = _feature_tree_nodes(wm, feature)
+    if not has_run or not nodes:
+        return
+    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    is_exp = feature in expanded
+    row = layout.row(align=True)
+    row.separator(factor=2.2)
+    op = row.operator("assetdoctor.toggle_inline_detail", text="Details",
+                       icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+    op.key = feature
+    if not is_exp:
+        return
+    for r in flatten_visible(nodes, all_keys(nodes)):
+        drow = layout.row(align=True)
+        drow.separator(factor=2.8 + r.indent * 1.4)
+        if r.guide:
+            drow.label(text=r.guide)
+        if r.icon:
+            drow.label(text="", icon=r.icon)
+        if r.ref:
+            bop = drow.operator("assetdoctor.select_datablock", text=r.label,
+                                 icon="NONE", emboss=False)
+            bop.type, bop.name = r.ref["type"], r.ref["name"]
+        else:
+            drow.label(text=r.label)
+        if r.detail:
+            sub = drow.row()
+            sub.alignment = "RIGHT"
+            sub.label(text=r.detail)
+
+
+def _missing_textures_headline(wm, narrow: bool) -> str:
+    """The Missing Textures section's own header summary, factored out so the
+    Analyze button can show the same line inline (Phase 3c)."""
+    n_missing = len(wm.assetdoctor_broken_imgs)
+    n_linked = len(wm.assetdoctor_linked_missing_imgs)
+    scanned = wm.assetdoctor_tex_scanned
+    found = max(wm.assetdoctor_tex_initial_missing - n_missing, 0)
+    matched = sum(1 for it in wm.assetdoctor_broken_imgs if it.target)
+
+    title = "Missing Materials/Textures"
+    linked_bit = f"{n_linked} linked" if n_linked else ""
+    if not scanned:
+        return ""
+    if n_missing == 0:
+        head = f"{title} — none missing locally" if n_linked else f"{title} — none missing"
+        if found:
+            head += f" ({found} relinked)"
+        if linked_bit:
+            head += f", {linked_bit}"
+        return head
+    if narrow:
+        head = f"Missing — {n_missing}✗"
+        if matched:
+            head += f" {matched}⇒"
+        if found:
+            head += f" {found}✓"
+        if linked_bit:
+            head += f" {linked_bit}"
+        return head
+    bits = [f"{n_missing} missing"]
+    if matched:
+        bits.append(f"{matched} matched")
+    if found:
+        bits.append(f"{found} relinked")
+    if linked_bit:
+        bits.append(linked_bit)
+    return f"{title} — " + ", ".join(bits)
+
+
+def _duplicate_textures_headline(wm, narrow: bool) -> str:
+    """The Duplicate Materials/Textures section's own header summary,
+    factored out so the Analyze button can show the same line inline."""
+    scanned = wm.assetdoctor_dup_scanned
+    families = wm.assetdoctor_dup_families
+    mats = len({row.material or "(no material)" for row in families})
+    removable = wm.assetdoctor_dup_removable
+    conflicts = wm.assetdoctor_dup_conflicts
+    if not scanned:
+        return ""
+    if not len(families) and not conflicts:
+        return "Duplicate Materials/Textures — none found"
+    if narrow:
+        return f"Duplicates — {mats} mat / {removable} tex"
+    bits = [f"{mats} material(s)", f"{removable} texture(s) redundant"]
+    if conflicts:
+        bits.append(f"{conflicts} differing")
+    return "Duplicate Materials/Textures — " + ", ".join(bits)
+
+
+def _datablock_dups_headline(wm) -> str:
+    """The Duplicate Data-blocks section's own header summary, factored out
+    so the Analyze button can show the same line inline."""
+    families = wm.assetdoctor_datablock_families
+    scanned = wm.assetdoctor_datablock_scanned
+    removable = wm.assetdoctor_datablock_removable
+    conflicts = wm.assetdoctor_datablock_conflicts
+    if not scanned:
+        return ""
+    if not len(families) and not conflicts:
+        return "Duplicate Data-blocks — none found"
+    kinds = len({row.kind for row in families})
+    bits = [f"{kinds} kind(s)", f"{removable} removable"]
+    if conflicts:
+        bits.append(f"{conflicts} differing/unverified")
+    return "Duplicate Data-blocks — " + ", ".join(bits)
+
+
+def _reconnect_headline(wm) -> str:
+    """The Datablock Reconnect section's own header summary, factored out so
+    the Analyze button can show the same line inline."""
+    rows = wm.assetdoctor_missing_blocks
+    scanned = wm.assetdoctor_missing_scanned
+    if not scanned:
+        return ""
+    if not len(rows):
+        return "Datablock Reconnect — none found"
+    libs = len({r.library for r in rows})
+    staged = sum(1 for r in rows if r.selected and r.target)
+    return f"Datablock Reconnect — {len(rows)} missing, {libs} group(s), {staged} staged"
+
+
+def _all_missing_summary(wm) -> str:
+    """"Find All Missing" runs both the broken-library-link scan and the
+    datablock-reconnect scan; combine their counts into one line."""
+    if not wm.assetdoctor_missing_scanned:
+        return ""
+    broken = len(wm.assetdoctor_broken_libs)
+    missing = len(wm.assetdoctor_missing_blocks)
+    if not broken and not missing:
+        return "✓ nothing missing"
+    return f"{broken} broken link(s), {missing} missing data-block(s)"
+
+
+def _flatten_candidates_summary(wm) -> str:
+    """``assetdoctor_flatten_plans_json`` is non-empty (even if "{}") once a
+    scan has run, so its presence — not the row count — is the "has this
+    been run" signal (negative-output principle: say so when nothing was
+    found, don't just look identical to never-run)."""
+    if not wm.assetdoctor_flatten_plans_json:
+        return ""
+    rows = wm.assetdoctor_flatten_candidates
+    if not len(rows):
+        return "✓ no flattenable characters found"
+    rigs = len({r.rig for r in rows})
+    ready = sum(1 for r in rows if r.ready)
+    return f"{len(rows)} part(s) across {rigs} rig(s)/character(s) — {ready} ready, {len(rows) - ready} blocked"
+
+
+def _resource_summary(wm) -> str:
+    return wm.assetdoctor_resource_totals
+
+
+def _profile_render_summary(wm) -> str:
+    ram = wm.assetdoctor_profiled_ram
+    return f"Real peak RAM: {ram}" if ram else ""
+
+
+def _draw_resource_breakdown(layout, wm):
+    """The by-type RAM/VRAM/disk breakdown, rolled up as a child directly below
+    the Analyze Memory/Disk button's inline summary (replaces the standalone
+    Resource Analyzer panel — same template_list + Export, just relocated so
+    the detail lives right under the totals it explains)."""
+    if not wm.assetdoctor_resource_tree:
+        return
+    col = layout.column(align=True)
+    hint = col.row(align=True)
+    hint.separator(factor=2.2)
+    hint.label(text="RAM / VRAM estimated; disk accurate", icon="INFO")
+    col.template_list(
+        "ASSETDOCTOR_UL_tree", "resource",
+        wm, "assetdoctor_resource_rows",
+        wm, "assetdoctor_resource_index",
+        rows=8, sort_lock=True,
+    )
+    erow = col.row(align=True)
+    erow.separator(factor=2.2)
+    erow.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "resource"
+
+
+def _analyze_row(layout, wm, step_key, opname, text, icon, summary=""):
+    """One Analyze trigger button, full-width (Phase 3 feedback item 2a,
+    2026-06-25: one per row so each gets a status icon AND a result line),
+    with its inline result summary directly below when there's one to show."""
+    row = layout.row(align=True)
+    row.label(text="", icon=_analyze_step_status_icon(wm, step_key))
+    op = row.operator(opname, text=text, icon=icon)
+    if summary:
+        srow = layout.row(align=True)
+        srow.separator(factor=2.2)
+        srow.label(text=summary)
+    return op
+
+
+def _draw_flatten_candidates(layout, wm):
+    """Phase 4-B picker, grouped by ARMATURE/rig (user feedback, 2026-06-25:
+    present everything in terms of the rig, with body/eyes/clothes rolled up
+    underneath). Each rig's combined replay rollup (core.linkchain.
+    build_rig_rollup) shows directly below its own row — no separate report
+    tab needed to judge whether flattening one is worth it; the small
+    FILE_TEXT button stashes the read-only preview (f7flatten report); the
+    "Flatten (creates backup)" button (Phase 4 Apply, 2026-06-25) only
+    appears once expanded — and only when at least one part is ready — so
+    the real mutation isn't one click away from the collapsed list."""
+    rows = wm.assetdoctor_flatten_candidates
+    if not len(rows):
+        return
+    import json
+
+    from ..core import linkchain
+
+    cached = json.loads(wm.assetdoctor_flatten_plans_json or "{}")
+    expanded = set(filter(None, wm.assetdoctor_flatten_expanded.split("\n")))
+
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for row in rows:
+        if row.rig not in groups:
+            groups[row.rig] = []
+            order.append(row.rig)
+        groups[row.rig].append(row)
+
+    box = layout.box().column(align=True)
+    for rig in sorted(order, key=str.lower):
+        members = groups[rig]
+        plans = [linkchain.flatten_plan_from_dict(cached[m.name]) for m in members if m.name in cached]
+        ready = sum(1 for m in members if m.ready)
+        is_exp = rig in expanded
+        crow = box.row(align=True)
+        crow.operator("assetdoctor.flatten_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = rig
+        crow.label(text=f"{rig}  ({ready}/{len(members)} part(s) ready)", icon="ARMATURE_DATA")
+        crow.operator("assetdoctor.build_flatten_plan", text="", icon="FILE_TEXT").name = rig
+        if not is_exp:
+            continue
+        rollup = box.row(align=True)
+        rollup.separator(factor=2.0)
+        rollup.label(text=linkchain.build_rig_rollup(plans), icon="INFO")
+        if ready:
+            arow = box.row(align=True)
+            arow.separator(factor=2.0)
+            aop = arow.operator("assetdoctor.build_flatten_plan",
+                                text="Flatten (creates backup)", icon="CHECKMARK")
+            aop.name = rig
+            aop.apply = True
+        for m in members:
+            mrow = box.row(align=True)
+            mrow.separator(factor=3.0)
+            mrow.label(text=f"{m.name}  —  {m.status}",
+                      icon="CHECKMARK" if m.ready else "QUESTION")
+
+
 class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
     """Phase 3a (2026-06-25) — the second named section: every "look for
     problems in the CURRENT file" trigger, in one place, plus an Analyze All
     sequencer (``ops.analyze_all``) that runs them in order. Each button here
     fills the SAME WM state its box used to fill directly — relocating the
     trigger doesn't change what runs; the populated list/report still draws in
-    its existing box below (Cleanup & Fixes isn't designed yet, per the user's
-    explicit ask to rough this section in first and see what's left)."""
+    its existing box below.
+
+    Button layout (v0.2.59, 2026-06-25 user request — Phase 3 feedback items
+    a/b/c/e/f): one full-width button per row (not paired) so each can carry
+    its own inline result summary directly below it — the Phase 3c "per-
+    button inline result" design, no longer just a placeholder. Analyze
+    Memory/Disk, Make Local Impact, and Profile Render are split below a
+    separator (they measure footprint/impact, not "is something broken").
+    "Find All Duplicates" (a NEW grouping button over Materials/Resolution
+    Variants/Geometry/Content) is still NOT built — needs real operator code,
+    not just a layout change."""
 
     bl_label = "Analyze"
     bl_idname = "ASSETDOCTOR_PT_analyze"
@@ -469,60 +861,95 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         wm = context.window_manager
+        narrow = bool(context.region) and context.region.width < 320
 
         layout.operator("assetdoctor.analyze_all", icon="PLAY")
-        steps = wm.assetdoctor_analyze_steps
-        if len(steps):
-            col = layout.column(align=True)
-            for row in steps:
-                col.label(text=row.label, icon=_ANALYZE_STEP_ICON.get(row.status, "BLANK1"))
-            layout.separator()
 
-        row = layout.row(align=True)
-        row.operator("assetdoctor.scan_dependencies", text="Check Link Chain", icon="VIEWZOOM")
-        row.operator("assetdoctor.analyze_overrides", text="Audit This File",
-                     icon="LIBRARY_DATA_OVERRIDE")
-        layout.operator("assetdoctor.scan_link_chains", text="Find Flattenable Link Chains",
-                        icon="LINKED")
-        layout.operator("assetdoctor.scan_flatten_candidates", text="Find Flattenable Characters",
-                        icon="LIBRARY_DATA_OVERRIDE")
-        if len(wm.assetdoctor_flatten_candidates):
-            layout.template_list(
-                "ASSETDOCTOR_UL_flatten_candidates", "flattencandidates",
-                wm, "assetdoctor_flatten_candidates",
-                wm, "assetdoctor_flatten_index", rows=4)
+        _analyze_row(layout, wm, "check_link_chain", "assetdoctor.scan_dependencies",
+                     "Check Link Chain", "VIEWZOOM", _report_feature_summary(wm, "f7"))
+        _draw_report_detail(layout, wm, "f7")
+        _analyze_row(layout, wm, "audit_file", "assetdoctor.analyze_overrides",
+                     "Audit This File", "LIBRARY_DATA_OVERRIDE",
+                     _report_feature_summary(wm, "f7live"))
+        _draw_report_detail(layout, wm, "f7live")
+        _analyze_row(layout, wm, "find_flattenable_chains", "assetdoctor.scan_link_chains",
+                     "Find Flattenable Link Chains", "LINKED",
+                     _report_feature_summary(wm, "f7chain"))
+        _draw_report_detail(layout, wm, "f7chain")
+        _analyze_row(layout, wm, "", "assetdoctor.scan_flatten_candidates",
+                     "Find Flattenable Characters", "LIBRARY_DATA_OVERRIDE",
+                     _flatten_candidates_summary(wm))
+        _draw_flatten_candidates(layout, wm)
 
-        layout.operator("assetdoctor.scan_datablock_dups", text="Find Duplicate Data-blocks",
-                        icon="LIBRARY_DATA_OVERRIDE")
+        _analyze_row(layout, wm, "find_broken_links", "assetdoctor.scan_broken_links",
+                     "Find Broken Library Links", "LIBRARY_DATA_BROKEN",
+                     _report_feature_summary(wm, "f7links"))
+        _draw_report_detail(layout, wm, "f7links")
+        _analyze_row(layout, wm, "find_duplicate_datablocks", "assetdoctor.scan_datablock_dups",
+                     "Find Duplicate Data-blocks", "LIBRARY_DATA_OVERRIDE",
+                     _datablock_dups_headline(wm))
+        _draw_datablock_dups(layout, wm)
+        _analyze_row(layout, wm, "find_reconnectable", "assetdoctor.scan_reconnect_targets",
+                     "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
+                     _reconnect_headline(wm))
+        _analyze_row(layout, wm, "", "assetdoctor.scan_all_missing",
+                     "Find All Missing", "VIEWZOOM", _all_missing_summary(wm))
 
-        row = layout.row(align=True)
-        row.operator("assetdoctor.scan_broken_links", text="Find Broken Links",
-                     icon="LIBRARY_DATA_BROKEN")
-        row.operator("assetdoctor.scan_reconnect_targets", text="Find Reconnectable Data-blocks",
-                     icon="LIBRARY_DATA_OVERRIDE")
-        layout.operator("assetdoctor.scan_all_missing", text="Find All Missing", icon="VIEWZOOM")
+        # NEXT SLOT (not built): "Find All Duplicates" — a new grouping button
+        # over Materials/Resolution Variants/Geometry/Content (item 4); would
+        # pair with Find Missing Textures here once it exists.
+        _analyze_row(layout, wm, "find_missing_textures", "assetdoctor.scan_broken_textures",
+                     "Find Missing Textures", "IMAGE_DATA",
+                     _missing_textures_headline(wm, narrow))
+        _analyze_row(layout, wm, "find_duplicate_materials", "assetdoctor.material_dedup",
+                     "Find Duplicate Materials", "MATERIAL",
+                     _material_dups_headline(wm)).apply = False
+        _draw_material_dups(layout, wm)
 
-        layout.operator("assetdoctor.scan_broken_textures", text="Find Missing Textures",
-                        icon="IMAGE_DATA")
+        _analyze_row(layout, wm, "find_resolution_variants", "assetdoctor.scan_res_variants",
+                     "Find Resolution Variants", "FULLSCREEN_ENTER",
+                     _report_feature_summary(wm, "f6res"))
+        _draw_report_detail(layout, wm, "f6res")
+        _analyze_row(layout, wm, "find_duplicate_geometry", "assetdoctor.instance_geometry",
+                     "Find Duplicate Geometry", "NONE",
+                     _report_feature_summary(wm, "geo")).apply = False
+        _draw_report_detail(layout, wm, "geo")
 
-        row = layout.row(align=True)
-        row.operator("assetdoctor.material_dedup", text="Find Duplicate Materials").apply = False
-        row.operator("assetdoctor.instance_geometry", text="Find Duplicate Geometry").apply = False
+        _analyze_row(layout, wm, "find_duplicate_content", "assetdoctor.scan_content_dups",
+                     "Find Duplicate Content", "ZOOM_ALL",
+                     _duplicate_textures_headline(wm, narrow))
+        _analyze_row(layout, wm, "find_orphans", "assetdoctor.scan_orphans",
+                     "Find Orphans", "NONE",
+                     _report_feature_summary(wm, "f4")).purge_orphans = False
+        _draw_report_detail(layout, wm, "f4")
 
-        layout.operator("assetdoctor.scan_orphans", text="Find Orphans").purge_orphans = False
+        # Footprint/impact analyses — a different KIND of analysis (not "is
+        # something broken") — separated from the find-a-problem buttons above
+        # (user request, 2026-06-25).
+        layout.separator()
+        _analyze_row(layout, wm, "analyze_memory_disk", "assetdoctor.analyze_resources",
+                     "Analyze Memory/Disk", "VIEWZOOM", _resource_summary(wm))
+        _draw_resource_breakdown(layout, wm)
+        # "Make Local Impact" = the old Make Local panel's "Report (Dry Run)"
+        # button, relocated here for now (user request, 2026-06-25) — it will
+        # replace that panel once a Fix-it/Apply button joins it in Cleanup &
+        # Fixes (Phase 3c), at which point the whole Make Local panel can go.
+        _analyze_row(layout, wm, "", "assetdoctor.make_local",
+                     "Make Local Impact", "LIBRARY_DATA_DIRECT",
+                     _report_feature_summary(wm, "f2")).apply = False
+        _draw_report_detail(layout, wm, "f2")
+        # Profile Render actually renders — too slow/disruptive for the Analyze
+        # All sequencer (core.analyze_steps.STEPS deliberately excludes it);
+        # manual only, no step status to show.
+        _analyze_row(layout, wm, "", "assetdoctor.profile_render",
+                     "Profile Render (Real RAM)", "RENDER_STILL", _profile_render_summary(wm))
 
-        row = layout.row(align=True)
-        row.operator("assetdoctor.scan_content_dups", text="Find Duplicate Content",
-                     icon="ZOOM_ALL")
-        row.operator("assetdoctor.scan_res_variants", text="Find Resolution Variants",
-                     icon="FULLSCREEN_ENTER")
-
-        row = layout.row(align=True)
-        row.operator("assetdoctor.analyze_resources", text="Analyze Memory/Disk", icon="VIEWZOOM")
-        # Profile Render actually renders — too slow/disruptive for the Analyze All
-        # sequencer (core.analyze_steps.STEPS deliberately excludes it); manual only.
-        row.operator("assetdoctor.profile_render", text="Profile Render (Real RAM)",
-                     icon="RENDER_STILL")
+        # Phase 3c is still only half done: the result lines above are
+        # read-only. Actionable "Fix-it" buttons next to them are Cleanup &
+        # Fixes, not designed yet.
+        info = layout.box().row()
+        info.label(text="Fix-it buttons for the results above are Cleanup & "
+                        "Fixes — not designed yet (Phase 3c)", icon="INFO")
 
         # Folder-wide link map (graphical) + reverse-dependency check both scan a
         # FOLDER you pick, not the current file — different scope from everything
@@ -552,35 +979,6 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
             vrow.label(text=wm.assetdoctor_dep_verdict_text, icon="ERROR")
 
 
-class ASSETDOCTOR_PT_make_local(_SceneFeaturePanel, bpy.types.Panel):
-    bl_label = "Make Local"
-    bl_idname = "ASSETDOCTOR_PT_make_local"
-    bl_order = 2
-
-    def draw(self, context):
-        layout = self.layout
-        layout.operator("assetdoctor.make_local", text="Report (Dry Run)").apply = False
-        row = layout.row(align=True)
-        op = row.operator("assetdoctor.make_local", text="→ New File")
-        op.apply = True
-        op.mode = "NEW_FILE"
-        op = row.operator("assetdoctor.make_local", text="→ In Place")
-        op.apply = True
-        op.mode = "IN_PLACE"
-
-
-class ASSETDOCTOR_PT_materials(_SceneFeaturePanel, bpy.types.Panel):
-    bl_label = "Duplicate Materials"
-    bl_idname = "ASSETDOCTOR_PT_materials"
-    bl_order = 3
-
-    def draw(self, context):
-        # Its "Find Duplicate Materials" report trigger now lives in the Analyze
-        # sub-panel (Phase 3a, 2026-06-25); this panel keeps the Apply action.
-        layout = self.layout
-        layout.operator("assetdoctor.material_dedup", text="Dedup & Remap (Apply)").apply = True
-
-
 class ASSETDOCTOR_PT_orphans(_SceneFeaturePanel, bpy.types.Panel):
     bl_label = "Orphans & Fake Users"
     bl_idname = "ASSETDOCTOR_PT_orphans"
@@ -603,35 +1001,6 @@ class ASSETDOCTOR_PT_geometry(_SceneFeaturePanel, bpy.types.Panel):
         # sub-panel (Phase 3a, 2026-06-25); this panel keeps the Apply action.
         layout = self.layout
         layout.operator("assetdoctor.instance_geometry", text="Instance & Merge (Apply)").apply = True
-
-
-class ASSETDOCTOR_PT_resource_tools(_SceneFeaturePanel, bpy.types.Panel):
-    bl_label = "Resource Analyzer"
-    bl_idname = "ASSETDOCTOR_PT_resource_tools"
-    bl_order = 6
-
-    def draw(self, context):
-        # Its "Analyze Memory/Disk" + "Profile Render" triggers now live in the
-        # Analyze sub-panel (Phase 3a, 2026-06-25); this panel keeps the results.
-        layout = self.layout
-        wm = context.window_manager
-
-        # Folded in from the old standalone "Resource Usage" N-panel (Batch 5) —
-        # it was only ever a second view onto this same scan/profile result.
-        if not wm.assetdoctor_resource_tree:
-            return
-        layout.separator()
-        layout.label(text="RAM / VRAM estimated; disk accurate", icon="INFO")
-        if wm.assetdoctor_profiled_ram:
-            layout.label(text=f"Profiled real peak RAM: {wm.assetdoctor_profiled_ram}",
-                         icon="RENDER_STILL")
-        layout.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "resource"
-        layout.template_list(
-            "ASSETDOCTOR_UL_tree", "resource",
-            wm, "assetdoctor_resource_rows",
-            wm, "assetdoctor_resource_index",
-            rows=12, sort_lock=True,
-        )
 
 
 class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
@@ -700,8 +1069,11 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
     """The whole add-on, in Properties > Scene (this is scene-data hygiene, not a
     3D/render activity). Started as the F7 Link & Dependency Doctor hub; the
     legacy VIEW_3D N-panel features (Make Local, Duplicate Materials, Orphans,
-    Geometry, Resource Analyzer, Utilities) joined as native collapsible child
-    panels in Batch 5 (2026-06-23), and the N-panel itself was retired."""
+    Geometry, Utilities) joined as native collapsible child panels in Batch 5
+    (2026-06-23), and the N-panel itself was retired. The Resource Analyzer
+    panel was folded into the Analyze panel's "Analyze Memory/Disk" row
+    (its by-type breakdown rolled up directly below, like the Flatten
+    Characters picker's rollup) and deleted as its own section."""
 
     bl_label = "AssetDoctor"
     bl_idname = "ASSETDOCTOR_PT_scene_deps"
@@ -723,6 +1095,155 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
         sub.alignment = "RIGHT"
         sub.operator("wm.url_open", text="", icon="HELP", emboss=False).url = DOC_URL
 
+    def draw(self, context):
+        layout = self.layout
+        wm = context.window_manager
+
+        # Progress bar + Pause/Cancel + the sticky result line are the ONLY thing
+        # drawn in the top (parent) panel's body (v0.2.56, 2026-06-25; placement
+        # confirmed by the user: "should go as high in the UI as possible") — a
+        # parent panel's own draw() always renders before any of its
+        # bl_parent_id children, so this is the highest point achievable below
+        # the panel's own draw_header() (title/version/help icon), and nothing
+        # else lives here anymore: every section (Current File Data, Analyze,
+        # the legacy Make Local/Materials/Orphans/Geometry/Utilities panels,
+        # AND the former inline "Duplicate Data-blocks...
+        # Reports" block — now its own ASSETDOCTOR_PT_results panel) is a real
+        # bl_order'd child, so they all draw AFTER this, in order, every time —
+        # user-reported regression (2026-06-25): the inline block used to render
+        # here, ahead of every child panel including Current File Data/Analyze,
+        # no matter what bl_order said, since bl_order only orders siblings
+        # against each other, never against the parent's own draw() body.
+        _draw_progress(layout, wm)
+
+        if wm.assetdoctor_last_result:
+            res = layout.row()
+            if not wm.assetdoctor_last_result_ok:
+                res.alert = True
+            res.label(text=wm.assetdoctor_last_result,
+                      icon="CHECKMARK" if wm.assetdoctor_last_result_ok else "ERROR")
+
+
+def _draw_datablock_dups(layout, wm) -> None:
+    """Batch C #3 — generic Duplicate Data-blocks: find .NNN families across
+    Objects/Actions/Node Groups/etc. (Materials/Meshes/Images keep their own
+    dedicated tools), group by KIND, pick a keeper per family, Merge Selected.
+    Relocated directly under its Analyze button (user feedback, 2026-06-25:
+    "fairly good, could go as-is under the button summary") — no longer drawn
+    in the Results holding pen, and its own headline label is dropped since
+    the Analyze row right above already shows it."""
+    families = wm.assetdoctor_datablock_families
+    scanned = wm.assetdoctor_datablock_scanned
+    conflicts = wm.assetdoctor_datablock_conflicts
+
+    box = layout.box().column(align=True)
+    box.label(text="Objects, Actions, Node Groups, etc. — Materials/Meshes/Images "
+              "have their own dedup tools.", icon="INFO")
+
+    if scanned and len(families):
+        box.operator("assetdoctor.merge_datablock_selected",
+                     text="Merge Selected (Backup)", icon="AREA_JOIN")
+    if not (scanned and (len(families) or conflicts)):
+        return
+
+    expanded = set(filter(None, wm.assetdoctor_datablock_expanded.split("\n")))
+    groups: dict[str, list] = {}
+    for row in families:
+        groups.setdefault(row.kind, []).append(row)
+
+    for kind in sorted(groups, key=str.lower):
+        members = groups[kind]
+        removable_here = sum(r.removable for r in members)
+        is_exp = kind in expanded
+        crow = box.row(align=True)
+        crow.operator("assetdoctor.datablock_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = kind
+        crow.label(text=f"{kind}  ({len(members)} family, −{removable_here})",
+                  icon="LIBRARY_DATA_OVERRIDE")
+        if not is_exp:
+            continue
+        for row in members:
+            frow = box.row(align=True)
+            frow.separator(factor=2.0)
+            frow.prop(row, "selected", text="")
+            base = row.name.split(":", 1)[-1]
+            frow.label(text=f"{base}  (−{row.removable})", icon="LIBRARY_DATA_OVERRIDE")
+            keep = frow.row()
+            keep.alignment = "RIGHT"
+            keep.label(text="keep", icon="PINNED")
+            keep.prop(row, "keeper", text="")
+
+    conflict_lines = [ln for ln in wm.assetdoctor_datablock_conflicts_text.split("\n") if ln]
+    if conflict_lines:
+        ckey = "\x03conflicts"
+        is_exp = ckey in expanded
+        crow = box.row(align=True)
+        crow.operator("assetdoctor.datablock_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
+        crow.label(text=f"Different content / unverified — kept separate ({len(conflict_lines)})",
+                  icon="QUESTION")
+        if is_exp:
+            for ln in conflict_lines:
+                r = box.row(align=True)
+                r.separator(factor=2.0)
+                r.label(text=ln, icon="DOT")
+
+
+def _material_dups_headline(wm) -> str:
+    """The Find Duplicate Materials Analyze row's own summary (replaces the
+    generic _report_feature_summary line — user feedback, 2026-06-25: the
+    old report gave no way to act on what it found, this section does)."""
+    if not wm.assetdoctor_mat_scanned:
+        return ""
+    groups = wm.assetdoctor_mat_families
+    if not len(groups):
+        return "✓ no duplicate materials found"
+    removable = wm.assetdoctor_mat_removable
+    linked = wm.assetdoctor_mat_linked
+    bits = [f"{len(groups)} group(s)", f"{removable} material(s) remappable"]
+    if linked:
+        bits.append(f"{linked} linked (stay in library)")
+    return ", ".join(bits)
+
+
+def _draw_material_dups(layout, wm) -> None:
+    """Reformatted Find Duplicate Materials — keeper-dropdown + Merge Selected,
+    the same actionable shape as Duplicate Data-blocks/Textures (user
+    feedback, 2026-06-25: "does not allow me to do anything with the
+    information"). Flat list, no kind-grouping needed (every row is already
+    one fingerprint-identical material group)."""
+    groups = wm.assetdoctor_mat_families
+    if not (wm.assetdoctor_mat_scanned and len(groups)):
+        return
+    box = layout.box().column(align=True)
+    box.operator("assetdoctor.merge_material_selected",
+                 text="Merge Selected (Backup)", icon="AREA_JOIN")
+    for row in groups:
+        frow = box.row(align=True)
+        frow.prop(row, "selected", text="")
+        label = row.name.split(" [", 1)[0]  # drop the "[library]" qualifier for display
+        frow.label(text=f"{label}  (−{row.removable})", icon="MATERIAL")
+        keep = frow.row()
+        keep.alignment = "RIGHT"
+        keep.label(text="keep", icon="PINNED")
+        keep.prop(row, "keeper", text="")
+
+
+class ASSETDOCTOR_PT_results(_SceneFeaturePanel, bpy.types.Panel):
+    """Everything that used to draw inline in the parent panel's own body
+    (Duplicate Data-blocks through the generic Reports selector) — moved here
+    wholesale (v0.2.56, 2026-06-25 user report) so it actually renders BELOW
+    Current File Data/Analyze/the legacy panels, instead of always ahead of
+    them regardless of bl_order (see ASSETDOCTOR_PT_scene_deps.draw() for why).
+    Placed last (highest bl_order) as a holding pen — NOT a Phase 3b/3c design;
+    that 3-way split (Reporting & Recommendations / Cleanup & Fixes / Info &
+    Utilities) still hasn't happened. Content/order inside is UNCHANGED from
+    before the move."""
+
+    bl_label = "Results"
+    bl_idname = "ASSETDOCTOR_PT_results"
+    bl_order = 8
+
     # f6tex (the old before/after Missing-Textures report) is gone — the Missing
     # Textures section now lists everything inline, so no separate report is
     # needed. f6dup is excluded from the Reports selector below — the Duplicate
@@ -741,48 +1262,16 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
         layout = self.layout
         wm = context.window_manager
 
-        # Progress bar + Pause/Cancel + the sticky result line are the only things
-        # left directly in the top panel (Phase 3a, 2026-06-25) — they need to stay
-        # visible no matter which collapsible section below is open/closed, so they
-        # can't live inside one of the 5 named sections. Current File Data (file
-        # name, dirty-warning, libraries-at-a-glance) and Analyze (Check Link
-        # Chain/Audit This File/the Find-X buttons/Project Link Map/Safe to Delete)
-        # are now their own native sub-panels, right below — see
-        # ASSETDOCTOR_PT_current_file_data / ASSETDOCTOR_PT_analyze. Everything
-        # else here is UNCHANGED on purpose: the user asked to see Current File
-        # Data + Analyze roughed in first, then design Reporting & Recommendations
-        # / Cleanup & Fixes / Info & Utilities once it's visible what's left.
-        _draw_progress(layout, wm)
-
-        # Sticky last-result line (user, 2026-06-24): a plain operator like Reconnect
-        # Selected left NO in-panel trace of what happened — only a toast (gone once
-        # you move the mouse) and the Info editor. This persists until overwritten by
-        # the next action. Minimal v1 (one line); a bigger always-visible feedback
-        # area (multi-line, beside Current File Data) is a separate Phase 3 design
-        # question, not decided yet — see docs/TODO.md.
-        if wm.assetdoctor_last_result:
-            res = layout.row()
-            if not wm.assetdoctor_last_result_ok:
-                res.alert = True
-            res.label(text=wm.assetdoctor_last_result,
-                      icon="CHECKMARK" if wm.assetdoctor_last_result_ok else "ERROR")
-
-        # Batch C #3: act on the duplicate_family findings Analyze's Overrides &
-        # Dups report surfaces (Objects/Actions/Node Groups/etc. — Materials/Meshes/
-        # Images already have their own dedicated dedup tools below/elsewhere). Its
-        # own "Find Duplicates" trigger now lives in the Analyze sub-panel (Phase
-        # 3a) — this box keeps the results list + Merge Selected.
-        self._draw_datablock_dups(context, layout, wm)
-
         # Phase 3 path fixes are TWO independent jobs (user, 2026-06-21):
         #  (1) relink broken/missing library links — per-link + pick-a-file, so you
         #      can fix one specific link (e.g. a broken material library);
         #  (2) normalize the paths of libraries that already resolve.
-        # Both Find triggers (Find Broken Links, the old Find Missing Data-blocks —
-        # now folded into Find Reconnectable Data-blocks below) moved to Analyze
-        # (Phase 3a); this box keeps the results list + Relink Selected.
+        # Both Find triggers (Find Broken Library Links, the old Find Missing
+        # Data-blocks — now folded into Find Reconnectable Data-blocks below)
+        # moved to Analyze (Phase 3a); this box keeps the results list + Relink
+        # Selected.
         links = layout.box().column(align=True)
-        links.label(text="Broken links & missing data-blocks", icon="LIBRARY_DATA_BROKEN")
+        links.label(text="Broken Library Links & missing data-blocks", icon="LIBRARY_DATA_BROKEN")
         if len(wm.assetdoctor_broken_libs):
             links.template_list(
                 "ASSETDOCTOR_UL_broken_libs", "brokenlibs",
@@ -889,50 +1378,16 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
         paths STAGE a target (folder-search / category-folder / per-file pick); the
         single Relink Selected then applies. Replaces the old flat list + report."""
         n_missing = len(wm.assetdoctor_broken_imgs)
-        n_linked = len(wm.assetdoctor_linked_missing_imgs)
         scanned = wm.assetdoctor_tex_scanned
-        found = max(wm.assetdoctor_tex_initial_missing - n_missing, 0)
-        # "matched" = still-missing textures that already have a staged target file
-        # (auto-found, group-pointed, picked, or an accepted proposal) ready to relink.
-        matched = sum(1 for it in wm.assetdoctor_broken_imgs if it.target)
         narrow = bool(context.region) and context.region.width < 320
 
         tex = layout.box().column(align=True)
-        # Header summary (the visible result — no separate report needed). Before a
-        # scan: just the title; after: missing + how many are matched (staged) +
-        # how many were already relinked, PLUS how many more are linked (can't be
-        # fixed here, see _draw_linked_missing_textures) — user report 2026-06-24: a
-        # render-time Dry-Run found 144 missing images while this count alone said 9,
-        # because linked images were silently excluded; surface that gap right here
-        # instead of only finding out via a render. Briefer on a narrow panel.
-        title = "Missing Materials/Textures"
-        linked_bit = f"{n_linked} linked" if n_linked else ""
-        if not scanned:
-            head = title
-        elif n_missing == 0:
-            head = f"{title} — none missing locally" if n_linked else f"{title} — none missing"
-            if found:
-                head += f" ({found} relinked)"
-            if linked_bit:
-                head += f", {linked_bit}"
-        elif narrow:
-            head = f"Missing — {n_missing}✗"
-            if matched:
-                head += f" {matched}⇒"
-            if found:
-                head += f" {found}✓"
-            if linked_bit:
-                head += f" {linked_bit}"
-        else:
-            bits = [f"{n_missing} missing"]
-            if matched:
-                bits.append(f"{matched} matched")
-            if found:
-                bits.append(f"{found} relinked")
-            if linked_bit:
-                bits.append(linked_bit)
-            head = f"{title} — " + ", ".join(bits)
-        tex.label(text=head, icon="IMAGE_DATA")
+        # Header summary (the visible result — no separate report needed); the
+        # Analyze panel's "Find Missing Textures" button shows the same line
+        # inline (Phase 3c) via the same _missing_textures_headline helper.
+        headline = _missing_textures_headline(wm, narrow)
+        if headline:
+            tex.label(text=headline, icon="IMAGE_DATA")
         # Its "Find Missing Textures" trigger now lives in the Analyze sub-panel
         # (Phase 3a, 2026-06-25); this box keeps everything else.
         if not scanned:
@@ -1143,90 +1598,22 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
     # apply attempt found the chosen candidate was itself unresolved further
     # upstream — distinct from "none" (never tried) so the user can tell "this
     # is genuinely stuck, the library itself doesn't have it either" from
-    # "just hasn't been matched yet".
+    # "just hasn't been matched yet". "external" (2026-06-25, real-file
+    # diagnosis) is set when the remap call reports success but the
+    # placeholder still has real users — those users live inside data that is
+    # ITSELF linked from another library, so the pointer can't actually be
+    # rewritten from this file; the fix has to happen by opening that OTHER
+    # file directly. Distinct from "transitive" — there the SOURCE library
+    # doesn't have the data at all; here it does, the fix just can't be
+    # applied from here.
     _RECONNECT_CONF = {
         "exact": ("CHECKMARK", "exact"),
         "numbered": ("FILE_REFRESH", "renamed"),
         "fuzzy": ("QUESTION", "fuzzy"),
         "transitive": ("ERROR", "missing upstream too"),
+        "external": ("ERROR", "fix at the source library"),
         "none": ("BLANK1", ""),
     }
-
-    def _draw_datablock_dups(self, context, layout, wm):
-        """Batch C #3 — generic Duplicate Data-blocks: find .NNN families across
-        Objects/Actions/Node Groups/etc. (Materials/Meshes/Images keep their own
-        dedicated tools), group by KIND, pick a keeper per family, Merge Selected.
-        Mirrors the Duplicate Materials/Textures section's shape."""
-        families = wm.assetdoctor_datablock_families
-        scanned = wm.assetdoctor_datablock_scanned
-        removable = wm.assetdoctor_datablock_removable
-        conflicts = wm.assetdoctor_datablock_conflicts
-
-        box = layout.box().column(align=True)
-        if not scanned:
-            head = "Duplicate Data-blocks"
-        elif not len(families) and not conflicts:
-            head = "Duplicate Data-blocks — none found"
-        else:
-            kinds = len({row.kind for row in families})
-            bits = [f"{kinds} kind(s)", f"{removable} removable"]
-            if conflicts:
-                bits.append(f"{conflicts} differing/unverified")
-            head = "Duplicate Data-blocks — " + ", ".join(bits)
-        box.label(text=head, icon="LIBRARY_DATA_OVERRIDE")
-        box.label(text="Objects, Actions, Node Groups, etc. — Materials/Meshes/Images "
-                  "have their own dedup tools.", icon="INFO")
-
-        # Its "Find Duplicate Data-blocks" trigger now lives in the Analyze
-        # sub-panel (Phase 3a, 2026-06-25); this box keeps the results list +
-        # Merge Selected.
-        if scanned and len(families):
-            box.operator("assetdoctor.merge_datablock_selected",
-                         text="Merge Selected (Backup)", icon="AREA_JOIN")
-        if not (scanned and (len(families) or conflicts)):
-            return
-
-        expanded = set(filter(None, wm.assetdoctor_datablock_expanded.split("\n")))
-        groups: dict[str, list] = {}
-        for row in families:
-            groups.setdefault(row.kind, []).append(row)
-
-        for kind in sorted(groups, key=str.lower):
-            members = groups[kind]
-            removable_here = sum(r.removable for r in members)
-            is_exp = kind in expanded
-            crow = box.row(align=True)
-            crow.operator("assetdoctor.datablock_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = kind
-            crow.label(text=f"{kind}  ({len(members)} family, −{removable_here})",
-                      icon="LIBRARY_DATA_OVERRIDE")
-            if not is_exp:
-                continue
-            for row in members:
-                frow = box.row(align=True)
-                frow.separator(factor=2.0)
-                frow.prop(row, "selected", text="")
-                base = row.name.split(":", 1)[-1]
-                frow.label(text=f"{base}  (−{row.removable})", icon="LIBRARY_DATA_OVERRIDE")
-                keep = frow.row()
-                keep.alignment = "RIGHT"
-                keep.label(text="keep", icon="PINNED")
-                keep.prop(row, "keeper", text="")
-
-        conflict_lines = [ln for ln in wm.assetdoctor_datablock_conflicts_text.split("\n") if ln]
-        if conflict_lines:
-            ckey = "\x03conflicts"
-            is_exp = ckey in expanded
-            crow = box.row(align=True)
-            crow.operator("assetdoctor.datablock_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
-            crow.label(text=f"Different content / unverified — kept separate ({len(conflict_lines)})",
-                      icon="QUESTION")
-            if is_exp:
-                for ln in conflict_lines:
-                    r = box.row(align=True)
-                    r.separator(factor=2.0)
-                    r.label(text=ln, icon="DOT")
 
     def _draw_reconnect(self, context, layout, wm):
         """Batch C #2 — reconnect missing data-blocks. Rows group by their broken/
@@ -1239,15 +1626,9 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
         scanned = wm.assetdoctor_missing_scanned
 
         box = layout.box().column(align=True)
-        libs = len({r.library for r in rows})
-        staged = sum(1 for r in rows if r.selected and r.target)
-        if not scanned:
-            head = "Datablock Reconnect"
-        elif not len(rows):
-            head = "Datablock Reconnect — none found"
-        else:
-            head = f"Datablock Reconnect — {len(rows)} missing, {libs} group(s), {staged} staged"
-        box.label(text=head, icon="LIBRARY_DATA_OVERRIDE")
+        headline = _reconnect_headline(wm)
+        if headline:
+            box.label(text=headline, icon="LIBRARY_DATA_OVERRIDE")
 
         # Its "Find Reconnectable Data-blocks" trigger now lives in the Analyze
         # sub-panel (Phase 3a, 2026-06-25 — also absorbed the old, redundant Find
@@ -1270,8 +1651,10 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
 
         for library in sorted(order, key=lambda lib: (-len(groups[lib]), lib.lower())):
             members = groups[library]
-            matched = sum(1 for m in members if m.confidence not in ("none", "transitive"))
+            matched = sum(1 for m in members
+                         if m.confidence not in ("none", "transitive", "external"))
             stuck = sum(1 for m in members if m.confidence == "transitive")
+            external = sum(1 for m in members if m.confidence == "external")
             lib_found = members[0].library_found
             has_source = bool(members[0].source_blend)
             is_exp = library in expanded
@@ -1284,6 +1667,8 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
                 bits.append(f"{matched} suggested")
             if stuck:
                 bits.append(f"{stuck} stuck (missing upstream too)")
+            if external:
+                bits.append(f"{external} fix at the source library")
             label = f"{disp}  ({', '.join(bits)})" if bits else f"{disp}  ({len(members)})"
             # ERROR icon when the group's OWN library can't be found anywhere in
             # this session AND no source has been picked yet — distinguishes
@@ -1406,23 +1791,12 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
         narrow = bool(context.region) and context.region.width < 320
 
         dup = layout.box().column(align=True)
-        # Summary header (the visible result). Materials = distinct groups with a
-        # merge; Textures redundant = total removable datablocks.
-        mats = len({row.material or "(no material)" for row in families})
-        removable = wm.assetdoctor_dup_removable
         conflicts = wm.assetdoctor_dup_conflicts
-        if not scanned:
-            head = "Duplicate Materials/Textures"
-        elif not len(families) and not conflicts:
-            head = "Duplicate Materials/Textures — none found"
-        elif narrow:
-            head = f"Duplicates — {mats} mat / {removable} tex"
-        else:
-            bits = [f"{mats} material(s)", f"{removable} texture(s) redundant"]
-            if conflicts:
-                bits.append(f"{conflicts} differing")
-            head = "Duplicate Materials/Textures — " + ", ".join(bits)
-        dup.label(text=head, icon="IMAGE_DATA")
+        # Summary header (the visible result); the Analyze panel's "Find
+        # Duplicate Content" button shows the same line inline (Phase 3c).
+        headline = _duplicate_textures_headline(wm, narrow)
+        if headline:
+            dup.label(text=headline, icon="IMAGE_DATA")
 
         # Its "Find Duplicate Content" + "Find Resolution Variants" triggers now
         # live in the Analyze sub-panel (Phase 3a, 2026-06-25); this box keeps the

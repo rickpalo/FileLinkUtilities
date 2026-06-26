@@ -113,6 +113,10 @@ def register() -> None:
     # F5 resource tree (JSON) + its expanded node keys.
     bpy.types.WindowManager.assetdoctor_resource_tree = bpy.props.StringProperty(default="")
     bpy.types.WindowManager.assetdoctor_resource_expanded = bpy.props.StringProperty(default="")
+    # Estimated RAM/VRAM/disk totals from the last Analyze Memory/Disk run
+    # (human-readable string), persisted so the Analyze button's inline
+    # summary survives after the operator-report popup fades.
+    bpy.types.WindowManager.assetdoctor_resource_totals = bpy.props.StringProperty(default="")
     # Real peak RAM from the last Profile Render (human-readable string).
     bpy.types.WindowManager.assetdoctor_profiled_ram = bpy.props.StringProperty(default="")
 
@@ -123,7 +127,8 @@ def register() -> None:
     from .ui.panels import (ASSETDOCTOR_PG_analyze_step, ASSETDOCTOR_PG_broken_lib,
                             ASSETDOCTOR_PG_datablock_family, ASSETDOCTOR_PG_dup_family,
                             ASSETDOCTOR_PG_examine_row, ASSETDOCTOR_PG_flatten_candidate,
-                            ASSETDOCTOR_PG_missing_block, ASSETDOCTOR_PG_tree_row)
+                            ASSETDOCTOR_PG_material_family, ASSETDOCTOR_PG_missing_block,
+                            ASSETDOCTOR_PG_tree_row)
 
     bpy.types.WindowManager.assetdoctor_report_rows = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_tree_row)
@@ -206,6 +211,16 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_datablock_conflicts_text = bpy.props.StringProperty(default="")
     bpy.types.WindowManager.assetdoctor_datablock_expanded = bpy.props.StringProperty(default="")
 
+    # F3 reformat (user feedback, 2026-06-25): Find Duplicate Materials gets the
+    # same keeper-dropdown/Merge Selected shape as the other dedup tools instead
+    # of a single blind "Dedup & Remap (Apply)" button.
+    bpy.types.WindowManager.assetdoctor_mat_families = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_material_family)
+    bpy.types.WindowManager.assetdoctor_mat_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_mat_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.assetdoctor_mat_removable = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_mat_linked = bpy.props.IntProperty(default=0)
+
     # Examine Library: retarget AWAY from a chosen (working) library.
     bpy.types.WindowManager.assetdoctor_examine_library_pick = bpy.props.StringProperty(
         name="Library", description="The library to examine (prop_search over bpy.data.libraries)")
@@ -231,6 +246,14 @@ def register() -> None:
         type=ASSETDOCTOR_PG_flatten_candidate)
     bpy.types.WindowManager.assetdoctor_flatten_index = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_flatten_plans_json = bpy.props.StringProperty(default="")
+    # Which rig/character groups are expanded in the picker (newline-joined
+    # rig names), mirroring every other collapsible-group list in this addon.
+    bpy.types.WindowManager.assetdoctor_flatten_expanded = bpy.props.StringProperty(default="")
+
+    # Phase 3c follow-up (item d): which Analyze rows' inline "Details"
+    # disclosure is expanded — one shared newline-joined set, keyed by
+    # report feature, mirroring every other collapsible-list state above.
+    bpy.types.WindowManager.assetdoctor_detail_expanded = bpy.props.StringProperty(default="")
 
     # Batch E — idle-scan feasibility prototype (gated off by default in prefs).
     bpy.types.WindowManager.assetdoctor_idle_seconds = bpy.props.FloatProperty(default=0.0)
@@ -261,7 +284,8 @@ def unregister() -> None:
                 "assetdoctor_op_paused", "assetdoctor_op_cancel",
                 "assetdoctor_last_result", "assetdoctor_last_result_ok",
                 "assetdoctor_active_report", "assetdoctor_resource_tree",
-                "assetdoctor_resource_expanded", "assetdoctor_profiled_ram",
+                "assetdoctor_resource_expanded", "assetdoctor_resource_totals",
+                "assetdoctor_profiled_ram",
                 "assetdoctor_report_rows", "assetdoctor_report_index",
                 "assetdoctor_resource_rows", "assetdoctor_resource_index",
                 "assetdoctor_broken_libs", "assetdoctor_broken_index",
@@ -282,12 +306,16 @@ def unregister() -> None:
                 "assetdoctor_datablock_scanned", "assetdoctor_datablock_removable",
                 "assetdoctor_datablock_conflicts", "assetdoctor_datablock_conflicts_text",
                 "assetdoctor_datablock_expanded",
+                "assetdoctor_mat_families", "assetdoctor_mat_index",
+                "assetdoctor_mat_scanned", "assetdoctor_mat_removable",
+                "assetdoctor_mat_linked",
                 "assetdoctor_examine_library_pick", "assetdoctor_examine_library",
                 "assetdoctor_examine_rows", "assetdoctor_examine_index",
                 "assetdoctor_examine_scanned", "assetdoctor_examine_expanded",
                 "assetdoctor_analyze_steps", "assetdoctor_analyze_index",
                 "assetdoctor_flatten_candidates", "assetdoctor_flatten_index",
-                "assetdoctor_flatten_plans_json",
+                "assetdoctor_flatten_plans_json", "assetdoctor_flatten_expanded",
+                "assetdoctor_detail_expanded",
                 "assetdoctor_idle_seconds", "assetdoctor_idle_detected"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]

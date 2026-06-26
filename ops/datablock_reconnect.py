@@ -263,6 +263,7 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
         backup = auto_backup(context)
         reconnected = 0
         transitively_missing = 0
+        externally_linked = 0
         warnings: list[str] = []
         # (collection, name) of every row caught by the transitive-missing check
         # below — _populate_missing_blocks rebuilds the whole list from scratch
@@ -273,6 +274,10 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
         # looked identical to an ordinary unmatched one once the count scrolled
         # off in the status line).
         transitive_keys: set[tuple[str, str]] = set()
+        # Same idea for the OTHER way a "successful" remap turns out not to have
+        # actually fixed anything — see the loop below for the root cause this
+        # was diagnosed from (2026-06-25, headless probe against a real file).
+        external_keys: set[tuple[str, str]] = set()
 
         by_source: dict[str, list] = {}
         for item in chosen:
@@ -333,7 +338,35 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
                 placeholder.user_remap(linked)
                 if placeholder.users == 0:
                     target_coll.remove(placeholder)
-                reconnected += 1
+                    reconnected += 1
+                    continue
+                # user_remap() reported success (no exception) but the
+                # placeholder STILL has real users — diagnosed via a headless
+                # probe against a real production file (2026-06-25): the
+                # remaining reference almost always lives inside data that is
+                # ITSELF linked from another library (e.g. a Material's node
+                # tree sourced from a DIFFERENT file than the one we're
+                # editing) — you cannot rewrite a pointer inside someone
+                # else's linked data from the linking file; it has to be
+                # fixed by opening THAT library directly. Without this check,
+                # `reconnected` silently counted these as fixed even though
+                # nothing changed (the user-reported "Reconnected N, but the
+                # missing-block count never goes down" bug).
+                remaining = bpy.data.user_map(subset={placeholder}).get(placeholder, set())
+                external_libs = sorted({
+                    os.path.basename(u.library.filepath) for u in remaining
+                    if u.library is not None
+                })
+                if external_libs:
+                    externally_linked += 1
+                    external_keys.add((row.collection, row.name))
+                    warnings.append(
+                        f"{row.name}: matched and linked, but still referenced from "
+                        f"{', '.join(external_libs)} — open that file directly to fix it there")
+                else:
+                    warnings.append(
+                        f"{row.name}: still has {placeholder.users} user(s) after "
+                        "remap (unexpected — not the usual linked-reference case)")
 
         # Defensive depsgraph settle before the next viewport draw, same precaution
         # taken after bulk image remap/remove (see ops.image_dedup) — unverified but
@@ -344,10 +377,14 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
             pass
 
         _populate_missing_blocks(context)
-        if transitive_keys:
+        if transitive_keys or external_keys:
             for item in coll:
-                if (item.collection, item.name) in transitive_keys:
+                key = (item.collection, item.name)
+                if key in transitive_keys:
                     item.confidence = "transitive"
+                    item.selected = False
+                elif key in external_keys:
+                    item.confidence = "external"
                     item.selected = False
         if context.area:
             context.area.tag_redraw()
@@ -357,6 +394,9 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
             msg += (f" {transitively_missing} candidate(s) were themselves unresolved "
                     "in the source .blend (missing further upstream — that library "
                     "doesn't actually have this data either).")
+        if externally_linked:
+            msg += (f" {externally_linked} candidate(s) are still referenced from another "
+                    "linked file — open that file directly to fix those.")
         if warnings:
             msg += f" {len(warnings)} skipped — see debug log."
             for w in warnings:

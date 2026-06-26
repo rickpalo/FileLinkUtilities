@@ -170,6 +170,27 @@ def test_build_chain_report_posing_items_are_selectable_refs():
     assert f.items == ["Object/Char1"]  # "Type/Name" -- core.tree._parse_ref recognises this
 
 
+def test_build_chain_report_tags_posing_source_file_when_set():
+    """A character found several hops deep (not in root.blend) names its own
+    file in the message -- the 2026-06-25 fix that censuses every visited
+    file, not just root, so a character ISN'T mistaken for living in root."""
+    g = DepGraph()
+    g.add_edge("root.blend", "people1.blend")
+    posing = [_info(name="Char1", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="//libs/people1.blend")]
+    report = linkchain.build_chain_report(g, "root.blend", posing)
+    f = next(f for f in report.findings if f.category == "posing_override")
+    assert "(in people1.blend)" in f.message
+
+
+def test_build_chain_report_no_file_tag_when_source_file_unset():
+    g = DepGraph()
+    posing = [_info(name="Char1", has_override=True, loc=(1.0, 0.0, 0.0))]
+    report = linkchain.build_chain_report(g, "root.blend", posing)
+    f = next(f for f in report.findings if f.category == "posing_override")
+    assert "(in " not in f.message
+
+
 # --- read_override_reference (stubbed BAT blocks -- the real DNA paths were
 # confirmed against actual production overrides via a one-off probe script,
 # 2026-06-25, not a synthetic fixture; see docs/TODO.md and the module
@@ -285,6 +306,57 @@ def test_build_flatten_plan_no_properties_warns():
     assert "no override properties found to replay" in plan.warnings
 
 
+# --- summarize_properties / build_rig_rollup (2026-06-25 user feedback) -------
+
+def test_summarize_properties_counts_posed_bones_once_per_name():
+    props = [
+        _prop('pose.bones["Hand_L"].location', (1.0, 0.0, 0.0)),
+        _prop('pose.bones["Hand_L"].rotation_quaternion', (1.0, 0.0, 0.0, 0.0)),
+        _prop('pose.bones["Hand_R"].location', (0.0, 0.0, 0.0)),
+    ]
+    summary = linkchain.summarize_properties(props)
+    assert "2 bone(s) posed" in summary
+
+
+def test_summarize_properties_detects_animation_override():
+    props = [_prop("animation_data.action", "Action/Walk")]
+    assert "animation override" in linkchain.summarize_properties(props)
+
+
+def test_summarize_properties_bare_transform_and_material_and_modifier():
+    props = [
+        _prop("location", (1.0, 2.0, 3.0)),
+        _prop("scale", (1.0, 1.0, 1.0)),
+        _prop("material_slots[0].material", "Material/Skin"),
+        _prop('modifiers["Armature"].object', "Object/Rig"),
+        _prop("parent", "Object/Rig"),
+    ]
+    summary = linkchain.summarize_properties(props)
+    assert "2 transform adjustment(s)" in summary
+    assert "1 material override(s)" in summary
+    assert "1 modifier override(s)" in summary
+    assert "reparented" in summary
+
+
+def test_summarize_properties_empty_says_nothing_to_replay():
+    assert linkchain.summarize_properties([]) == "no override properties found to replay"
+
+
+def test_build_rig_rollup_combines_members_and_counts_ready():
+    routes = {"human_bundle.blend": [["root.blend", "people1.blend", "human_bundle.blend"]]}
+    ref = OverrideReference(name="bonnet", kind="Object", library="//libs/human_bundle.blend")
+    ready_plan = linkchain.build_flatten_plan(
+        "Body", ref, [_prop('pose.bones["Spine"].location')], routes)
+    blocked_plan = linkchain.build_flatten_plan("Eyes", ref, [], routes)
+    rollup = linkchain.build_rig_rollup([ready_plan, blocked_plan])
+    assert rollup.startswith("1/2 part(s) ready")
+    assert "1 bone(s) posed" in rollup
+
+
+def test_build_rig_rollup_no_plans():
+    assert linkchain.build_rig_rollup([]) == "no data"
+
+
 # --- routes_from_report --------------------------------------------------------
 
 def test_routes_from_report_round_trips_build_chain_report():
@@ -346,6 +418,43 @@ def test_build_flatten_plan_report_clean_when_empty():
     assert "clean" in cats
 
 
+# --- build_flatten_apply_report (Phase 4 Apply) ------------------------------
+
+def test_build_flatten_apply_report_overview_counts_ok():
+    results = [
+        linkchain.FlattenApplyResult("Char1", True, "flattened — 3 properties replayed",
+                                     properties_applied=3),
+        linkchain.FlattenApplyResult("Char1_eyes", True, "flattened — 1 property replayed",
+                                     properties_applied=1),
+    ]
+    report = linkchain.build_flatten_apply_report("Char1", results)
+    overview = next(f for f in report.findings if f.category == "overview")
+    assert "2 of 2" in overview.message
+    assert overview.severity == "info"
+
+
+def test_build_flatten_apply_report_partial_failure_is_warning():
+    results = [
+        linkchain.FlattenApplyResult("Char1", True, "flattened"),
+        linkchain.FlattenApplyResult("Char1_eyes", False, "not ready — skipped"),
+    ]
+    report = linkchain.build_flatten_apply_report("Char1", results)
+    overview = next(f for f in report.findings if f.category == "overview")
+    assert "1 of 2" in overview.message
+    assert overview.severity == "warning"
+    warn = next(f for f in report.findings if f.category == "flatten_warning")
+    assert warn.items == ["Object/Char1_eyes"]
+    assert "not ready" in warn.message
+    ok = next(f for f in report.findings if f.category == "flatten_applied")
+    assert ok.items == ["Object/Char1"]
+
+
+def test_build_flatten_apply_report_clean_when_empty():
+    report = linkchain.build_flatten_apply_report("Char1", [])
+    cats = {f.category for f in report.findings}
+    assert "clean" in cats
+
+
 # --- real fixture: BAT read path ---------------------------------------------
 
 pytestmark = pytest.mark.skipif(
@@ -366,3 +475,26 @@ def test_classify_objects_real_fixture_no_override_no_modifier():
     assert tree.loc == (0.0, 0.0, 0.0)
     assert tree.size == (1.0, 1.0, 1.0)
     assert linkchain.classify_posing(tree) == UNCLASSIFIED
+
+
+def test_scan_links_and_objects_matches_separate_reads():
+    """The merged one-open reader (perf fix, 2026-06-25: Find Flattenable Link
+    Chains used to open every file twice) must return exactly what the two
+    separate calls it replaces would have — same LinkRefs as
+    blendscan.scan_file, same posing info as classify_objects."""
+    from core import blendscan
+
+    refs, objects = linkchain.scan_links_and_objects(LINKPROJ / "scene.blend")
+    assert refs == blendscan.scan_file(LINKPROJ / "scene.blend")
+    assert objects == linkchain.classify_objects(LINKPROJ / "scene.blend")
+
+
+def test_scan_links_and_objects_no_links():
+    """libB.blend (the chain's leaf) links nothing -- refs come back empty,
+    objects still populated, same shape as the separate-call equivalents."""
+    from core import blendscan
+
+    refs, objects = linkchain.scan_links_and_objects(LINKPROJ / "libB.blend")
+    assert refs == blendscan.scan_file(LINKPROJ / "libB.blend") == []
+    assert objects == linkchain.classify_objects(LINKPROJ / "libB.blend")
+    assert objects
