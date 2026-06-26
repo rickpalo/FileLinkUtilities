@@ -6,7 +6,7 @@
 **SESSION DIGEST — 2026-06-25, v0.2.61→v0.2.63. Phase 4 Apply LIVE-VERIFIED for the first time
 (headless probe against the real 14.4GB People1_v5.1.blend, no crash) + a live-UI-feedback batch
 (8 items) fixed while the user tested v0.2.61 in Blender. Suite 356→358. COMMITTED this session
-(see commit hash at top of `git log` — bundles the whole v0.2.38→v0.2.63 stack on top of `824d5d1`,
+(commit `22c0164` — bundles the whole v0.2.38→v0.2.63 stack on top of `824d5d1`,
 per the user's explicit "commit everything" at session end).**
 
 ### Phase 4 Apply — PROBE RESULTS (the headline finding this session)
