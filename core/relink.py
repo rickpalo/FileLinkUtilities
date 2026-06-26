@@ -59,10 +59,19 @@ def _key(p: str) -> str:
     return p.replace("\\", "/").rstrip("/").lower()
 
 
+def _drive(path: str) -> str:
+    """Windows drive letter ("C:"), or "(no drive)" for a UNC/driveless path."""
+    drive, _tail = os.path.splitdrive(path)
+    return drive.upper() if drive else "(no drive)"
+
+
 @dataclass
 class LibFixPlan:
     renames: list[tuple[str, str, str]] = field(default_factory=list)  # (name, old, new)
-    duplicates: dict[str, list[str]] = field(default_factory=dict)  # resolved key -> names
+    # resolved key -> [(library name, stored path)] -- the stored path is needed
+    # so the "Use Selected Paths" UI (item 6, 2026-06-25) can show each member's
+    # own form as a checkbox label, not just its name.
+    duplicates: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
 
 
 def plan_library_fixes(libs: list[LibDesc], blend_dir: str) -> LibFixPlan:
@@ -75,11 +84,48 @@ def plan_library_fixes(libs: list[LibDesc], blend_dir: str) -> LibFixPlan:
         if new and new != lib.stored:
             renames.append((lib.name, lib.stored, new))
 
-    groups: dict[str, list[str]] = {}
+    groups: dict[str, list[tuple[str, str]]] = {}
     for lib in libs:
-        groups.setdefault(_key(lib.resolved), []).append(lib.name)
+        groups.setdefault(_key(lib.resolved), []).append((lib.name, lib.stored))
     duplicates = {k: v for k, v in groups.items() if len(v) > 1}
     return LibFixPlan(renames=renames, duplicates=duplicates)
+
+
+@dataclass
+class AbsoluteLibrary:
+    """One absolute-path library, for item 7's grouped checkbox UI.
+    ``new`` is the relative path it would become, or "" when it can't be
+    (different drive — there is no relative path across Windows drives)."""
+
+    name: str
+    stored: str
+    new: str = ""
+
+
+@dataclass
+class AbsolutePathGroup:
+    drive: str  # "C:", "D:", ... or "(no drive)" for a UNC path
+    fixable: bool  # False = cross-drive from the current file — grouped, but un-fixable
+    members: list[AbsoluteLibrary] = field(default_factory=list)
+
+
+def plan_absolute_paths(libs: list[LibDesc], blend_dir: str) -> list[AbsolutePathGroup]:
+    """Group every EXISTING absolute-stored library by drive (item 7,
+    2026-06-25: "the absolute paths section should group by drive... I don't
+    think a relative path is possible to other drives"). Same-drive-as-the-
+    current-file groups are fixable; cross-drive groups are still reported
+    (Path Normalization's plain ``renames`` list silently drops these today —
+    a transparency gap, not just a missing action) but flagged un-fixable,
+    fixable groups sort first."""
+    groups: dict[str, AbsolutePathGroup] = {}
+    for lib in libs:
+        if not lib.exists or lib.stored.startswith("//"):
+            continue  # missing -> relinker; already relative -> not an absolute-path issue
+        new = to_relative(lib.resolved, blend_dir)
+        drive = _drive(lib.resolved)
+        g = groups.setdefault(drive, AbsolutePathGroup(drive=drive, fixable=new is not None))
+        g.members.append(AbsoluteLibrary(name=lib.name, stored=lib.stored, new=new or ""))
+    return sorted(groups.values(), key=lambda g: (not g.fixable, g.drive))
 
 
 def find_relink_candidates(
@@ -154,11 +200,13 @@ def build_libfix_report(plan: LibFixPlan, relinks: dict[str, str] | None = None,
                            message=f"{name}:  {old}  →  {new}",
                            severity="warning", items=[old, new],
                            data={"name": name, "new": new}))
-    for _resolved, names in plan.duplicates.items():
+    for _resolved, members in plan.duplicates.items():
+        names = [name for name, _stored in members]
         report.add(Finding(category="duplicate_library",
                            message=f"{len(names)} libraries resolve to the same file: "
                                    f"{', '.join(names)}",
-                           severity="warning", items=names))
+                           severity="warning", items=names,
+                           data={"members": [list(m) for m in members]}))
     if not report.findings:
         report.add(Finding(category="clean",
                            message="✓ All library paths are clean — nothing to fix",

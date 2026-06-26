@@ -71,6 +71,7 @@ def main():
         # v0.2.56, 2026-06-25, when the inline Duplicate-Data-blocks..Reports
         # block was moved out of the parent's own draw() into its own panel).
         sub_ids = ["ASSETDOCTOR_PT_current_file_data", "ASSETDOCTOR_PT_analyze",
+                   "ASSETDOCTOR_PT_analyze_external",
                    "ASSETDOCTOR_PT_orphans",
                    "ASSETDOCTOR_PT_geometry",
                    "ASSETDOCTOR_PT_utilities", "ASSETDOCTOR_PT_results"]

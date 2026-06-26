@@ -42,6 +42,16 @@ def test_find_datablock_loops_ignores_self_edges():
     assert dg.find_datablock_loops([("a", "b"), ("b", "a")])
 
 
+def test_find_datablock_loops_excludes_shape_key_reciprocal_pair():
+    """A Mesh<->its own Key (shape_keys / Key.user mirror each other) is
+    intrinsic Blender plumbing -- not a real override-resync-loop bug (real
+    user report, 2026-06-25: "what type of a key is that, to help understand
+    the loop")."""
+    edges = [("Mesh/CC_Base_Body.038", "Key/Key.296"),
+             ("Key/Key.296", "Mesh/CC_Base_Body.038")]
+    assert dg.find_datablock_loops(edges) == []
+
+
 def test_wasted_copies():
     dups = {"Material": {"Body": ["Body", "Body.001", "Body.002"]},
             "Mesh": {"Rock": ["Rock", "Rock.001"]}}
@@ -82,6 +92,21 @@ def test_build_live_report_strips_type_prefix_for_display():
     assert dup.message == "Mesh: Cube ×2"
     assert dup.items == ["Mesh/Cube", "Mesh/Cube.001"]
     assert dup.data["base"] == "Cube"
+
+
+def test_build_live_report_shape_key_risks():
+    extract = LiveExtract(shape_key_risks=[("KEKey.553", "CC_Base_Body.038")])
+    report = dg.build_live_report(extract, "test.blend")
+    risks = [f for f in report.findings if f.category == "shape_key_override_risk"]
+    assert len(risks) == 1
+    assert "KEKey.553" in risks[0].message
+    assert "CC_Base_Body.038" in risks[0].message
+    assert risks[0].items == ["Mesh/CC_Base_Body.038"]
+
+
+def test_build_live_report_no_shape_key_risks_by_default():
+    report = dg.build_live_report(LiveExtract())
+    assert not any(f.category == "shape_key_override_risk" for f in report.findings)
 
 
 def test_build_live_report_loops_skipped():

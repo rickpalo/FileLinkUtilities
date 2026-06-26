@@ -200,6 +200,37 @@ def fingerprint_action(action_dict: dict) -> str:
 #     "colorspace": str, "pixels_digest": str (optional) }
 
 
+# --------------------------------------------------------------------------- #
+# Shape keys (Key datablocks)
+# --------------------------------------------------------------------------- #
+#
+# shape_key_dict contract:
+#   { "mesh_fingerprint": str,  # fingerprint_mesh() of the OWNING mesh's geometry
+#     "blocks": [{"name": str, "co": [[x,y,z], ...]}, ...] }  # key_blocks, in order
+#
+# A Key's own relative-key vertex data means nothing on its own — the same
+# delta values deform a different mesh into a different shape. Folding the
+# owning mesh's fingerprint into the hash means two Keys only ever compare
+# equal when BOTH the mesh they deform AND every key block's data match.
+
+
+def fingerprint_shape_key(shape_key_dict: dict) -> str:
+    """Stable hash of a shape-key (Key) datablock, keyed to its owning mesh.
+
+    Order-sensitive (like ``fingerprint_mesh``): detects byte-identical
+    re-linked duplicates, not arbitrary shapes that happen to deform the same
+    way. Empty/unverifiable input (e.g. the owner isn't a Mesh) hashes to ""
+    so it never collides with a real fingerprint."""
+    if not shape_key_dict:
+        return ""
+    payload = {
+        "mesh": shape_key_dict.get("mesh_fingerprint", ""),
+        "blocks": [{"name": b.get("name", ""), "co": b.get("co", [])}
+                   for b in shape_key_dict.get("blocks", [])],
+    }
+    return _sha(["shape_key", payload])
+
+
 def fingerprint_image(image_dict: dict) -> str:
     """Identity hash of an image datablock (keeps resolution; for F4 dedup)."""
     payload = {

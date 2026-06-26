@@ -56,7 +56,6 @@ class ASSETDOCTOR_PG_tree_row(bpy.types.PropertyGroup):
     expanded: bpy.props.BoolProperty()  # type: ignore[valid-type]
     detail: bpy.props.StringProperty()  # type: ignore[valid-type]
     icon: bpy.props.StringProperty()  # optional per-node icon override (e.g. File Map)  # type: ignore[valid-type]
-    guide: bpy.props.StringProperty()  # precomputed "│  ├─ "-style indent-guide prefix  # type: ignore[valid-type]
     ref_type: bpy.props.StringProperty()  # type: ignore[valid-type]
     ref_name: bpy.props.StringProperty()  # type: ignore[valid-type]
     prop: bpy.props.StringProperty()  # expanded-keys WM prop this row belongs to
@@ -74,10 +73,15 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
             layout.label(text=item.label)
             return
         row = layout.row(align=True)
-        # Indent guide: a "│  ├─ "-style connector (precomputed in core.tree) reads
-        # clearer than blank space, especially in deep trees like the F7 File Map.
-        if item.guide:
-            row.label(text=item.guide, icon="NONE")
+        # Plain depth indentation (no ASCII tree-connector glyphs — tried and
+        # dropped per user feedback, 2026-06-25: "this Fake Explorer style is
+        # garbage"). Every report's tree now indents the same plain way. One
+        # unit-factor separator PER LEVEL, not a single separator scaled by
+        # item.indent — a single large-factor separator inside an align=True
+        # row visibly breaks (both width and row height grow non-linearly past
+        # ~3 levels deep, real user report 2026-06-26 on a 4-level File Map).
+        for _ in range(item.indent):
+            row.separator(factor=1.4)
         if item.has_children:
             tri = "TRIA_DOWN" if item.expanded else "TRIA_RIGHT"
             op = row.operator("assetdoctor.report_toggle", text="", icon=tri, emboss=False)
@@ -181,6 +185,12 @@ class ASSETDOCTOR_PG_broken_lib(bpy.types.PropertyGroup):
     # this just says where to go fix it. Empty for every other row/list that
     # reuses this PropertyGroup.
     library: bpy.props.StringProperty()  # type: ignore[valid-type]
+    # Generic free-form per-row tag, repurposed per list (items 6/7/11,
+    # 2026-06-25): unused for Inconsistent/Duplicate Library Paths and
+    # Absolute Paths (``group`` already carries their grouping key); for
+    # Resolution Variant rows it holds the member's own resolution token
+    # ("1k"/"2k"/...), needed by Select High/Low Resolution.
+    tag: bpy.props.StringProperty()  # type: ignore[valid-type]
 
 
 # Keeps a strong reference to each row's keeper-enum items list. Dynamic
@@ -468,19 +478,24 @@ class ASSETDOCTOR_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
                        "from disk)", icon="ERROR")
 
 
-def _analyze_step_status_icon(wm, step_key: str) -> str:
+def _analyze_step_status_icon(wm, step_key: str, has_run: bool) -> str:
     """Per-button status icon (Phase 3 item 5, 2026-06-25: "to the LEFT of each
     Analyze button, a small progress/status indicator" — replaces the old
-    separate vertical step-status list). Looks up ``step_key`` in the
-    Analyze-All run's own per-step collection (rebuilt fresh each run, see
-    ``ops.analyze_all``); ``"BLANK1"`` (no icon) for a step that's never been
-    part of an Analyze-All run yet, or isn't one of its steps at all (Find
-    Flattenable Characters/Find All Missing/Profile Render/the folder-scoped
-    tools at the bottom — see core.analyze_steps' own exclusion list)."""
+    separate vertical step-status list).
+
+    Fixed 2026-06-25 (user report: "the status icons... have gone missing...
+    they should ALWAYS be visible, so the user knows which button(s) he has
+    already used") — this used to look up ONLY the Analyze-All run's own
+    per-step collection, which stays empty until Analyze All is clicked at
+    least once, so every individually-clicked button showed a permanent blank
+    icon. Now: the Analyze-All collection still wins while a step is actually
+    ``running`` or just ``error``-ed (transient, only meaningful during/right
+    after a run); otherwise fall back to ``has_run`` — whether this check's
+    OWN data shows it has ever been run, individually or not."""
     for row in wm.assetdoctor_analyze_steps:
-        if row.key == step_key:
-            return _ANALYZE_STEP_ICON.get(row.status, "BLANK1")
-    return "BLANK1"
+        if row.key == step_key and row.status in ("running", "error"):
+            return _ANALYZE_STEP_ICON[row.status]
+    return "CHECKMARK" if has_run else "RADIOBUT_OFF"
 
 
 def _fmt_count(label: str, detail: str) -> str:
@@ -493,12 +508,12 @@ def _fmt_count(label: str, detail: str) -> str:
 def _f7_dependency_summary(nodes) -> str:
     """Check Link Chain's own rollup (Phase 3c, 2026-06-25): every severity
     tier's CATEGORY children (Circular references / Missing libraries / ...),
-    skipping the Summary and File map nodes and the tier wrappers themselves
-    — the issue counts are what answers "is this file safe," not the file/
-    link totals the tier wrappers carry."""
+    skipping the File map node and the tier wrappers themselves — the issue
+    counts are what answers "is this file safe," not the file/link totals
+    the File map row carries."""
     parts = []
     for node in nodes:
-        if node.key in ("f7:summary", "f7:filemap"):
+        if node.key == "f7:filemap":
             continue
         for child in node.children:
             if child.detail:
@@ -511,13 +526,23 @@ def _f7_dependency_summary(nodes) -> str:
     return text
 
 
+def _feature_has_run(wm, feature: str) -> bool:
+    """Cheap "has this stashed report/tree feature ever run" check (no JSON
+    parse needed) — drives the Analyze button's status icon (item 9,
+    2026-06-25) for the features whose headline ``_draw_report_detail`` draws
+    on its own, so ``_analyze_row`` can't infer it from a summary string."""
+    from ..ops.report_store import data_prop
+
+    return bool(getattr(wm, data_prop(feature), ""))
+
+
 def _feature_tree_nodes(wm, feature: str) -> tuple[bool, list]:
     """``(has_run, nodes)`` for a stashed report/tree feature. ``has_run``
     distinguishes "never scanned" (hide the rollup entirely) from "scanned,
     found nothing" (negative-output: show a flat ✓ line) — both
-    :func:`_report_feature_summary` and its inline detail disclosure below
-    need that same distinction, so it's factored out once rather than
-    duplicating the raw-fetch/parse dance."""
+    :func:`_report_headline` and :func:`_draw_report_detail` need that same
+    distinction, so it's factored out once rather than duplicating the
+    raw-fetch/parse dance."""
     from ..core.report import Report
     from ..core.tree import nodes_from_json, report_to_tree
     from ..ops.report_store import TREE_FEATURES, data_prop
@@ -533,21 +558,22 @@ def _feature_tree_nodes(wm, feature: str) -> tuple[bool, list]:
     return True, nodes
 
 
-def _report_feature_summary(wm, feature: str) -> str:
-    """One-line rollup of a report/tree-based feature's stashed result, shown
-    directly under its Analyze trigger button (Phase 3c, 2026-06-25). "" if
-    the feature has never been run. A flat clean/overview headline (when a
-    feature already writes one, e.g. "12 override loop(s) · ...") IS the
-    one-liner; otherwise join the top-level issue categories' own counts,
-    falling back to the report's own Summary sentence when there's nothing
-    to break down (e.g. "0 orphan, 0 fake-only, 0 identical group(s)")."""
-    has_run, nodes = _feature_tree_nodes(wm, feature)
-    if not has_run:
-        return ""
-    if not nodes:
-        return "✓ nothing found"
+def _report_headline(nodes, feature: str) -> tuple[str, object | None]:
+    """``(headline_text, node_to_skip)`` for a stashed report/tree feature's
+    top-level nodes. ``node_to_skip`` is the exact node whose own ``.label``
+    the headline already quotes verbatim (a flat clean/overview row) — the
+    inline disclosure below must leave it out of its body, or the same line
+    shows twice (user feedback, 2026-06-25 item e). ``None`` when the
+    headline is a derived rollup that doesn't correspond to any one node
+    (Check Link Chain's tier-count line), or there's nothing to deduplicate.
+
+    A flat clean/overview headline (when a feature already writes one, e.g.
+    "12 override loop(s) · ...") IS the one-liner; otherwise join the
+    top-level issue categories' own counts, falling back to the report's own
+    Summary sentence when there's nothing to break down (e.g. "0 orphan, 0
+    fake-only, 0 identical group(s)")."""
     if feature == "f7":
-        return _f7_dependency_summary(nodes)
+        return _f7_dependency_summary(nodes), None
     # Node keys are "<report.feature>:<category>[:i]" — report.feature's own
     # casing doesn't always match the lowercase key this panel stashes/looks
     # features up under (e.g. geometry_dedup's Report uses "F5" while this is
@@ -559,48 +585,75 @@ def _report_feature_summary(wm, feature: str) -> str:
     first = nodes[0]
     if not first.children and (first.key.startswith(tail + "overview")
                                 or first.key.startswith(tail + "clean")):
-        return first.label
+        return first.label, first
     summary_key = f"{tail}summary"
     cats = [n for n in nodes if n.detail and n.key != summary_key]
     if not cats:
         summary = next((n for n in nodes if n.key == summary_key), None)
         if summary and summary.children:
-            return summary.children[0].label
-        return "✓ nothing found"
+            return summary.children[0].label, None
+        return "✓ nothing found", None
     parts = [_fmt_count(n.label, n.detail) for n in cats[:4]]
     if len(cats) > 4:
         parts.append(f"+{len(cats) - 4} more")
-    return " · ".join(parts)
+    return " · ".join(parts), None
 
 
 def _draw_report_detail(layout, wm, feature: str) -> None:
-    """The rollup's details, collapsed under a "Details" disclosure directly
-    below its one-line summary (user feedback, 2026-06-25 item d: every
-    summary should roll up to the same content the dedicated Reports tab
-    shows, without having to leave the Analyze panel). Nothing to disclose
-    (never run) draws nothing — the summary line above is already hidden in
-    that case. Renders fully expanded, no per-node fold/unfold: simplest
-    correct disclosure, not virtualized (same accepted tradeoff as every
-    other custom row list in this file)."""
-    from ..core.tree import all_keys, flatten_visible
+    """One Analyze button's report result: a single row carrying BOTH the
+    one-line headline AND its own expand arrow — no separate "Details" row
+    (item a, 2026-06-25). When expanded, every remaining category draws as
+    its OWN collapsible row, collapsed by default (item c), via the inline-
+    only ``assetdoctor_detail_expanded`` key set (independent of each
+    feature's own ``exp_prop`` — the dedicated Reports tab pre-seeds THAT one
+    expanded, which would defeat "starts collapsed" here). Plain depth
+    indentation only, no tree-connector glyphs (item b). The one node the
+    headline already quotes verbatim is left out of the body so it isn't
+    shown twice (item e); when nothing remains beyond the headline, no arrow
+    is drawn at all — there's nothing left to disclose (item f).
+
+    All rows draw inside one ``column(align=True)`` (user feedback,
+    2026-06-25 item 4: vertical spacing between rows was "inconsistent and
+    too large") — a bare sequence of top-level ``layout.row()`` calls each
+    carries Blender's normal inter-widget margin; an aligned column packs
+    them tightly, matching the Missing Textures section's spacing."""
+    from ..core.tree import flatten_visible
 
     has_run, nodes = _feature_tree_nodes(wm, feature)
-    if not has_run or not nodes:
+    if not has_run:
         return
-    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
-    is_exp = feature in expanded
-    row = layout.row(align=True)
+    col = layout.column(align=True)
+    row = col.row(align=True)
     row.separator(factor=2.2)
-    op = row.operator("assetdoctor.toggle_inline_detail", text="Details",
-                       icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-    op.key = feature
-    if not is_exp:
+    if not nodes:
+        row.label(text="✓ nothing found")
         return
-    for r in flatten_visible(nodes, all_keys(nodes)):
-        drow = layout.row(align=True)
+
+    headline, skip = _report_headline(nodes, feature)
+    remaining = [n for n in nodes if n is not skip]
+    if not remaining:
+        row.label(text=headline)
+        return
+
+    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    root_key = f"{feature}:__inline_root__"
+    is_open = root_key in expanded
+    op = row.operator("assetdoctor.toggle_inline_detail", text="",
+                       icon="TRIA_DOWN" if is_open else "TRIA_RIGHT", emboss=False)
+    op.key = root_key
+    row.label(text=headline)
+    if not is_open:
+        return
+
+    for r in flatten_visible(remaining, expanded):
+        drow = col.row(align=True)
         drow.separator(factor=2.8 + r.indent * 1.4)
-        if r.guide:
-            drow.label(text=r.guide)
+        if r.has_children:
+            top = drow.operator("assetdoctor.toggle_inline_detail", text="",
+                                icon="TRIA_DOWN" if r.expanded else "TRIA_RIGHT", emboss=False)
+            top.key = r.key
+        else:
+            drow.label(text="", icon="BLANK1")
         if r.icon:
             drow.label(text="", icon=r.icon)
         if r.ref:
@@ -674,6 +727,30 @@ def _duplicate_textures_headline(wm, narrow: bool) -> str:
     return "Duplicate Materials/Textures — " + ", ".join(bits)
 
 
+def _duplicates_has_run(wm) -> bool:
+    """Item 3, 2026-06-25: "Find Duplicates" status icon — true once ANY of
+    the 4 folded-in scans has data, regardless of which one was clicked."""
+    return bool(wm.assetdoctor_datablock_scanned or wm.assetdoctor_mat_scanned
+                or _feature_has_run(wm, "geo") or wm.assetdoctor_dup_scanned)
+
+
+def _draw_duplicates_summary(layout, wm, narrow: bool) -> None:
+    """Item 3, 2026-06-25: "Find Duplicates" replaces 4 separate buttons
+    (Data-blocks/Materials/Geometry/Content), so its result needs all 4 of
+    their headlines — none of the section boxes below show their own
+    anymore (each used to rely on its now-removed individual Analyze row).
+    Find Duplicate Geometry is the one exception: it's tree-based and
+    already draws its own headline+arrow row via ``_draw_report_detail``
+    (called separately), so it is deliberately NOT repeated here."""
+    for bit in (_datablock_dups_headline(wm), _material_dups_headline(wm),
+                _duplicate_textures_headline(wm, narrow)):
+        if not bit:
+            continue
+        row = layout.row(align=True)
+        row.separator(factor=2.2)
+        row.label(text=bit)
+
+
 def _datablock_dups_headline(wm) -> str:
     """The Duplicate Data-blocks section's own header summary, factored out
     so the Analyze button can show the same line inline."""
@@ -727,7 +804,7 @@ def _flatten_candidates_summary(wm) -> str:
         return ""
     rows = wm.assetdoctor_flatten_candidates
     if not len(rows):
-        return "✓ no flattenable characters found"
+        return wm.assetdoctor_flatten_remote_note or "✓ no flattenable characters found"
     rigs = len({r.rig for r in rows})
     ready = sum(1 for r in rows if r.ready)
     return f"{len(rows)} part(s) across {rigs} rig(s)/character(s) — {ready} ready, {len(rows) - ready} blocked"
@@ -764,12 +841,19 @@ def _draw_resource_breakdown(layout, wm):
     erow.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "resource"
 
 
-def _analyze_row(layout, wm, step_key, opname, text, icon, summary=""):
+def _analyze_row(layout, wm, step_key, opname, text, icon, summary="", has_run=None):
     """One Analyze trigger button, full-width (Phase 3 feedback item 2a,
     2026-06-25: one per row so each gets a status icon AND a result line),
-    with its inline result summary directly below when there's one to show."""
+    with its inline result summary directly below when there's one to show.
+
+    ``has_run`` drives the status icon (item 9, 2026-06-25) — defaults to
+    "the summary text is non-empty" (true for every feature whose headline
+    this draws directly); the tree-based features that now draw their own
+    headline inside ``_draw_report_detail`` instead must pass it explicitly."""
+    if has_run is None:
+        has_run = bool(summary)
     row = layout.row(align=True)
-    row.label(text="", icon=_analyze_step_status_icon(wm, step_key))
+    row.label(text="", icon=_analyze_step_status_icon(wm, step_key, has_run))
     op = row.operator(opname, text=text, icon=icon)
     if summary:
         srow = layout.row(align=True)
@@ -854,7 +938,7 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
     Variants/Geometry/Content) is still NOT built — needs real operator code,
     not just a layout change."""
 
-    bl_label = "Analyze"
+    bl_label = "Analyze This File"
     bl_idname = "ASSETDOCTOR_PT_analyze"
     bl_order = 1
 
@@ -866,15 +950,13 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         layout.operator("assetdoctor.analyze_all", icon="PLAY")
 
         _analyze_row(layout, wm, "check_link_chain", "assetdoctor.scan_dependencies",
-                     "Check Link Chain", "VIEWZOOM", _report_feature_summary(wm, "f7"))
+                     "Check Link Chain", "VIEWZOOM", has_run=_feature_has_run(wm, "f7"))
         _draw_report_detail(layout, wm, "f7")
         _analyze_row(layout, wm, "audit_file", "assetdoctor.analyze_overrides",
-                     "Audit This File", "LIBRARY_DATA_OVERRIDE",
-                     _report_feature_summary(wm, "f7live"))
+                     "Audit This File", "LIBRARY_DATA_OVERRIDE", has_run=_feature_has_run(wm, "f7live"))
         _draw_report_detail(layout, wm, "f7live")
         _analyze_row(layout, wm, "find_flattenable_chains", "assetdoctor.scan_link_chains",
-                     "Find Flattenable Link Chains", "LINKED",
-                     _report_feature_summary(wm, "f7chain"))
+                     "Find Flattenable Link Chains", "LINKED", has_run=_feature_has_run(wm, "f7chain"))
         _draw_report_detail(layout, wm, "f7chain")
         _analyze_row(layout, wm, "", "assetdoctor.scan_flatten_candidates",
                      "Find Flattenable Characters", "LIBRARY_DATA_OVERRIDE",
@@ -883,44 +965,40 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
 
         _analyze_row(layout, wm, "find_broken_links", "assetdoctor.scan_broken_links",
                      "Find Broken Library Links", "LIBRARY_DATA_BROKEN",
-                     _report_feature_summary(wm, "f7links"))
+                     has_run=_feature_has_run(wm, "f7links"))
         _draw_report_detail(layout, wm, "f7links")
-        _analyze_row(layout, wm, "find_duplicate_datablocks", "assetdoctor.scan_datablock_dups",
-                     "Find Duplicate Data-blocks", "LIBRARY_DATA_OVERRIDE",
-                     _datablock_dups_headline(wm))
+        # Item 3, 2026-06-25 (user request): Find Duplicate Materials/Geometry/
+        # Content folded into ONE "Find Duplicates" trigger alongside Find
+        # Duplicate Data-blocks — one click runs all 4 scans; each one's own
+        # report/list section (below) is unchanged, so the result reads as one
+        # combined summary followed by what each individual button would have
+        # shown. Resolution Variants stays its OWN separate button (a
+        # different kind of analysis — multi-res footprint, not duplicates).
+        _analyze_row(layout, wm, "find_duplicate_datablocks", "assetdoctor.find_duplicates",
+                     "Find Duplicates", "LIBRARY_DATA_OVERRIDE",
+                     has_run=_duplicates_has_run(wm))
+        _draw_duplicates_summary(layout, wm, narrow)
         _draw_datablock_dups(layout, wm)
+        _draw_material_dups(layout, wm)
+        _draw_report_detail(layout, wm, "geo")
+
         _analyze_row(layout, wm, "find_reconnectable", "assetdoctor.scan_reconnect_targets",
                      "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
                      _reconnect_headline(wm))
         _analyze_row(layout, wm, "", "assetdoctor.scan_all_missing",
                      "Find All Missing", "VIEWZOOM", _all_missing_summary(wm))
 
-        # NEXT SLOT (not built): "Find All Duplicates" — a new grouping button
-        # over Materials/Resolution Variants/Geometry/Content (item 4); would
-        # pair with Find Missing Textures here once it exists.
         _analyze_row(layout, wm, "find_missing_textures", "assetdoctor.scan_broken_textures",
                      "Find Missing Textures", "IMAGE_DATA",
                      _missing_textures_headline(wm, narrow))
-        _analyze_row(layout, wm, "find_duplicate_materials", "assetdoctor.material_dedup",
-                     "Find Duplicate Materials", "MATERIAL",
-                     _material_dups_headline(wm)).apply = False
-        _draw_material_dups(layout, wm)
 
         _analyze_row(layout, wm, "find_resolution_variants", "assetdoctor.scan_res_variants",
                      "Find Resolution Variants", "FULLSCREEN_ENTER",
-                     _report_feature_summary(wm, "f6res"))
-        _draw_report_detail(layout, wm, "f6res")
-        _analyze_row(layout, wm, "find_duplicate_geometry", "assetdoctor.instance_geometry",
-                     "Find Duplicate Geometry", "NONE",
-                     _report_feature_summary(wm, "geo")).apply = False
-        _draw_report_detail(layout, wm, "geo")
+                     _res_variants_headline(wm))
+        _draw_res_variants(layout, wm)
 
-        _analyze_row(layout, wm, "find_duplicate_content", "assetdoctor.scan_content_dups",
-                     "Find Duplicate Content", "ZOOM_ALL",
-                     _duplicate_textures_headline(wm, narrow))
         _analyze_row(layout, wm, "find_orphans", "assetdoctor.scan_orphans",
-                     "Find Orphans", "NONE",
-                     _report_feature_summary(wm, "f4")).purge_orphans = False
+                     "Find Orphans", "NONE", has_run=_feature_has_run(wm, "f4")).purge_orphans = False
         _draw_report_detail(layout, wm, "f4")
 
         # Footprint/impact analyses — a different KIND of analysis (not "is
@@ -936,7 +1014,7 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         # Fixes (Phase 3c), at which point the whole Make Local panel can go.
         _analyze_row(layout, wm, "", "assetdoctor.make_local",
                      "Make Local Impact", "LIBRARY_DATA_DIRECT",
-                     _report_feature_summary(wm, "f2")).apply = False
+                     has_run=_feature_has_run(wm, "f2")).apply = False
         _draw_report_detail(layout, wm, "f2")
         # Profile Render actually renders — too slow/disruptive for the Analyze
         # All sequencer (core.analyze_steps.STEPS deliberately excludes it);
@@ -944,17 +1022,22 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         _analyze_row(layout, wm, "", "assetdoctor.profile_render",
                      "Profile Render (Real RAM)", "RENDER_STILL", _profile_render_summary(wm))
 
-        # Phase 3c is still only half done: the result lines above are
-        # read-only. Actionable "Fix-it" buttons next to them are Cleanup &
-        # Fixes, not designed yet.
-        info = layout.box().row()
-        info.label(text="Fix-it buttons for the results above are Cleanup & "
-                        "Fixes — not designed yet (Phase 3c)", icon="INFO")
 
-        # Folder-wide link map (graphical) + reverse-dependency check both scan a
-        # FOLDER you pick, not the current file — different scope from everything
-        # above, so the user asked for these at the BOTTOM of this section.
-        layout.separator()
+class ASSETDOCTOR_PT_analyze_external(_SceneFeaturePanel, bpy.types.Panel):
+    """Folder-wide link map (graphical) + reverse-dependency check both scan a
+    FOLDER you pick, not the current file — different scope from "Analyze
+    This File" above, so they live in their own section (user request,
+    2026-06-25 item 2: split out of Analyze, titled "Analyze External
+    Files"). Content unchanged from the old Analyze panel, just relocated."""
+
+    bl_label = "Analyze External Files"
+    bl_idname = "ASSETDOCTOR_PT_analyze_external"
+    bl_order = 2
+
+    def draw(self, context):
+        layout = self.layout
+        wm = context.window_manager
+
         pmap = layout.box().column(align=True)
         pmap.label(text="Map a Folder (folder → graph)", icon="NODETREE")
         pmap.prop(context.scene, "assetdoctor_scan_dir", text="")
@@ -1189,6 +1272,75 @@ def _draw_datablock_dups(layout, wm) -> None:
                 r.label(text=ln, icon="DOT")
 
 
+def _res_variants_headline(wm) -> str:
+    """Find Resolution Variants' own Analyze-row summary (item 11, 2026-06-25
+    — replaces the generic tree disclosure now that this section has its own
+    actionable checkbox+button UI, mirroring Find Duplicate Materials/
+    Data-blocks)."""
+    if not _feature_has_run(wm, "f6res"):
+        return ""
+    coll = wm.assetdoctor_res_variant_members
+    groups = {item.group for item in coll}
+    if not groups:
+        return "✓ No multi-resolution texture variants found"
+    kept = sum(1 for item in coll if item.selected)
+    return f"{len(groups)} texture set(s) at multiple resolutions — {kept} chosen to keep so far"
+
+
+def _draw_res_variants(layout, wm) -> None:
+    """Item 11, 2026-06-25: the resolution-variant groups Find Resolution
+    Variants finds, now actionable — a per-row "keep this one" checkbox
+    (radio per group; no default, since picking which resolution to keep is
+    a real decision, unlike items 6/7's safe normalizations) plus 3 buttons
+    (Select High/Low Resolution, Remove Excess Variants). Its own headline
+    is dropped — the Analyze row right above already shows it."""
+    coll = wm.assetdoctor_res_variant_members
+    if not len(coll):
+        return
+
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for i, item in enumerate(coll):
+        if item.group not in groups:
+            groups[item.group] = []
+            order.append(item.group)
+        groups[item.group].append((i, item))
+
+    box = layout.box().column(align=True)
+    box.label(text="Standardizing is LOSSY — the removed resolution's users "
+              "switch to the kept one.", icon="INFO")
+    brow = box.row(align=True)
+    brow.operator("assetdoctor.res_variant_select", text="Select High Resolution").which = "HIGH"
+    brow.operator("assetdoctor.res_variant_select", text="Select Low Resolution").which = "LOW"
+    box.operator("assetdoctor.remove_excess_variants",
+                 text="Remove Excess Variants (Backup)", icon="TRASH")
+
+    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    for group_key in order:
+        members = groups[group_key]
+        ckey = f"resvar:{group_key}"
+        is_exp = ckey in expanded
+        kept = next((item.tag for _i, item in members if item.selected), "")
+        crow = box.row(align=True)
+        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
+                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+        top.key = ckey
+        label = f"{group_key}  ({len(members)} resolutions)"
+        if kept:
+            label += f" — keeping {kept}"
+        crow.label(text=label, icon="IMAGE_DATA")
+        if not is_exp:
+            continue
+        for idx, item in members:
+            frow = box.row(align=True)
+            frow.separator(factor=2.0)
+            sop = frow.operator("assetdoctor.res_variant_keep", text="",
+                                icon="RADIOBUT_ON" if item.selected else "RADIOBUT_OFF",
+                                emboss=False)
+            sop.index = idx
+            frow.label(text=f"{item.name}  [{item.tag}]")
+
+
 def _material_dups_headline(wm) -> str:
     """The Find Duplicate Materials Analyze row's own summary (replaces the
     generic _report_feature_summary line — user feedback, 2026-06-25: the
@@ -1297,6 +1449,8 @@ class ASSETDOCTOR_PT_results(_SceneFeaturePanel, bpy.types.Panel):
         nr.operator("assetdoctor.normalize_library_paths", text="Check").apply = False
         nr.operator("assetdoctor.normalize_library_paths",
                     text="Normalize (Creates Backup)", icon="CHECKMARK").apply = True
+        self._draw_duplicate_library_paths(context, norm, wm)
+        self._draw_absolute_paths(context, norm, wm)
 
         # F6: missing image textures (the magenta). Everything lists inline here —
         # header summary, then collapsible material/folder categories with per-file
@@ -1614,6 +1768,104 @@ class ASSETDOCTOR_PT_results(_SceneFeaturePanel, bpy.types.Panel):
         "external": ("ERROR", "fix at the source library"),
         "none": ("BLANK1", ""),
     }
+
+    def _draw_duplicate_library_paths(self, context, layout, wm):
+        """Item 6, 2026-06-25: the duplicate-library-path groups Path
+        normalization's "Check" finds — the SAME real file reached via 2+
+        stored path forms (separate Library ID blocks in this file). Each
+        form is its own radio-style checkbox row (only one enabled per
+        group — Blender has no native radio-checkbox, so a toggle operator
+        enforces it); a per-group "Use Selected Paths" button merges
+        everything the OTHER form(s) provide onto the ticked one."""
+        coll = wm.assetdoctor_dup_lib_members
+        if not len(coll):
+            return
+
+        groups: dict[str, list] = {}
+        order: list[str] = []
+        for i, item in enumerate(coll):
+            if item.group not in groups:
+                groups[item.group] = []
+                order.append(item.group)
+            groups[item.group].append((i, item))
+
+        layout.separator()
+        hrow = layout.row(align=True)
+        hrow.label(text=f"Duplicate library paths — {len(order)} group(s)",
+                  icon="LIBRARY_DATA_BROKEN")
+        expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+        for group_key in order:
+            members = groups[group_key]
+            ckey = f"duplib:{group_key}"
+            is_exp = ckey in expanded
+            fname = os.path.basename(members[0][1].stored.rstrip("/\\")) or members[0][1].stored
+            crow = layout.row(align=True)
+            top = crow.operator("assetdoctor.toggle_inline_detail", text="",
+                                icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+            top.key = ckey
+            crow.label(text=f"{fname} — {len(members)} forms", icon="FILE_BLEND")
+            mop = crow.operator("assetdoctor.merge_duplicate_libraries",
+                                text="Use Selected Paths", icon="AREA_JOIN")
+            mop.group = group_key
+            if not is_exp:
+                continue
+            for idx, item in members:
+                frow = layout.row(align=True)
+                frow.separator(factor=2.0)
+                sop = frow.operator("assetdoctor.dup_lib_select", text="",
+                                    icon="RADIOBUT_ON" if item.selected else "RADIOBUT_OFF",
+                                    emboss=False)
+                sop.index = idx
+                frow.label(text=item.stored, icon="FILE_BLEND" if item.selected else "NONE")
+
+    def _draw_absolute_paths(self, context, layout, wm):
+        """Item 7, 2026-06-25: absolute libraries grouped by drive. A
+        same-drive group gets a free-multi-select checkbox per member (any
+        subset can be converted) and ONE "Make Selected Relative" button on
+        its own title line; a cross-drive group is shown read-only — there is
+        no relative path between Windows drives, so nothing is selectable."""
+        coll = wm.assetdoctor_abs_path_members
+        if not len(coll):
+            return
+
+        groups: dict[str, list] = {}
+        order: list[str] = []
+        for i, item in enumerate(coll):
+            if item.group not in groups:
+                groups[item.group] = []
+                order.append(item.group)
+            groups[item.group].append((i, item))
+
+        layout.separator()
+        layout.label(text=f"Absolute paths — {len(order)} drive(s)", icon="FILE_FOLDER")
+        expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+        for group_key in order:
+            members = groups[group_key]
+            fixable = members[0][1].target != ""
+            ckey = f"abspath:{group_key}"
+            is_exp = ckey in expanded
+            crow = layout.row(align=True)
+            top = crow.operator("assetdoctor.toggle_inline_detail", text="",
+                                icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+            top.key = ckey
+            label = f"{group_key} — {len(members)} librar{'y' if len(members) == 1 else 'ies'}"
+            if fixable:
+                crow.label(text=label, icon="CHECKMARK")
+                crow.operator("assetdoctor.make_selected_relative",
+                              text="Make Selected Relative", icon="FILE_REFRESH")
+            else:
+                crow.label(text=label + "  (different drive — can't be made relative)",
+                          icon="ERROR")
+            if not is_exp:
+                continue
+            for idx, item in members:
+                frow = layout.row(align=True)
+                frow.separator(factor=2.0)
+                if fixable:
+                    frow.prop(item, "selected", text="")
+                else:
+                    frow.label(text="", icon="BLANK1")
+                frow.label(text=item.stored)
 
     def _draw_reconnect(self, context, layout, wm):
         """Batch C #2 — reconnect missing data-blocks. Rows group by their broken/

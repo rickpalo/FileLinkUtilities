@@ -1,12 +1,14 @@
-"""Phase 3a — the Analyze section's "Analyze All" sequencer.
+"""Phase 3a — the Analyze section's "Analyze All" sequencer + the smaller
+"Find Duplicates" sequencer scoped to just the duplicate-detection checks
+(item 3, 2026-06-25).
 
-Runs every step in ``core.analyze_steps.STEPS`` in order via its real operator
-id (``bpy.ops.<category>.<name>(**kwargs)``), one step per call, so each step's
-own logic/report-stashing runs completely unchanged — this is a dispatcher, not
-a reimplementation. A modal (not a tight Python loop) so the panel can repaint a
-per-step status icon between steps and ESC still cancels; ``execute`` (the
-EXEC_DEFAULT / scripting / headless-test path) drains the same generator
-synchronously via ``ModalProgressMixin``.
+Runs a list of ``core.analyze_steps.AnalyzeStep``s in order via each one's real
+operator id (``bpy.ops.<category>.<name>(**kwargs)``), one step per call, so
+each step's own logic/report-stashing runs completely unchanged — this is a
+dispatcher, not a reimplementation. A modal (not a tight Python loop) so the
+panel can repaint a per-step status icon between steps and ESC still cancels;
+``execute`` (the EXEC_DEFAULT / scripting / headless-test path) drains the same
+generator synchronously via ``ModalProgressMixin``.
 
 A step that raises (a bad file state, a cancelled sub-scan, …) is caught and
 marked "error" — one bad step shouldn't stop the rest from running.
@@ -16,7 +18,7 @@ from __future__ import annotations
 
 import bpy
 
-from ..core.analyze_steps import STEPS
+from ..core.analyze_steps import DUPLICATE_STEPS, STEPS
 from .progress import ModalProgressMixin, set_result
 
 
@@ -35,19 +37,25 @@ class ASSETDOCTOR_OT_analyze_all(ModalProgressMixin, bpy.types.Operator):
     )
     bl_options = {"REGISTER"}
 
+    # Overridden by ASSETDOCTOR_OT_find_duplicates to scope this same
+    # dispatcher to a subset of steps; the label feeds the closing message.
+    _steps = STEPS
+    _run_label = "Analyze All"
+
     def run_steps(self, context):
         wm = context.window_manager
         coll = wm.assetdoctor_analyze_steps
         coll.clear()
-        for step in STEPS:
+        steps = self._steps
+        for step in steps:
             row = coll.add()
             row.key = step.key
             row.label = step.label
             row.status = "pending"
 
-        n = len(STEPS)
+        n = len(steps)
         errors = 0
-        for i, step in enumerate(STEPS):
+        for i, step in enumerate(steps):
             coll[i].status = "running"
             yield i / n, f"Running {step.label}…"
             try:
@@ -58,9 +66,31 @@ class ASSETDOCTOR_OT_analyze_all(ModalProgressMixin, bpy.types.Operator):
                 errors += 1
                 from ..log import get_logger
 
-                get_logger().warning("Analyze All: %s failed: %s", step.key, exc)
+                get_logger().warning("%s: %s failed: %s", self._run_label, step.key, exc)
             yield (i + 1) / n, f"{step.label} done"
 
-        msg = f"Analyze All: {n} check(s) done" + (f", {errors} failed" if errors else "")
+        msg = f"{self._run_label}: {n} check(s) done" + (f", {errors} failed" if errors else "")
         set_result(context, msg, ok=not errors)
         self.report({"WARNING"} if errors else {"INFO"}, msg)
+
+
+class ASSETDOCTOR_OT_find_duplicates(ASSETDOCTOR_OT_analyze_all):
+    """Item 3, 2026-06-25 (user request): "Find Duplicate Materials/Geometry/
+    Content" folded into ONE "Find Duplicates" trigger alongside Find
+    Duplicate Data-blocks — same dispatcher as Analyze All, just scoped to the
+    duplicate-detection subset; each scan's own existing report/list section
+    is untouched, so the combined result reads as one summary followed by
+    what each individual button would have shown. Resolution Variants is a
+    DIFFERENT kind of analysis (multi-res footprint, not strict duplicates)
+    and deliberately stays its own separate button."""
+
+    bl_idname = "assetdoctor.find_duplicates"
+    bl_label = "Find Duplicates"
+    bl_description = (
+        "Find duplicate data-blocks, materials, geometry, and image content in "
+        "one click (was 4 separate buttons). Read-only — each one's own report/"
+        "list below is filled in exactly as if you'd clicked it yourself"
+    )
+
+    _steps = DUPLICATE_STEPS
+    _run_label = "Find Duplicates"

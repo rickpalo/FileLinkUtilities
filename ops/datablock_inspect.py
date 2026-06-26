@@ -129,6 +129,10 @@ class ASSETDOCTOR_OT_analyze_overrides(ModalProgressMixin, bpy.types.Operator):
                     override_count += 1
                 if lib is not None or ovr is not None:
                     relevant.append(b)
+                if attr == "shape_keys":
+                    owner = getattr(b, "user", None)
+                    if owner is not None and getattr(owner, "override_library", None) is not None:
+                        extract.shape_key_risks.append((b.name, owner.name))
             yield (i + 1) / (n + 2), f"Scanning {label} ({len(blocks)})"
 
         extract.library_counts = sorted(lib_counter.items(), key=lambda kv: -kv[1])

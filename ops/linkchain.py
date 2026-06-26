@@ -200,7 +200,8 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
         if not raw:
             self.report({"ERROR"}, "Run Find Flattenable Link Chains first")
             return {"CANCELLED"}
-        routes = linkchain.routes_from_report(Report.from_json(raw))
+        chain_report = Report.from_json(raw)
+        routes = linkchain.routes_from_report(chain_report)
 
         coll = wm.assetdoctor_flatten_candidates
         coll.clear()
@@ -230,32 +231,53 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
 
         wm.assetdoctor_flatten_plans_json = json.dumps(cached)
         wm.assetdoctor_flatten_index = 0
-        rigs = len({r.rig for r in coll})
-        self.report({"INFO"}, f"Found {len(coll)} override part(s) across {rigs} rig(s)/character(s)")
+
+        # This picker only sees overrides LOCAL to the currently open file —
+        # a character several hops deep (e.g. People1.blend, linked under a
+        # Stage file that itself holds zero local overrides) is invisible to
+        # it even though Find Flattenable Link Chains already found it. Say
+        # so explicitly instead of reporting a flat "nothing found" that
+        # looks like there's nothing to flatten anywhere (user, 2026-06-25).
+        remote = [] if len(coll) else linkchain.remote_posing_files(chain_report, bpy.data.filepath)
+        wm.assetdoctor_flatten_remote_note = (
+            f"Found in {', '.join(remote)} — open that file directly and re-run "
+            "Find Flattenable Characters there (this only sees overrides local "
+            "to the currently open file)") if remote else ""
+
+        if remote:
+            self.report({"WARNING"}, f"No local candidates — found in {', '.join(remote)} instead")
+        else:
+            rigs = len({r.rig for r in coll})
+            self.report({"INFO"}, f"Found {len(coll)} override part(s) across {rigs} rig(s)/character(s)")
         return {"FINISHED"}
 
 
 # --- Phase 4 Apply: the actual flatten-and-reapply mutation ----------------
 #
-# Confirmed against Blender's official Python API docs before writing this
-# (no synthetic override fixture exists to test against, the same caveat
-# core/linkchain.py's module docstring already notes — see docs/TODO.md for
-# the live-verify checklist): bpy.types.ID.override_create(remap_local_usages),
-# bpy.types.ID.override_hierarchy_create(scene, view_layer, reference,
-# do_fully_editable) -> new root override, bpy.types.IDOverrideLibrary.
-# hierarchy_root (every override created by ONE hierarchy_create call shares
-# this back-pointer to the root it returned), IDOverrideLibraryProperties.add
-# (rna_path), and ID.user_remap(new_id).
+# Confirmed against Blender's official Python API docs (triple-verified
+# 2026-06-26 against the official downloadable 5.1 reference, live RNA
+# introspection of the installed binary, and a third independent mirror — see
+# docs/TODO.md): bpy.types.ID.override_create(remap_local_usages) ->
+# new local override (or the SAME id, see below), IDOverrideLibraryProperties.
+# add(rna_path), and ID.user_remap(new_id).
 #
-# ONE hierarchy_create call per rig (not per member) — the API is explicitly
-# designed to create overrides for a WHOLE linked hierarchy from a single root
-# call; calling it once per member would each independently re-walk and
-# duplicate the same hierarchy. Deliberately requires the rig/armature's OWN
-# override to be one of the ready plans (the anchor hierarchy_create relinks
-# from) — a rig whose children are individually overridden but whose armature
-# itself isn't a flattenable override is NOT supported yet (same "stop and
-# scope the next increment" pattern as the rest of this project's history;
-# no real case has surfaced one yet to design against).
+# ONE override_create() call PER MEMBER, not a single override_hierarchy_
+# create() call for the whole rig (that was the original design — changed
+# 2026-06-26 after real production data, see docs/TODO.md's "Phase 4 Apply
+# safety investigation"). hierarchy_create's one-call-builds-everything
+# convenience came with a hidden cost: on a file where hundreds of characters
+# share a handful of templates in one library, it can ADOPT an
+# already-existing object that belongs to a DIFFERENT character (sharing the
+# same ultimate reference) instead of creating a fresh one — silently
+# corrupting that other character once properties get replayed onto it. Since
+# we already enumerate every member + its own reference via the chain census,
+# we don't need hierarchy_create's auto-discovery; doing it per member lets
+# each one be verified independently (see ``_flatten_rig``'s freshness check)
+# instead of trusting one opaque hierarchy-wide call. Members are fully
+# independent now — one member failing (including the rig root itself) no
+# longer blocks the others, since each has its own override_create() call and
+# its own collection-linking/property-replay/remap (user explicitly asked for
+# "duplicate where possible" over "block the whole rig on one bad part").
 
 _KIND_TO_COLLECTION = {
     "Object": "objects", "Mesh": "meshes", "Material": "materials", "Image": "images",
@@ -334,53 +356,80 @@ def _set_override_value(root, rna_path: str, value) -> None:
 def _flatten_rig(context, rig_plan, members: list) -> list:
     """Apply one rig/character's flatten plan for real. ``members`` is every
     READY plan in the group (``rig_plan`` included). Returns one
-    :class:`core.linkchain.FlattenApplyResult` per member."""
+    :class:`core.linkchain.FlattenApplyResult` per member — independently;
+    one member failing (including the rig root) does not block the others.
+
+    Each member gets its OWN ``ID.override_create()`` call (see the module
+    comment above for why this replaced a single ``override_hierarchy_
+    create()`` call). The one real failure mode override_create() has on this
+    project's files — converting an existing, still-shared plain link IN
+    PLACE (when that reference has never been individually overridden by
+    anyone in the file before) instead of creating an independent new object
+    — is checked for via a before/after freshness check on the result, NOT a
+    pre-check. A ``bpy.data.user_map``-based pre-check was tried and reverted
+    (2026-06-26): in this file, EVERY heavily-shared template reference shows
+    real users via user_map once the normal scan-then-apply flow has run
+    (hundreds of OTHER characters' overrides legitimately point at the same
+    reference — that's expected, not a danger sign), so a pre-check on "does
+    anything else reference this" blocked every member, not just the unsafe
+    one. The freshness check below — did override_create() actually allocate
+    a NEW object this call — is the reliable signal; it doesn't care how many
+    other things reference the SOURCE reference, only whether THIS call
+    produced independent new data."""
     from ..log import get_logger
 
     log = get_logger()
-    old_root = bpy.data.objects.get(rig_plan.object_name)
-    if old_root is None or old_root.override_library is None:
-        return [linkchain.FlattenApplyResult(
-            p.object_name, False, "no longer a live override — re-run Find Flattenable Characters")
-            for p in members]
-
-    direct = _link_direct(rig_plan.ultimate_library, rig_plan.reference.kind, rig_plan.reference.name)
-    if direct is None:
-        msg = (f"'{rig_plan.reference.name}' not found directly in "
-               f"{pathlib.Path(rig_plan.ultimate_library).name} — skipped")
-        return [linkchain.FlattenApplyResult(p.object_name, False, msg) for p in members]
-
-    try:
-        new_root = direct.override_hierarchy_create(context.scene, context.view_layer, reference=old_root)
-    except RuntimeError as exc:
-        log.warning("F7 flatten apply: override_hierarchy_create failed for %s: %s",
-                    rig_plan.object_name, exc)
-        new_root = None
-    if new_root is None:
-        msg = "Blender declined to create the override hierarchy — see debug log"
-        return [linkchain.FlattenApplyResult(p.object_name, False, msg) for p in members]
-
-    # hierarchy_create only returns the ROOT — find every sibling override it
-    # created alongside it (same hierarchy_root) so each member's OWN
-    # properties land on its own counterpart, not all on the root.
-    by_ref_name = {}
-    for obj in bpy.data.objects:
-        ov = getattr(obj, "override_library", None)
-        if ov is None or (obj is not new_root and ov.hierarchy_root != new_root):
-            continue
-        if ov.reference is not None:
-            by_ref_name[ov.reference.name] = obj
-
     results = []
     for plan in members:
         old_obj = bpy.data.objects.get(plan.object_name)
-        new_obj = new_root if plan.object_name == rig_plan.object_name else (
-            by_ref_name.get(plan.reference.name) if plan.reference else None)
-        if old_obj is None or new_obj is None:
+        if old_obj is None or old_obj.override_library is None:
             results.append(linkchain.FlattenApplyResult(
                 plan.object_name, False,
-                "no matching part found in the new override hierarchy — skipped"))
+                "no longer a live override — re-run Find Flattenable Characters"))
             continue
+        if plan.reference is None:
+            results.append(linkchain.FlattenApplyResult(
+                plan.object_name, False, "no reference recorded — skipped"))
+            continue
+
+        direct = _link_direct(rig_plan.ultimate_library, plan.reference.kind, plan.reference.name)
+        if direct is None:
+            msg = (f"'{plan.reference.name}' not found directly in "
+                   f"{pathlib.Path(rig_plan.ultimate_library).name} — skipped")
+            results.append(linkchain.FlattenApplyResult(plan.object_name, False, msg))
+            continue
+
+        attr = _KIND_TO_COLLECTION.get(plan.reference.kind, "objects")
+        before_names = set(o.name for o in getattr(bpy.data, attr))
+        try:
+            new_obj = direct.override_create(remap_local_usages=False)
+        except RuntimeError as exc:
+            log.warning("F7 flatten apply: override_create failed for %s: %s",
+                        plan.object_name, exc)
+            new_obj = None
+        if new_obj is None:
+            results.append(linkchain.FlattenApplyResult(
+                plan.object_name, False,
+                "Blender declined to override this part — see debug log"))
+            continue
+        after_names = set(o.name for o in getattr(bpy.data, attr))
+        if new_obj.name not in (after_names - before_names):
+            # Belt-and-suspenders: the pre-check above should already have
+            # caught this, but if override_create() still didn't create a
+            # fresh object for some other reason, don't trust the result.
+            results.append(linkchain.FlattenApplyResult(
+                plan.object_name, False,
+                "override_create() did not produce a fresh object for this "
+                "part — skipped to avoid corrupting whatever it actually is"))
+            continue
+
+        if isinstance(new_obj, bpy.types.Object):
+            for coll in old_obj.users_collection:
+                try:
+                    coll.objects.link(new_obj)
+                except RuntimeError:
+                    pass  # already linked
+
         applied = failed = 0
         for prop in plan.properties:
             try:

@@ -177,6 +177,61 @@ class ASSETDOCTOR_OT_relink_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _populate_dup_lib_members(context, plan: relink.LibFixPlan) -> None:
+    """Refill ``assetdoctor_dup_lib_members`` from ``plan.duplicates`` (item 6,
+    2026-06-25): one row per stored-path FORM in each duplicate-library group
+    (``group`` = the resolved-target key), pre-selecting the first member of
+    each group as the default "keep this path" choice — mirrors every other
+    list in this addon defaulting to a sensible first pick rather than none."""
+    coll = context.window_manager.assetdoctor_dup_lib_members
+    coll.clear()
+    for group_key, members in plan.duplicates.items():
+        for i, (name, stored) in enumerate(members):
+            item = coll.add()
+            item.name = name
+            item.stored = stored
+            item.group = group_key
+            item.selected = (i == 0)
+
+
+def _populate_abs_path_members(context, groups: list[relink.AbsolutePathGroup]) -> None:
+    """Refill ``assetdoctor_abs_path_members`` from ``plan_absolute_paths``
+    (item 7, 2026-06-25): one row per absolute library, grouped (``group``)
+    by drive. Same-drive members default pre-ticked (the same safe,
+    idempotent relative-path conversion Normalize already silently performs)
+    and carry their precomputed relative path in ``target``; cross-drive
+    members get an EMPTY ``target`` — there is no relative path between
+    drives — so the UI can tell them apart and show them read-only."""
+    coll = context.window_manager.assetdoctor_abs_path_members
+    coll.clear()
+    for group in groups:
+        for member in group.members:
+            item = coll.add()
+            item.name = member.name
+            item.stored = member.stored
+            item.group = group.drive
+            item.target = member.new
+            item.selected = bool(member.new)
+
+
+def _refresh_libfix(context):
+    """Plan normalizations + duplicate-block detection (no mutation) and stash
+    the f7fix report + the duplicate-library/absolute-path checkbox lists.
+    Called again after Normalize/Merge/Make Relative so all three reflect
+    the new state."""
+    from .report_store import stash_report
+
+    blend_dir = os.path.dirname(bpy.data.filepath)
+    libs = _gather_libs()
+    plan = relink.plan_library_fixes(libs, blend_dir)
+    report = relink.build_libfix_report(plan, relinks=None,
+                                        blend_name=bpy.path.basename(bpy.data.filepath))
+    stash_report(context, report, "f7fix")
+    _populate_dup_lib_members(context, plan)
+    _populate_abs_path_members(context, relink.plan_absolute_paths(libs, blend_dir))
+    return plan, blend_dir
+
+
 class ASSETDOCTOR_OT_normalize_library_paths(bpy.types.Operator):
     bl_idname = "assetdoctor.normalize_library_paths"
     bl_label = "Normalize Library Paths"
@@ -193,25 +248,12 @@ class ASSETDOCTOR_OT_normalize_library_paths(bpy.types.Operator):
         return ("Report which library paths would be normalized and which libraries "
                 "are duplicated (no changes, no relinking)")
 
-    def _analyze_and_stash(self, context):
-        """Plan normalizations + duplicate-block detection (no relinking) and stash
-        the f7fix report. Called again after applying so the report reflects the
-        new state."""
-        from .report_store import stash_report
-
-        blend_dir = os.path.dirname(bpy.data.filepath)
-        plan = relink.plan_library_fixes(_gather_libs(), blend_dir)
-        report = relink.build_libfix_report(plan, relinks=None,
-                                            blend_name=bpy.path.basename(bpy.data.filepath))
-        stash_report(context, report, "f7fix")
-        return plan, blend_dir
-
     def execute(self, context):
         if not bpy.data.filepath:
             self.report({"ERROR"}, "Save the file first")
             return {"CANCELLED"}
 
-        plan, blend_dir = self._analyze_and_stash(context)
+        plan, blend_dir = _refresh_libfix(context)
 
         msg = f"{len(plan.renames)} to normalize, {len(plan.duplicates)} duplicate block(s)"
         if not self.apply or not plan.renames:
@@ -228,7 +270,195 @@ class ASSETDOCTOR_OT_normalize_library_paths(bpy.types.Operator):
                 lib.filepath = new
                 normalized += 1
         # Re-analyze so the report reflects the now-fixed state (clean → "all clean").
-        self._analyze_and_stash(context)
+        _refresh_libfix(context)
         tail = f" Backup: {backup}" if backup else " (no backup written)"
         self.report({"INFO"}, f"Normalized {normalized} library path(s). Save to persist.{tail}")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_dup_lib_select(bpy.types.Operator):
+    """Tick exactly one stored-path form per duplicate-library group (radio
+    behaviour via checkboxes — Blender has no native radio-checkbox), item 6."""
+
+    bl_idname = "assetdoctor.dup_lib_select"
+    bl_label = "Use This Path"
+    bl_options = {"INTERNAL"}
+
+    index: bpy.props.IntProperty()  # type: ignore[valid-type]
+
+    def execute(self, context):
+        coll = context.window_manager.assetdoctor_dup_lib_members
+        if not (0 <= self.index < len(coll)):
+            return {"CANCELLED"}
+        group = coll[self.index].group
+        for i, item in enumerate(coll):
+            if item.group == group:
+                item.selected = (i == self.index)
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}
+
+
+def _merge_library(victim, canonical) -> int:
+    """Remap every datablock ``victim`` currently provides onto the
+    identically-named datablock from ``canonical`` — the SAME real file,
+    reached via a different stored path, so every name should already match.
+    Links the name in from ``canonical``'s own file first if ``bpy.data``
+    doesn't already hold it (mirrors ``ops.examine_library``'s mechanics
+    exactly — this IS that same "re-source everything a library provides"
+    operation, just auto-targeted at the other half of a duplicate pair
+    instead of a user-picked replacement). Never force-removes ``victim`` —
+    once nothing references it, Blender drops it on its own. Returns the
+    remap count."""
+    from .examine_library import _iter_library_blocks
+
+    by_attr: dict[str, list] = {}
+    for attr, block in _iter_library_blocks(victim):
+        by_attr.setdefault(attr, []).append(block)
+    if not by_attr:
+        return 0
+
+    to_link: dict[str, set[str]] = {}
+    for attr, blocks in by_attr.items():
+        coll = getattr(bpy.data, attr, None)
+        have = {b.name for b in coll if b.library is canonical} if coll else set()
+        wanted = {b.name for b in blocks} - have
+        if wanted:
+            to_link[attr] = wanted
+    if to_link:
+        try:
+            with bpy.data.libraries.load(canonical.filepath, link=True) as (data_from, data_to):
+                for attr, names in to_link.items():
+                    setattr(data_to, attr,
+                           [n for n in getattr(data_from, attr, []) if n in names])
+        except Exception:
+            pass  # best-effort — any name not found there just won't remap below
+
+    remapped = 0
+    for attr, blocks in by_attr.items():
+        coll = getattr(bpy.data, attr)
+        for block in blocks:
+            target = next((b for b in coll if b.name == block.name and b.library is canonical), None)
+            if target is None or target is block:
+                continue
+            block.user_remap(target)
+            remapped += 1
+    return remapped
+
+
+class ASSETDOCTOR_OT_merge_duplicate_libraries(bpy.types.Operator):
+    """"Use Selected Paths" (item 6): merge every duplicate-library group that
+    has a ticked member, keeping that member's path and remapping everything
+    the OTHER member(s) provide onto it."""
+
+    bl_idname = "assetdoctor.merge_duplicate_libraries"
+    bl_label = "Use Selected Paths"
+    bl_options = {"REGISTER"}
+
+    # "" (the default, one button per group in the UI) = just that group;
+    # never actually set to "all" anywhere yet, but kept generic like every
+    # other "Selected" operator in this codebase in case a bulk button is
+    # added later.
+    group: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+    @classmethod
+    def description(cls, context, properties):
+        return ("Keep the ticked library's path; remap everything the OTHER "
+                "duplicate(s) in its group provide onto it, so Blender can drop "
+                "the redundant library once nothing references it. Takes a backup first")
+
+    def execute(self, context):
+        if not bpy.data.filepath:
+            self.report({"ERROR"}, "Save the file first")
+            return {"CANCELLED"}
+
+        coll = context.window_manager.assetdoctor_dup_lib_members
+        groups: dict[str, list] = {}
+        for item in coll:
+            if self.group and item.group != self.group:
+                continue
+            groups.setdefault(item.group, []).append(item)
+
+        targets = []
+        for group_key, items in groups.items():
+            canonical = next((i for i in items if i.selected), None)
+            if canonical is None:
+                continue
+            targets.append((canonical, [i for i in items if i.name != canonical.name]))
+        if not targets:
+            self.report({"WARNING"}, "Tick which path to keep for at least one group")
+            return {"CANCELLED"}
+
+        from .safety import auto_backup
+
+        backup = auto_backup(context)
+        remapped = merged_groups = 0
+        for canonical_item, victims in targets:
+            canonical_lib = bpy.data.libraries.get(canonical_item.name)
+            if canonical_lib is None:
+                continue
+            for victim_item in victims:
+                victim_lib = bpy.data.libraries.get(victim_item.name)
+                if victim_lib is None or victim_lib is canonical_lib:
+                    continue
+                remapped += _merge_library(victim_lib, canonical_lib)
+            merged_groups += 1
+
+        # The now-unused victim librar(y/ies) are still present until purged —
+        # do that now so the re-scan below honestly shows the group resolved
+        # (mirrors Reconnect's do_linked_ids=True purge for the same reason).
+        bpy.data.orphans_purge(do_local_ids=False, do_linked_ids=True, do_recursive=True)
+
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
+
+        _refresh_libfix(context)
+        if context.area:
+            context.area.tag_redraw()
+        tail = f" Backup: {backup}" if backup else " (no backup written)"
+        self.report({"INFO"}, f"Merged {merged_groups} duplicate group(s), "
+                    f"{remapped} data-block(s) remapped.{tail} Save to persist.")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_make_selected_relative(bpy.types.Operator):
+    """"Make Selected Relative" (item 7): convert every ticked same-drive
+    absolute library to its precomputed ``//``-relative path. Cross-drive
+    libraries have no checkbox to begin with — there is no relative path
+    between Windows drives."""
+
+    bl_idname = "assetdoctor.make_selected_relative"
+    bl_label = "Make Selected Relative"
+    bl_description = ("Convert every ticked same-drive absolute library path to a "
+                      "//-relative one. Takes a backup first")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        if not bpy.data.filepath:
+            self.report({"ERROR"}, "Save the file first")
+            return {"CANCELLED"}
+
+        coll = context.window_manager.assetdoctor_abs_path_members
+        chosen = [item for item in coll if item.selected and item.target]
+        if not chosen:
+            self.report({"WARNING"}, "Tick at least one same-drive library")
+            return {"CANCELLED"}
+
+        from .safety import auto_backup
+
+        backup = auto_backup(context)
+        made = 0
+        for item in chosen:
+            lib = bpy.data.libraries.get(item.name)
+            if lib is not None:
+                lib.filepath = item.target
+                made += 1
+
+        _refresh_libfix(context)
+        if context.area:
+            context.area.tag_redraw()
+        tail = f" Backup: {backup}" if backup else " (no backup written)"
+        self.report({"INFO"}, f"Made {made} library path(s) relative. Save to persist.{tail}")
         return {"FINISHED"}

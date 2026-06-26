@@ -50,6 +50,29 @@ def plan_res_variants(names: list[str]) -> list[ResVariant]:
     return sorted(out, key=lambda v: v.key.lower())
 
 
+def res_value(token: str) -> int:
+    """Numeric value for ORDERING a resolution token (item 11, 2026-06-25 —
+    Select High/Low Resolution needs to compare them): ``"2k"`` -> 2048,
+    ``"4096"`` -> 4096. Unrecognized tokens sort as 0 (lowest), so an
+    unparseable one never wins "High" by accident."""
+    token = token.lower()
+    if token.endswith("k") and token[:-1].isdigit():
+        return int(token[:-1]) * 1024
+    if token.isdigit():
+        return int(token)
+    return 0
+
+
+def highest_member(variant: ResVariant) -> str:
+    """The member name at the highest resolution in ``variant``."""
+    return max(variant.members, key=lambda m: res_value(m[1]))[0]
+
+
+def lowest_member(variant: ResVariant) -> str:
+    """The member name at the lowest resolution in ``variant``."""
+    return min(variant.members, key=lambda m: res_value(m[1]))[0]
+
+
 def build_res_report(variants: list[ResVariant], blend_name: str = "current file") -> Report:
     """Report the multi-resolution texture sets (info); empty -> a ✓ clean finding."""
     report = Report(title=f"Resolution variants: {blend_name}", feature="f6res")
@@ -64,11 +87,18 @@ def build_res_report(variants: list[ResVariant], blend_name: str = "current file
                            message=f"{v.key}: {', '.join(res_list)}",
                            severity="info", items=[n for n, _r in v.members],
                            detail=f"{len(res_list)} res"))
-    report.add(Finding(category="summary",
+    # Flat "overview" (not "summary"): item 10, 2026-06-25 -- this used to be
+    # a collapsible "Summary" category, which meant the Analyze panel showed
+    # the headline, then a redundant "Summary" row, then ANOTHER "Multi-
+    # resolution variants" row before reaching the actual list. A flat
+    # overview row IS the headline (core.tree hoists it + the inline
+    # disclosure skips re-drawing it), collapsing those three layers to one.
+    report.add(Finding(category="overview",
                        message=f"{len(variants)} texture(s) exist at multiple resolutions — "
                                "standardizing is lossy (footprint, opt-in)",
                        severity="info"))
     return report
 
 
-__all__ = ["ResVariant", "plan_res_variants", "build_res_report"]
+__all__ = ["ResVariant", "plan_res_variants", "build_res_report",
+           "res_value", "highest_member", "lowest_member"]

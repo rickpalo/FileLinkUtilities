@@ -122,41 +122,61 @@ def test_cycles_detected(crafted):
 def test_build_dependency_tree_structure(crafted):
     nodes = depscan.build_dependency_tree(crafted)
     keys = [n.key for n in nodes]
-    assert keys[0] == "f7:summary"  # summary on top
-    assert keys[1] == "f7:filemap"
+    # File map (root + link hierarchy collapsed into one headline row, item 4,
+    # 2026-06-25) is on top -- the separate flat "Summary" row is gone, folded
+    # into that same headline (item e's redundancy rule).
+    assert keys[0] == "f7:filemap"
     # then one node per non-empty severity tier
     assert "f7tier:will_break" in keys  # crafted has a missing link + a cycle
-    assert all(k.startswith(("f7:summary", "f7:filemap", "f7tier:")) for k in keys)
+    assert all(k.startswith(("f7:filemap", "f7tier:")) for k in keys)
 
 
 def test_dependency_tree_file_map(crafted):
+    """The File map row IS the root file now (item 4: a wrapper holding
+    exactly one child collapses into that child) -- its label carries the
+    root name + a library count/size rollup, and its children are directly
+    the root's own links (no intermediate "scene" wrapper node anymore)."""
     nodes = depscan.build_dependency_tree(crafted)
     filemap = next(n for n in nodes if n.key == "f7:filemap")
-    assert len(filemap.children) == 1  # one root (scene)
-    scene = filemap.children[0]
-    assert _base(scene.label.split()[0]) == "scene.blend"
-    assert len(scene.children) == 3  # scene's three refs (libA, libA-abs, missing human)
+    assert filemap.label.startswith("scene")  # ".blend" dropped from display (item 5b)
+    assert "File map" in filemap.label
+    assert "2 libraries" in filemap.label  # libA + human, scene itself excluded
+    assert len(filemap.children) == 3  # scene's three refs (libA, libA-abs, missing human)
     # a missing link is marked
-    assert any("missing" in c.label for c in scene.children)
+    assert any("missing" in c.label for c in filemap.children)
+
+
+def test_dependency_tree_error_items_are_selectable_library_refs(crafted):
+    """Item 5a, 2026-06-25: clicking a library named in an Errors category
+    should reveal it in the Outliner -- the item leaf needs a "Library" ref
+    (resolution needs the real filename WITH its extension, even though the
+    displayed label drops it per item 5b)."""
+    nodes = depscan.build_dependency_tree(crafted)
+    missing_tier = next(n for n in nodes if n.key == "f7tier:will_break")
+    missing_cat = next(c for c in missing_tier.children if c.key == "f7err:missing_link")
+    finding = missing_cat.children[0]
+    item = next(c for c in finding.children if c.label == "human")
+    assert item.ref == {"type": "Library", "name": "human.blend"}  # extension kept for resolution
 
 
 def test_dependency_tree_file_map_icons(crafted):
     """File Map nodes (#6) carry a per-node icon: a clean in-tree relative link
     is "FILE_BLEND", a link resolved via an absolute path reads as "external"
     (FILE_FOLDER), and a missing link reads as broken — missing wins over
-    absolute, same precedence as ``link_issues``."""
+    absolute, same precedence as ``link_issues``. The merged headline row
+    itself (item 4) always shows the Blender icon, not a folder (item 4b —
+    the folder icon was never about asset libraries, it marks an absolute/
+    external link, which never applies to the root file itself)."""
     nodes = depscan.build_dependency_tree(crafted)
     filemap = next(n for n in nodes if n.key == "f7:filemap")
-    assert filemap.icon == "FILE_FOLDER"
-    scene = filemap.children[0]
-    assert scene.icon == depscan.ICON_BLEND  # root file, no ref yet
+    assert filemap.icon == depscan.ICON_BLEND  # the root file's own icon, no ref yet
 
-    clean = next(c for c in scene.children if "[" not in c.label)
+    clean = next(c for c in filemap.children if "[" not in c.label)
     assert clean.icon == depscan.ICON_BLEND
-    external = next(c for c in scene.children
+    external = next(c for c in filemap.children
                      if "absolute" in c.label and "missing" not in c.label)
     assert external.icon == depscan.ICON_EXTERNAL
-    missing = next(c for c in scene.children if "missing" in c.label)
+    missing = next(c for c in filemap.children if "missing" in c.label)
     assert missing.icon == depscan.ICON_MISSING
 
 
@@ -222,6 +242,22 @@ def test_build_dep_report_categories(crafted):
             DRIVE_REMAP, "circular_link", "summary"} <= cats
     assert report.feature == "F7"
     assert sum(1 for f in report.findings if f.category == MISSING) == 1
+
+
+def test_inconsistent_path_finding_items_list_every_form(crafted):
+    """Item 6, 2026-06-25: "I open the first example and only see one form" --
+    ``items`` used to be just [target], so the tree never showed the OTHER
+    stored form(s) the message text already named."""
+    report = depscan.build_dep_report(crafted)
+    finding = next(f for f in report.findings if f.category == INCONSISTENT_PATH)
+    assert set(finding.items) == set(finding.data["forms"])
+    assert len(finding.items) >= 2
+
+
+def test_duplicate_ref_finding_items_list_every_form(crafted):
+    report = depscan.build_dep_report(crafted)
+    finding = next(f for f in report.findings if f.category == DUPLICATE_REF)
+    assert set(finding.data["forms"]) <= set(finding.items)
 
 
 def test_steps_yield_progress_and_status():

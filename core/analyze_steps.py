@@ -63,4 +63,18 @@ def step_by_key(key: str) -> AnalyzeStep | None:
     return None
 
 
-__all__ = ["AnalyzeStep", "STEPS", "step_by_key"]
+# Item 3, 2026-06-25: "Find Duplicates" combines the duplicate-detection scans
+# (Find Duplicate Materials/Geometry/Content folded into Find Duplicate
+# Data-blocks) into one trigger — same dispatcher, just this subset of STEPS.
+# Resolution Variants is its OWN scan (different — multi-res footprint, not
+# strictly "duplicates") and stays out, per the user's own scoping.
+DUPLICATE_STEP_KEYS = (
+    "find_duplicate_datablocks", "find_duplicate_materials",
+    "find_duplicate_geometry", "find_duplicate_content",
+)
+DUPLICATE_STEPS: tuple[AnalyzeStep, ...] = tuple(
+    s for s in STEPS if s.key in DUPLICATE_STEP_KEYS
+)
+
+
+__all__ = ["AnalyzeStep", "STEPS", "step_by_key", "DUPLICATE_STEP_KEYS", "DUPLICATE_STEPS"]

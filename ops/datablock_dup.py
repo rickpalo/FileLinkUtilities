@@ -15,12 +15,14 @@ Materials, Meshes and Images are deliberately OUT of scope here — they already
 have dedicated, more mature tools (F3 material dedup, F5 geometry instancing, F6
 image dedup) with their own verified content fingerprints; duplicating that path
 here would just be a second, weaker way to do the same job. Of the remaining
-types, only Action has a real fingerprint (``core.fingerprint.fingerprint_
-action``, hashing F-curve keyframe data) — everything else still shows up
-(visibility matters even without a merge path) but is reported "unverified", per
-the project's standing safety rule: name similarity finds candidates, content
-identity gates the merge. Add a fingerprinter to ``_fingerprint_for`` to light up
-another type later.
+types, Action (``core.fingerprint.fingerprint_action``, F-curve keyframe data)
+and Shape Key (``fingerprint_shape_key``, relative-key vertex data keyed to the
+owning mesh's OWN geometry fingerprint — a Key's deltas mean nothing without
+identifying what mesh they deform, batch C #3's "KEKey" half) have real
+fingerprints — everything else still shows up (visibility matters even without
+a merge path) but is reported "unverified", per the project's standing safety
+rule: name similarity finds candidates, content identity gates the merge. Add a
+fingerprinter to ``_fingerprint_for`` to light up another type later.
 """
 
 from __future__ import annotations
@@ -48,6 +50,14 @@ def _fingerprint_for(attr: str, block) -> str:
 
         try:
             return fingerprint_action(extract_action(block))
+        except Exception:
+            return ""
+    if attr == "shape_keys":
+        from .extract import extract_shape_key
+        from ..core.fingerprint import fingerprint_shape_key
+
+        try:
+            return fingerprint_shape_key(extract_shape_key(block))
         except Exception:
             return ""
     return ""

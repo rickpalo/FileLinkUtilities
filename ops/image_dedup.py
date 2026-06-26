@@ -149,10 +149,44 @@ class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _populate_res_variant_members(context, variants) -> None:
+    """Refill ``assetdoctor_res_variant_members`` from ``plan_res_variants``
+    (item 11, 2026-06-25): one row per member, ``group`` = the variant set's
+    key, ``tag`` = its own resolution token. No default keeper — unlike items
+    6/7's safe normalizations, picking a default here would silently choose
+    WHICH resolution to keep; the user must tick one (or use Select High/Low
+    Resolution) before Remove Excess Variants can do anything."""
+    coll = context.window_manager.assetdoctor_res_variant_members
+    coll.clear()
+    for variant in variants:
+        for name, res in variant.members:
+            item = coll.add()
+            item.name = name
+            item.group = variant.key
+            item.tag = res
+            item.selected = False
+
+
+def _rescan_res_variants(context):
+    """Shared by Find Resolution Variants and Remove Excess Variants (the
+    latter re-runs this after mutating so the list/report reflect the new
+    state)."""
+    from . import report_store
+    from ..core import imageres
+
+    names = [img.name for img in bpy.data.images if img.library is None]
+    variants = imageres.plan_res_variants(names)
+    blend_name = os.path.basename(bpy.data.filepath) or "current file"
+    report_store.stash_report(context, imageres.build_res_report(variants, blend_name), "f6res")
+    _populate_res_variant_members(context, variants)
+    return variants
+
+
 class ASSETDOCTOR_OT_scan_res_variants(bpy.types.Operator):
     """F6 Layer 2 — report textures that exist at multiple resolutions (1k/2k/…).
     Footprint analysis only: standardizing to one resolution is LOSSY (changes the
-    render), so this never mutates — it stashes a report for the user to decide."""
+    render), so finding never mutates — it stashes a report + the checkbox list,
+    and the user decides (Select High/Low Resolution + Remove Excess Variants)."""
 
     bl_idname = "assetdoctor.scan_res_variants"
     bl_label = "Find Resolution Variants"
@@ -162,20 +196,139 @@ class ASSETDOCTOR_OT_scan_res_variants(bpy.types.Operator):
     bl_options = {"REGISTER"}
 
     def execute(self, context):
-        from . import report_store
-        from ..core import imageres
-
-        names = [img.name for img in bpy.data.images if img.library is None]
-        variants = imageres.plan_res_variants(names)
-        blend_name = os.path.basename(bpy.data.filepath) or "current file"
-        report_store.stash_report(context, imageres.build_res_report(variants, blend_name), "f6res")
+        variants = _rescan_res_variants(context)
         if context.area:
             context.area.tag_redraw()
         if variants:
             self.report({"INFO"}, f"{len(variants)} texture(s) at multiple resolutions. "
-                        "See the Resolution Variants report (standardizing is lossy).")
+                        "Tick a preferred resolution per group (or Select High/Low), "
+                        "then Remove Excess Variants.")
         else:
             self.report({"INFO"}, "✓ No multi-resolution texture variants found")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_res_variant_keep(bpy.types.Operator):
+    """Tick exactly one member per resolution-variant group as the one to
+    keep (radio behaviour via checkboxes — Blender has no native radio-
+    checkbox), item 11."""
+
+    bl_idname = "assetdoctor.res_variant_keep"
+    bl_label = "Keep This Resolution"
+    bl_options = {"INTERNAL"}
+
+    index: bpy.props.IntProperty()  # type: ignore[valid-type]
+
+    def execute(self, context):
+        coll = context.window_manager.assetdoctor_res_variant_members
+        if not (0 <= self.index < len(coll)):
+            return {"CANCELLED"}
+        group = coll[self.index].group
+        for i, item in enumerate(coll):
+            if item.group == group:
+                item.selected = (i == self.index)
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_res_variant_select(bpy.types.Operator):
+    """"Select High/Low Resolution" (item 11): tick every group's highest- or
+    lowest-resolution member at once, instead of clicking each group."""
+
+    bl_idname = "assetdoctor.res_variant_select"
+    bl_label = "Select Resolution"
+    bl_options = {"REGISTER"}
+
+    which: bpy.props.EnumProperty(
+        items=[("HIGH", "High", ""), ("LOW", "Low", "")], default="HIGH")  # type: ignore[valid-type]
+
+    @classmethod
+    def description(cls, context, properties):
+        return f"Tick the {properties.which.lower()}-resolution member in every group"
+
+    def execute(self, context):
+        from ..core import imageres
+
+        coll = context.window_manager.assetdoctor_res_variant_members
+        groups: dict[str, list[int]] = {}
+        for i, item in enumerate(coll):
+            groups.setdefault(item.group, []).append(i)
+        pick = max if self.which == "HIGH" else min
+        for indices in groups.values():
+            best = pick(indices, key=lambda i: imageres.res_value(coll[i].tag))
+            for i in indices:
+                coll[i].selected = (i == best)
+        if context.area:
+            context.area.tag_redraw()
+        self.report({"INFO"}, f"Selected the {self.which.lower()}-resolution member in "
+                    f"{len(groups)} group(s)")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_remove_excess_variants(bpy.types.Operator):
+    """"Remove Excess Variants" (item 11): for every group with a ticked
+    member, transfer every OTHER member's users onto it and delete them."""
+
+    bl_idname = "assetdoctor.remove_excess_variants"
+    bl_label = "Remove Excess Variants"
+    bl_description = ("For each group with a ticked resolution, transfer every OTHER "
+                      "member's users onto it and delete them. LOSSY — this changes "
+                      "the render wherever the removed resolution was used. Takes a "
+                      "backup first")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        from ..core import datablock_dedup as dd
+
+        if not bpy.data.filepath:
+            self.report({"ERROR"}, "Save the file first")
+            return {"CANCELLED"}
+
+        coll = context.window_manager.assetdoctor_res_variant_members
+        groups: dict[str, list] = {}
+        for item in coll:
+            groups.setdefault(item.group, []).append(item)
+
+        targets = []
+        for items in groups.values():
+            keeper = next((i for i in items if i.selected), None)
+            if keeper is None:
+                continue
+            targets.append((keeper, [i.name for i in items]))
+        if not targets:
+            self.report({"WARNING"}, "Tick a preferred resolution for at least one group "
+                        "(or use Select High/Low Resolution)")
+            return {"CANCELLED"}
+
+        from .safety import auto_backup
+
+        backup = auto_backup(context)
+        removed = 0
+        for keeper_item, member_names in targets:
+            keeper = bpy.data.images.get(keeper_item.name)
+            if keeper is None:
+                continue
+            for victim_name in dd.victims_for_keeper(member_names, keeper_item.name):
+                victim = bpy.data.images.get(victim_name)
+                if victim is None or victim is keeper or victim.library is not None:
+                    continue
+                victim.user_remap(keeper)
+                if victim.users == 0:
+                    bpy.data.images.remove(victim)
+                    removed += 1
+
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
+
+        _rescan_res_variants(context)
+        if context.area:
+            context.area.tag_redraw()
+        tail = f" Backup: {backup}" if backup else " (no backup written)"
+        self.report({"INFO"}, f"Removed {removed} excess variant(s) across "
+                    f"{len(targets)} group(s).{tail} Save to persist.")
         return {"FINISHED"}
 
 

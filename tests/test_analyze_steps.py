@@ -1,6 +1,6 @@
 """Unit tests for core.analyze_steps (the Analyze-All sequence, bpy-free)."""
 
-from core.analyze_steps import STEPS, step_by_key
+from core.analyze_steps import DUPLICATE_STEP_KEYS, DUPLICATE_STEPS, STEPS, step_by_key
 
 
 def test_steps_have_unique_keys_and_opnames():
@@ -30,3 +30,14 @@ def test_step_by_key_found_and_missing():
     assert step is not None
     assert step.opname == "assetdoctor.scan_broken_links"
     assert step_by_key("nonexistent") is None
+
+
+def test_duplicate_steps_is_the_right_subset():
+    """Item 3, 2026-06-25: "Find Duplicates" combines Materials/Geometry/
+    Content/Data-blocks -- Resolution Variants stays out (a different kind
+    of analysis, footprint not strict duplicates)."""
+    assert {s.key for s in DUPLICATE_STEPS} == set(DUPLICATE_STEP_KEYS)
+    assert len(DUPLICATE_STEPS) == 4
+    assert "find_resolution_variants" not in DUPLICATE_STEP_KEYS
+    # Every duplicate step is a real STEPS entry, same order as in STEPS.
+    assert all(s in STEPS for s in DUPLICATE_STEPS)

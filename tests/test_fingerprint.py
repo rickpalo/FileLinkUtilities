@@ -15,6 +15,7 @@ from core.fingerprint import (
     fingerprint_image,
     fingerprint_material,
     fingerprint_mesh,
+    fingerprint_shape_key,
     strip_resolution_tokens,
 )
 
@@ -171,6 +172,41 @@ def test_action_float_jitter_within_tolerance_matches():
     b = {"fcurves": [{"data_path": "location", "array_index": 0,
                       "points": [[1, 0.0000000001, "LINEAR"]]}]}
     assert fingerprint_action(a) == fingerprint_action(b)
+
+
+# --- shape-key hashing (keyed to the owning mesh) ----------------------------
+def _shape_key(mesh_fp="mesh-a", blocks=None):
+    return {"mesh_fingerprint": mesh_fp,
+            "blocks": blocks if blocks is not None else
+            [{"name": "Basis", "co": [[0, 0, 0]]}, {"name": "Key 1", "co": [[1, 0, 0]]}]}
+
+
+def test_shape_key_identical_match():
+    a = _shape_key()
+    assert fingerprint_shape_key(a) == fingerprint_shape_key(dict(a))
+
+
+def test_shape_key_different_owning_mesh_differs():
+    same_blocks = _shape_key()["blocks"]
+    a = _shape_key(mesh_fp="mesh-a", blocks=same_blocks)
+    b = _shape_key(mesh_fp="mesh-b", blocks=same_blocks)
+    assert fingerprint_shape_key(a) != fingerprint_shape_key(b)
+
+
+def test_shape_key_different_block_data_differs():
+    a = _shape_key(blocks=[{"name": "Basis", "co": [[0, 0, 0]]}])
+    b = _shape_key(blocks=[{"name": "Basis", "co": [[0, 0, 1]]}])
+    assert fingerprint_shape_key(a) != fingerprint_shape_key(b)
+
+
+def test_shape_key_block_order_matters():
+    a = _shape_key(blocks=[{"name": "A", "co": [[0, 0, 0]]}, {"name": "B", "co": [[1, 0, 0]]}])
+    b = _shape_key(blocks=[{"name": "B", "co": [[1, 0, 0]]}, {"name": "A", "co": [[0, 0, 0]]}])
+    assert fingerprint_shape_key(a) != fingerprint_shape_key(b)
+
+
+def test_shape_key_empty_dict_is_unverified():
+    assert fingerprint_shape_key({}) == ""
 
 
 # --- image identity (resolution-sensitive) -----------------------------------

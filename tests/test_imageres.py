@@ -35,10 +35,33 @@ def test_different_channels_are_separate_sets():
     assert len(variants) == 2  # one per channel
 
 
+# --- res_value / highest_member / lowest_member (item 11, 2026-06-25) -------
+
+def test_res_value_orders_k_tokens():
+    assert imageres.res_value("1k") < imageres.res_value("2k") < imageres.res_value("4k")
+
+
+def test_res_value_handles_pixel_tokens():
+    assert imageres.res_value("2048") == 2048
+    assert imageres.res_value("512") < imageres.res_value("2048")
+
+
+def test_res_value_unrecognized_is_zero():
+    assert imageres.res_value("huge") == 0
+
+
+def test_highest_and_lowest_member():
+    variants = imageres.plan_res_variants(
+        ["Wood_1K_col.png", "Wood_2K_col.png", "Wood_4K_col.png"])
+    v = variants[0]
+    assert imageres.highest_member(v) == "Wood_4K_col.png"
+    assert imageres.lowest_member(v) == "Wood_1K_col.png"
+
+
 def test_report_clean_and_populated():
     assert imageres.build_res_report([]).findings[0].category == "clean"
     variants = imageres.plan_res_variants(["Wood_2K_col.png", "Wood_1K_col.png"])
     report = imageres.build_res_report(variants, "scene.blend")
     cats = [f.category for f in report.findings]
-    assert cats == ["res_variant", "summary"]
+    assert cats == ["res_variant", "overview"]
     assert report.feature == "f6res"

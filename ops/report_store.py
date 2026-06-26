@@ -126,7 +126,6 @@ def _fill_rows(coll, rows, prop: str) -> None:
         item.expanded = r.expanded
         item.detail = r.detail
         item.icon = r.icon
-        item.guide = r.guide
         item.prop = prop
         if r.ref:
             item.ref_type = r.ref.get("type", "")
@@ -214,15 +213,19 @@ class ASSETDOCTOR_OT_report_toggle(bpy.types.Operator):
         return {"FINISHED"}
 
 
+
 class ASSETDOCTOR_OT_toggle_inline_detail(bpy.types.Operator):
-    """Expand/collapse one Analyze button's inline "Details" disclosure
-    (user feedback, 2026-06-25 item d) — a single shared newline-joined set
-    on the WindowManager, mirroring every other collapsible-list toggle in
-    this addon (assetdoctor_tex_expanded and friends), keyed by feature so
-    several can be open at once independently."""
+    """Expand/collapse one node of an Analyze button's inline report
+    disclosure (items a/c, 2026-06-25): a single shared newline-joined key
+    set on the WindowManager. Deliberately INDEPENDENT of each feature's own
+    ``exp_prop`` (the dedicated Reports tab pre-seeds that one expanded via
+    ``stash_tree``/``stash_report``; this one always starts empty, so the
+    inline view defaults to fully collapsed). One flat set covers every
+    feature's inline view at once — a node's own key already embeds its
+    report's feature tag, so two features' keys never collide."""
 
     bl_idname = "assetdoctor.toggle_inline_detail"
-    bl_label = "Show/Hide Details"
+    bl_label = "Expand/Collapse"
     bl_options = {"INTERNAL"}
 
     key: bpy.props.StringProperty()  # type: ignore[valid-type]

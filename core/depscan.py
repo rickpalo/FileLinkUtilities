@@ -58,7 +58,12 @@ def _key(path: str) -> str:
 
 
 def _name(path: str) -> str:
-    return ntpath.basename(path) or path
+    """Display name for a .blend file: basename, ``.blend`` extension dropped
+    (user feedback, 2026-06-25 item 5b: "leave the file extension off all the
+    reports... it can be assumed" — every file this report names is a
+    .blend, so the extension carries no information, only width)."""
+    base = ntpath.basename(path) or path
+    return base[:-6] if base.lower().endswith(".blend") else base
 
 
 def has_backslash(stored: str) -> bool:
@@ -267,21 +272,26 @@ def build_dep_report(scan: DepScan) -> Report:
                                    items=[fkey],
                                    data={"stored": ref.stored_path}))
 
-    # Same file -> one target via several stored paths.
+    # Same file -> one target via several stored paths. ``items`` lists the
+    # linking file FIRST, then each stored form as its own drill-down row
+    # (item 6, 2026-06-25: "I open the first example and only see one form" —
+    # ``items`` used to hold just [fkey, tk], so the OTHER form(s) the message
+    # text names were never individually selectable).
     for fkey, dups in sorted(duplicate_refs(scan).items()):
         for tk, forms in dups.items():
             report.add(Finding(category=DUPLICATE_REF,
                                message=f"{_name(fkey)} links {_name(tk)} via "
                                        f"{len(forms)} different paths: {', '.join(forms)}",
-                               severity="error", items=[fkey, tk],
+                               severity="error", items=[fkey, *forms],
                                data={"forms": forms}))
 
-    # One target reached via several stored forms across the subtree.
+    # One target reached via several stored forms across the subtree — same
+    # display fix as DUPLICATE_REF above.
     for tk, forms in sorted(inconsistent_paths(scan).items()):
         report.add(Finding(category=INCONSISTENT_PATH,
                            message=f"{_name(tk)} is linked via {len(forms)} different path "
                                    f"forms (spawns duplicate library blocks): {', '.join(forms)}",
-                           severity="warning", items=[tk], detail=f"{len(forms)} forms",
+                           severity="warning", items=list(forms), detail=f"{len(forms)} forms",
                            data={"forms": forms}))
 
     # Drive/root remap candidates.
@@ -407,12 +417,45 @@ def _build_file_map(scan: DepScan) -> list[TreeNode]:
     return [build(root, None, frozenset()) for root in scan.roots]
 
 
+def _file_map_node(scan: DepScan) -> TreeNode:
+    """The root file + its link map collapsed into ONE headline row (item 4,
+    2026-06-25 — a general design rule: "any rollup that only has one item
+    below it can usually just move that one item up a level" — the old
+    "File map" wrapper always held exactly one child, the root file, so the
+    two are now the same row). Label: "<root> — File map — <size> · <N>
+    librar(y/ies) (total <size>)"; Blender-file icon, not a folder (the user's
+    question, item 4b: the folder icon was never meant to mean "asset
+    library" — it marked an externally/absolutely-linked file, see
+    ``ICON_EXTERNAL`` — irrelevant for the root row, which is always local)."""
+    roots = _build_file_map(scan)
+    if len(roots) != 1:
+        # Multiple roots (not currently reachable from the UI, which always
+        # scans one open file) — keep the old generic wrapper shape rather
+        # than guess which one to headline.
+        return TreeNode(key="f7:filemap", label="File map", icon=ICON_BLEND,
+                        detail=str(len(scan.order)), children=roots)
+    root = roots[0]
+    root_key = scan.roots[0] if scan.roots else ""
+    others = [k for k in scan.order if k != root_key]
+    total_other = sum(scan.sizes.get(k, 0) for k in others)
+    libs_bit = f"{len(others)} librar{'y' if len(others) == 1 else 'ies'}"
+    if total_other:
+        libs_bit += f" (total {_fmt_size(total_other)})"
+    bits = ([root.detail] if root.detail else []) + [libs_bit]
+    label = f"{root.label} — File map — {' · '.join(bits)}"
+    return TreeNode(key="f7:filemap", label=label, severity=root.severity,
+                    icon=root.icon, children=root.children)
+
+
 def build_dependency_tree(scan: DepScan) -> list[TreeNode]:
-    """The F7 Dependencies view: **Summary** (top) → **File map** (the hierarchy)
-    → **Errors (N)** (the issue categories). Rendered directly as a TreeNode tree
-    (the file map needs arbitrary depth, which the flat Report model can't hold)."""
+    """The F7 Dependencies view: **File map** (root + link hierarchy, one
+    headline row) → **Errors (N)** (the issue categories). Rendered directly
+    as a TreeNode tree (the file map needs arbitrary depth, which the flat
+    Report model can't hold). The underlying Report's flat "summary" finding
+    ("N files in subtree, M link(s)") is superseded by the File map headline
+    above and deliberately dropped here — showing both said almost the same
+    thing twice (item e's redundancy rule)."""
     report = build_dep_report(scan)
-    summary = next((f for f in report.findings if f.category == "summary"), None)
 
     groups: dict[str, list[Finding]] = {}
     for f in report.findings:
@@ -430,16 +473,20 @@ def build_dependency_tree(scan: DepScan) -> list[TreeNode]:
             fn = TreeNode(key=f"f7err:{cat}:{i}", label=f.message,
                           severity=f.severity, detail=f.detail)
             for j, item in enumerate(f.items):
-                fn.children.append(TreeNode(key=f"f7err:{cat}:{i}:{j}", label=item,
-                                            severity=f.severity))
+                # Every item here is a .blend file path — click-to-select it as
+                # a Library (item 5a, 2026-06-25: "if I click on one of the
+                # libraries, it should take me to that item in the Outliner" —
+                # a standing design rule that was never wired up for this
+                # report). Resolution needs the real basename WITH its
+                # extension (ntpath.basename(item), not the display-only
+                # ``_name``), since Library datablocks are named by filename.
+                fn.children.append(TreeNode(
+                    key=f"f7err:{cat}:{i}:{j}", label=_name(item), severity=f.severity,
+                    ref={"type": "Library", "name": ntpath.basename(item) or item}))
             node.children.append(fn)
         return node
 
-    nodes: list[TreeNode] = []
-    if summary:
-        nodes.append(TreeNode(key="f7:summary", label=summary.message, severity="info"))
-    nodes.append(TreeNode(key="f7:filemap", label="File map", icon="FILE_FOLDER",
-                          detail=str(len(scan.order)), children=_build_file_map(scan)))
+    nodes: list[TreeNode] = [_file_map_node(scan)]
 
     # One node per severity tier (skipping empty ones), worst tier first.
     for tier_key, tier_label, cats in _F7_TIERS:

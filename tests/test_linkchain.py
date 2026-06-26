@@ -180,7 +180,7 @@ def test_build_chain_report_tags_posing_source_file_when_set():
                     source_file="//libs/people1.blend")]
     report = linkchain.build_chain_report(g, "root.blend", posing)
     f = next(f for f in report.findings if f.category == "posing_override")
-    assert "(in people1.blend)" in f.message
+    assert "(in people1)" in f.message  # ".blend" dropped from display (item 5b)
 
 
 def test_build_chain_report_no_file_tag_when_source_file_unset():
@@ -189,6 +189,59 @@ def test_build_chain_report_no_file_tag_when_source_file_unset():
     report = linkchain.build_chain_report(g, "root.blend", posing)
     f = next(f for f in report.findings if f.category == "posing_override")
     assert "(in " not in f.message
+
+
+def test_build_chain_report_posing_override_carries_source_file_in_data():
+    """remote_posing_files (Phase B's "found, but elsewhere" fallback) reads
+    this back out -- it must be structured data, not just message text."""
+    g = DepGraph()
+    posing = [_info(name="Char1", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="//libs/people1.blend")]
+    report = linkchain.build_chain_report(g, "root.blend", posing)
+    f = next(f for f in report.findings if f.category == "posing_override")
+    assert f.data["source_file"] == "//libs/people1.blend"
+
+
+# --- remote_posing_files ------------------------------------------------------
+
+def test_remote_posing_files_finds_characters_in_other_files():
+    """The real motivating case: the currently open file (a Stage file) holds
+    zero local overrides, but Find Flattenable Link Chains already found some
+    several hops deep in People1.blend -- the live picker must be able to
+    point the user there instead of just reporting "nothing found"."""
+    g = DepGraph()
+    g.add_edge("/proj/stage.blend", "/proj/people1.blend")
+    posing = [_info(name="Char1", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="/proj/people1.blend")]
+    report = linkchain.build_chain_report(g, "/proj/stage.blend", posing)
+    assert linkchain.remote_posing_files(report, "/proj/stage.blend") == ["people1"]
+
+
+def test_remote_posing_files_excludes_the_current_file():
+    g = DepGraph()
+    posing = [_info(name="Char1", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="/proj/stage.blend")]
+    report = linkchain.build_chain_report(g, "/proj/stage.blend", posing)
+    assert linkchain.remote_posing_files(report, "/proj/stage.blend") == []
+
+
+def test_remote_posing_files_empty_when_no_posing_overrides():
+    g = DepGraph()
+    report = linkchain.build_chain_report(g, "/proj/stage.blend", [])
+    assert linkchain.remote_posing_files(report, "/proj/stage.blend") == []
+
+
+def test_remote_posing_files_dedupes_and_sorts():
+    g = DepGraph()
+    posing = [_info(name="Char1", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="/proj/people1.blend"),
+              _info(name="Char2", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="/proj/people1.blend"),
+              _info(name="Char3", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="/proj/another.blend")]
+    report = linkchain.build_chain_report(g, "/proj/stage.blend", posing)
+    assert linkchain.remote_posing_files(report, "/proj/stage.blend") == [
+        "another", "people1"]
 
 
 # --- read_override_reference (stubbed BAT blocks -- the real DNA paths were
@@ -243,7 +296,7 @@ def test_build_chain_report_attributes_override_to_its_chain():
     posing = [_info(name="Char1", has_override=True, loc=(1.0, 0.0, 0.0), reference=ref)]
     report = linkchain.build_chain_report(g, "root.blend", posing)
     f = next(f for f in report.findings if f.category == "posing_override")
-    assert "overrides Object/bonnet from human_bundle.blend" in f.message
+    assert "overrides Object/bonnet from human_bundle" in f.message  # ".blend" dropped (item 5b)
     assert "reached via" in f.message
 
 
@@ -401,7 +454,7 @@ def test_build_flatten_plan_report_overview_and_finding():
     assert "1 of 1" in overview.message
     finding = next(f for f in report.findings if f.category == "flatten_plan")
     assert finding.items == ["Object/Char1"]
-    assert "human_bundle.blend" in finding.message
+    assert "human_bundle" in finding.message  # ".blend" dropped from display (item 5b)
 
 
 def test_build_flatten_plan_report_blocked_plan_gets_warning_finding():

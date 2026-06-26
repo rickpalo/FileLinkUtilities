@@ -10,7 +10,9 @@ resolution-stripped base name (see core.fingerprint.strip_resolution_tokens).
 
 from __future__ import annotations
 
-from ..core.fingerprint import strip_resolution_tokens
+import bpy
+
+from ..core.fingerprint import fingerprint_mesh, strip_resolution_tokens
 
 # Cosmetic/layout node attributes that must not affect the fingerprint.
 _SKIP_NODE_PROPS = frozenset({
@@ -121,6 +123,19 @@ def extract_action(action) -> dict:
         fcurves.append({"data_path": fc.data_path, "array_index": fc.array_index,
                         "points": points})
     return {"fcurves": fcurves}
+
+
+def extract_shape_key(key) -> dict:
+    """Walk a bpy Key (shape-key) datablock into a core.fingerprint
+    shape_key_dict. Returns ``{}`` ('unverified', no safe identity check
+    possible) when the owner isn't a Mesh — Curve/Lattice shape keys are
+    rarer in practice and not yet covered."""
+    owner = key.user
+    if not isinstance(owner, bpy.types.Mesh):
+        return {}
+    blocks = [{"name": kb.name, "co": [list(p.co) for p in kb.data]}
+              for kb in key.key_blocks]
+    return {"mesh_fingerprint": fingerprint_mesh(extract_mesh(owner)), "blocks": blocks}
 
 
 def extract_image(image) -> dict:

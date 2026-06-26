@@ -154,6 +154,15 @@ def register() -> None:
     # ops.image_relink._gather_linked_missing_images.
     bpy.types.WindowManager.assetdoctor_linked_missing_imgs = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_broken_lib)
+    # Items 6/7/11, 2026-06-25: three more actionable lists, all reusing the
+    # same generic row shape. See ops.relink (items 6/7) / ops.image_dedup
+    # (item 11). None use a template_list, so no "active index" prop needed.
+    bpy.types.WindowManager.assetdoctor_dup_lib_members = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_broken_lib)  # item 6: duplicate-library-path groups
+    bpy.types.WindowManager.assetdoctor_abs_path_members = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_broken_lib)  # item 7: absolute-path rows grouped by drive
+    bpy.types.WindowManager.assetdoctor_res_variant_members = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_broken_lib)  # item 11: resolution-variant rows grouped by texture set
     # F6 B1: how the missing-texture categories group (by original folder or by
     # the material that uses each texture).
     bpy.types.WindowManager.assetdoctor_tex_group_by = bpy.props.EnumProperty(
@@ -249,10 +258,16 @@ def register() -> None:
     # Which rig/character groups are expanded in the picker (newline-joined
     # rig names), mirroring every other collapsible-group list in this addon.
     bpy.types.WindowManager.assetdoctor_flatten_expanded = bpy.props.StringProperty(default="")
+    # Set when a scan finds zero LOCAL candidates but Find Flattenable Link
+    # Chains already found some elsewhere in the chain — "" otherwise.
+    bpy.types.WindowManager.assetdoctor_flatten_remote_note = bpy.props.StringProperty(default="")
 
-    # Phase 3c follow-up (item d): which Analyze rows' inline "Details"
-    # disclosure is expanded — one shared newline-joined set, keyed by
-    # report feature, mirroring every other collapsible-list state above.
+    # Per-node expand state for the Analyze panel's inline report disclosure
+    # (item a/c, 2026-06-25) — deliberately separate from each feature's own
+    # exp_prop (the dedicated Reports tab pre-seeds THAT one expanded; this
+    # one always starts empty/collapsed). One flat newline-joined key set
+    # shared across every feature's inline view (node keys already embed
+    # their own report's feature tag, so no collisions).
     bpy.types.WindowManager.assetdoctor_detail_expanded = bpy.props.StringProperty(default="")
 
     # Batch E — idle-scan feasibility prototype (gated off by default in prefs).
@@ -291,6 +306,8 @@ def unregister() -> None:
                 "assetdoctor_broken_libs", "assetdoctor_broken_index",
                 "assetdoctor_broken_imgs", "assetdoctor_broken_imgs_index",
                 "assetdoctor_linked_missing_imgs",
+                "assetdoctor_dup_lib_members", "assetdoctor_abs_path_members",
+                "assetdoctor_res_variant_members",
                 "assetdoctor_tex_group_by", "assetdoctor_tex_scanned",
                 "assetdoctor_tex_initial_missing", "assetdoctor_tex_expanded",
                 "assetdoctor_tex_source_material",
@@ -315,7 +332,7 @@ def unregister() -> None:
                 "assetdoctor_analyze_steps", "assetdoctor_analyze_index",
                 "assetdoctor_flatten_candidates", "assetdoctor_flatten_index",
                 "assetdoctor_flatten_plans_json", "assetdoctor_flatten_expanded",
-                "assetdoctor_detail_expanded",
+                "assetdoctor_flatten_remote_note", "assetdoctor_detail_expanded",
                 "assetdoctor_idle_seconds", "assetdoctor_idle_detected"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]

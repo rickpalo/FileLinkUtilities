@@ -156,16 +156,17 @@ def test_flatten_carries_icon():
     assert rows[0].icon == "FILE_FOLDER"
 
 
-def test_flatten_indent_guides():
-    """A "│  ├─ "-style connector prefix (Explorer-style tree guides, #6) reads
-    clearer than blank indentation; depth 0 stays unprefixed (today's look)."""
+def test_flatten_indent_is_plain_depth_no_connector_glyphs():
+    """No "│  ├─ "-style connector prefix (dropped per user feedback,
+    2026-06-25: "garbage, don't want it") -- just depth."""
     root = TreeNode(key="r", label="root", children=[
         TreeNode(key="a", label="A", children=[TreeNode(key="a1", label="A1")]),
         TreeNode(key="b", label="B"),
     ])
     rows = flatten_visible([root], expanded={"r", "a"})
     by_key = {r.key: r for r in rows}
-    assert by_key["r"].guide == ""  # root: no guide
-    assert by_key["a"].guide == "├─ "  # has a sibling (B) below it
-    assert by_key["b"].guide == "└─ "  # last child of root
-    assert by_key["a1"].guide == "│  └─ "  # under a non-last ancestor (A), itself last
+    assert by_key["r"].indent == 0
+    assert by_key["a"].indent == 1
+    assert by_key["b"].indent == 1
+    assert by_key["a1"].indent == 2
+    assert not hasattr(by_key["r"], "guide")

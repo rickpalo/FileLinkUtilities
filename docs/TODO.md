@@ -1,7 +1,397 @@
 # AssetDoctor — TODO / backlog
 
+## ✅ Phase 4 Apply (Flatten Link) safety investigation — RESOLVED 2026-06-26 (v0.2.69)
+
+`ops/linkchain.py::_flatten_rig` used to silently steal and corrupt another character's body/
+eye/clothing object when flattening a different character sharing a reference in
+`human_bundle.blend` (`override_hierarchy_create()`'s opaque hierarchy-matching would adopt an
+already-in-use object instead of creating a fresh one). **Fixed by switching to per-member
+`ID.override_create()`** (we already enumerate every member + its own reference via the chain
+census, so Blender's hierarchy auto-discovery was never needed) **plus a before/after freshness
+check** on the result (compare `bpy.data.objects` names before/after the call) — a member whose
+result isn't verifiably fresh is BLOCKED (clear message, no property replay, no user remap)
+instead of trusted. **Verified end-to-end against the real 712-character `People1_v5.1.blend`,
+in the actual scan-then-apply flow: "Flattened 8/9 part(s)"** — only the one structurally
+unfixable case (`Smock.002`, a reference nobody in the file has individually overridden yet,
+still a bare shared plain link) is blocked, down from the original 3-of-9 corruption risk.
+
+A `bpy.data.user_map`-based PRE-check (try to detect risk before calling `override_create()` at
+all) was attempted and reverted — in this file, every heavily-shared template shows real
+`user_map` users after the normal scan runs first (hundreds of legitimate characters reference
+the same templates), so the pre-check blocked all 9 members, not just the unsafe one. The
+post-call freshness check is the reliable signal; don't reintroduce a pre-check without solving
+that false-positive problem first.
+
+**One known residual issue, not yet root-caused, low severity:** even when correctly BLOCKED,
+`Smock.002` itself still gets silently converted to an override in place (and loses its
+collection membership) as a side effect of merely *calling* `override_create()` on it — confirmed
+via probe regardless of `remap_local_usages` True/False. The blocked member never gets property
+replay or a user-remap (the dangerous part), but the shared object's owner (`child_older`,
+elsewhere in the file) likely loses it from its collection as an unwanted side effect. Tried:
+renaming it out of the way first (dead end — linked object names are read-only); `do_fully_
+editable=True` (no effect, ruled out); `remap_local_usages=True` (also mutates in place, no
+improvement). Root cause of WHY Blender does this specifically for a never-before-overridden bare
+link is still unknown (web research confirmed "library override creation fails silently" is a
+known, acknowledged Blender bug class — [#102495](https://developer.blender.org/T102495) — but
+the exact mechanism wasn't pinned down). **Not blocking further work** — pick up only if it
+recurs/matters for a specific file, since it no longer risks cross-character corruption.
+
+**Design note for the Flatten UI (queued, build later as its own UI pass):** each flattenable
+character row needs a checkbox to its left so the user can select which ones to flatten (all
+checked by default). Near the Flatten button, add a SEPARATE checkbox (unchecked by default) to
+make the character local instead of flattening via direct link. Touches
+`_draw_flatten_candidates`/`ASSETDOCTOR_OT_build_flatten_plan` in `ui/panels.py`/`ops/linkchain.py`.
+
+**Third checkbox, added 2026-06-26 — "Create Copy (Hide Original)", enabled by default.** When
+on, build an identical COLLECTION structure for the flattened result instead of leaving new
+objects in whatever collection the old object was in: find the collection containing ALL of the
+to-be-flattened objects (the lowest common collection in the hierarchy; if none exists, start at
+the Scene Collection instead), create a mirror of it named `<original>-flattened`, then mirror
+the existing sub-collection structure down to wherever the flattened characters actually live —
+skipping any sub-collection that contains NONE of the flattened objects (don't duplicate empty
+branches). The ORIGINAL collection structure/objects are hidden (not deleted), so before/after is
+inspectable and reversible. This needs its own small algorithm (find lowest common ancestor
+collection across a set of objects, then walk+mirror only the branches containing a target) —
+not just a flag on the existing per-member loop; design the collection-mirroring logic before
+wiring it to `_flatten_rig`'s existing per-member `coll.objects.link()` step.
+
+**API version note (resolved):** the official Blender 5.1 docs bundle, live RNA introspection of
+the installed 5.1.2 binary, and the UPBGE docs mirror all agree word-for-word on the
+`override_create`/`override_hierarchy_create` signatures — the version-mismatch concern raised
+mid-investigation was legitimate to check but didn't explain any of the above; ground truth was
+never in question once verified three ways.
+
+## 🗂️ CONSOLIDATED TASK LIST (single source, 2026-06-26) — supersedes the scattered
+## Phase 1-5 / lettered-batch / ROADMAP / "queued feedback" notes throughout the rest of this
+## file. Those sections are kept below for historical detail (don't delete), but THIS is where
+## to look for "what's left," grouped for efficient batched work. Built from a full sweep of
+## the plan file + this whole TODO.md + targeted code spot-checks (2026-06-26). Each item below
+## links back to its original detailed writeup by line-area description, not duplicated in full.
+
+### Group 1 — `core/depscan.py` + `core/datablock_links.py` cluster (do together: same two
+### files, same reused primitive (`datablocks_from_library`/`linked_datablocks`), same report —
+### Check Link Chain). All report-only, no mutation, no design ambiguity.
+1. Add `depths: dict[str,int]` to `DepScan`, label every Missing/Circular finding's linking file
+   "direct" vs "indirect (N hops via X)" — answers "Outliner shows 9, report shows 15."
+2. "Show what's linked from here" action on indirect File Map rows (offline BAT read of the
+   PARENT file via `datablocks_from_library`, since indirect libraries aren't real
+   `bpy.data.libraries` entries and can't click-to-select today).
+3. Circular-reference findings: nest the actual datablocks crossing each direction of the loop
+   (same primitive) instead of just repeating the file names — needs a `circular_link`-specific
+   branch in `build_dependency_tree`'s `cat_node`.
+4. Cross-reference `linked_datablocks(blend)` to downgrade a library with ZERO real referencing
+   placeholders from "missing/error" to "stale, not actually used" — closes the "is everything in
+   the chain actually relevant" gap.
+5. Check whether the older, still-unfixed v0.2.27 item #8 (`ops/relink.py::_gather_libs` not
+   marking direct/indirect for the live "Find Broken Library Links" tool) shares this fix or
+   needs its own pass (different code path: live bpy.data walk, not offline BAT).
+
+### Group 2 — Duplicate data-blocks report shape (`core/datablock_graph.py` + `core/tree.py`)
+6. Group the "Duplicate data-blocks (.NNN copies)" category by TYPE, collapsed by default
+   (today one flat list mixes Material/Action/Object families together).
+7. **Gated — do NOT build without a fresh discussion:** the report overclaims for types with no
+   real content fingerprint (e.g. "Collection: awning ×8" when two members' meshes already
+   differ post-sim-bake). User explicitly rejected a reword-as-"unverified" fix; wants real
+   content verification instead. No code (reword OR deep-verify) without checking direction
+   with the user first. Explicitly was deferred until the Phase 4 investigation finished — that
+   investigation is now resolved (see above), so this is unblocked to discuss whenever picked up.
+
+### Group 3 — Phase 3 panel restructuring (`ui/panels.py`, the biggest remaining chunk, needs a
+### before/after design sign-off before any code, same process as the original Phase 3a)
+8. **"Reporting & Recommendations" section** — still just the generic Reports selector inside
+   the `ASSETDOCTOR_PT_results` holding pen.
+9. **"Cleanup & Fixes" section** — every Apply/Merge/Relink/Reconnect/Normalize button is still
+   scattered across its original box. User already specified a risk-ordering for whenever this
+   is built: cheap/reversible first (Relink Selected, Reconnect Selected, Normalize), bulk/
+   structural last (Make Local, Dedup & Remap, Instance & Merge, Scan + Purge Orphans). Standing
+   instruction: once Make Local gets a real Apply button here, delete the legacy panel outright.
+10. **"Info & Utilities" section** — Utilities panel exists but isn't renamed/relocated into it;
+    doc-help icon still in the panel header.
+11. Progress-bar position — genuine Blender layout constraint (can't inject parent content
+    between sibling child panels); 3 real options identified, needs the user's pick before code.
+12. UIList virtualization for Missing/Duplicate Textures, Datablock Reconnect, Examine Library
+    (still manually-drawn boxes, not scrollable `template_list`s) — confirmed still true by code.
+
+### Group 4 — Phase 4 Flatten UI polish (`ui/panels.py` + `ops/linkchain.py`)
+13. Per-character checkboxes (select which to flatten, default all checked) + a separate
+    "make local instead" checkbox (default unchecked) near the Flatten button. (Duplicated from
+    the Phase 4 section above for grouping purposes — same item, don't do twice.)
+
+### Group 5 — Quick standalone fixes (different files, but each trivial/self-contained, no
+### design ambiguity, good filler between bigger groups)
+14. Export default filename should interpolate the active feature (`AssetDoctor_<feature>.txt`),
+    not one hardcoded name — `ops/report_store.py`.
+15. Resource Usage: column headers (RAM|VRAM|disk at top, not repeated per row) + sortable
+    columns (`template_list` currently has `sort_lock=True`) — `ui/panels.py`/`core/resource_tree.py`.
+16. "Different content, kept separate" conflict rows should say WHY (different dimensions vs.
+    same dimensions but different hash) — report-text-only, no mutation.
+
+### Group 6 — Make Local correctness/perf (mostly one area: `core/f2_makelocal.py` / the Make
+### Local op) — status uncertain on all three, confirm against current code before starting
+17. In-Place localize may not fully localize objects in hidden/excluded collections — lead
+    already recorded (temporarily reveal all collections for the bulk pass, restore after).
+18. Progress bar reportedly invisible on huge files — root cause already identified (heavy
+    phases run synchronously in `invoke()` before the modal starts).
+19. Guard against running In-Place localize on a file that's itself a shared library other files
+    depend on — needs design (ties to Check Link Chain), not just a code fix.
+
+### Group 7 — Small new features, self-contained, no major design ambiguity
+20. Examine Library: folder-wide search (walk every .blend in a chosen folder, peek each for a
+    name match) as a convenience layer on top of the existing per-row manual pick.
+21. Global dedup preference: keep-local vs keep-linked, separate for materials and meshes — new
+    `AssetDoctorPreferences` enum(s), confirmed still missing from `prefs.py` by code spot-check.
+
+### Group 8 — Bigger ROADMAP features (genuinely new work, several need a design discussion
+### before any code; ordered roughly cheapest-to-scope first)
+22. **Automated Cleanup pipeline** — unlike the others below, the FULL design is already locked
+    (nested panels, run order, backup-once, savings metrics) — implementation-ready once the
+    individual modal sections it depends on are live-verified, not a "needs discussion" item.
+23. Texture-channel synonym table + inverse-pairs (gloss↔roughness) — root-caused, needs a
+    design decision on 3 sub-parts (editable prefs list; suggest-but-flag-inverted; an actual
+    invert/convert action as separate future work).
+24. Synology conflict-file diff/merge — scoping questions already identified (reuse
+    `core.fingerprint` per-type + the Flatten Plan's `path_resolve` property-walk for the diff;
+    the "pull one change in" mutation needs its own per-type apply logic) — needs full design
+    discussion before any code.
+25. Material override → real node-tree reassignment — today's eyedropper only re-groups the
+    report, doesn't rewire the file; needs the user to decide exact semantics (move vs copy node,
+    which socket, behavior with no matching target node) before any code.
+26. Archive Project (BAT `pack` → zip) — unscoped, needs design from scratch.
+27. Lazy-depth scan — unscoped, needs design from scratch.
+
+### Group 9 — Verification / spot-checks (little to no new code unless something's found broken)
+28. **The standing big one:** a full live-Blender verify sweep — almost everything since v0.2.5
+    has shipped without ever being clicked through in the real UI. Named repeatedly across nearly
+    every session digest as the single biggest backlog item.
+29. Confirm the literal crash-stack names (`character1_cs.012`/`cs_grp.012`/`Mesh_006_001` etc.)
+    were actually resolved by the broader Reconnect fixes, or reconnect them specifically.
+30. Confirm/re-confirm the F8 hierarchical-layout direction (leaf-at-top vs root-at-top) — was
+    inverted once, ambiguous whether the user ever explicitly re-confirmed it stuck.
+31. Reproduce (or rule out) the Batch 2 relink/merge crash theory (Solid vs Material viewport
+    shading) — mitigation code is in place but never proven necessary or sufficient.
+32. Confirm with the user whether "Remove Excess Variants" (already built) fully closes the old
+    ROADMAP "footprint reduction — Layer 2 resolution-standardize" line, or whether a separate
+    global/per-family auto-standardize mode is still wanted on top of per-group manual picking.
+33. Check whether 3 specific "Scene Debug"-style features named in a 2026-06-16 design session
+    (list materials by shader, missing node links, empty material slots) were ever built anywhere
+    else under a different name, or are still genuinely missing.
+
+### Detail-on-demand for items #1-#4 above (the original "queued live-UI feedback" writeups,
+### kept verbatim for the full reasoning/evidence trail — not separate open items)
+
+- **DONE @ v0.2.67:** File Map indentation/row-height bug at depth 3+ — `ui/panels.py
+  ::ASSETDOCTOR_UL_tree.draw_item` used ONE `row.separator(factor=item.indent * 1.4)`; a
+  single large-factor separator inside an `align=True` row visibly breaks (both width and
+  row height go non-linear past ~3 levels) — fixed to `for _ in range(item.indent):
+  row.separator(factor=1.4)` (N unit separators instead of one scaled one). Needs the user's
+  live-Blender confirm (panel changes can't be tested headlessly).
+- **NOT BUILT — "Show what's linked from here" for indirect File Map rows.** Clicking an
+  INDIRECT library row (e.g. `LS.blend`, reached via `Asset_bundle → LS`, never a direct
+  entry in the open file's own `bpy.data.libraries`) currently does nothing — click-to-select
+  only works when a row's library is ALSO a live `bpy.data.libraries` entry. Fix: reuse the
+  already-built (2026-06-16, never wired to UI) `core.datablock_links.datablocks_from_library
+  (blend, basename)` — offline BAT read of the PARENT file (here, `Asset_bundle.blend`) to
+  list exactly what it pulls from the child row's file, by kind+name, with real click-to-select
+  refs. Answers "since X isn't in my Libraries, how do I see what's linked through it."
+- **NOT BUILT — Check Link Chain doesn't distinguish "actually used" from "stale link-table
+  entry."** Confirmed via code: `core.depscan.scan_recursive_steps`/`scan_file` reads each
+  file's FULL library (LI) link table and recurses into everything unconditionally — it never
+  checks whether any LIVE datablock placeholder in that file still references the linked
+  library. Blender doesn't auto-clean stale LI entries (same disease F4 Orphans targets, one
+  level up), so a vestigial library reference with zero real users can still surface as a
+  `missing_link`/`error` on par with a real break. Fix: cross-reference against
+  `core.datablock_links.linked_datablocks(blend)` (also already built) — if a library has zero
+  actual referencing placeholder blocks, downgrade it to informational ("stale, not actually
+  used") instead of an error.
+- **NOT BUILT — Missing/Circular findings don't distinguish DIRECT vs INDIRECT libraries**
+  (2026-06-26 screenshot: Outliner shows 9 libraries, Check Link Chain reports 15 missing —
+  user correctly guessed the gap is "libraries of libraries" but it isn't labeled). `core.
+  depscan.DepScan` tracks BFS visit order but not each file's DEPTH from the root. Fix: add a
+  `depths: dict[str, int]` field, fill it during `scan_recursive_steps` (the depth is already
+  in the BFS queue tuple, just never stored), then have `build_dep_report` label each
+  Finding's linking file as "direct" or "indirect (N hops via <intermediate>)" — this is the
+  SAME conceptual gap as the older, still-unfixed v0.2.27 item #8 (`ops/relink.py::_gather_libs`
+  not marking direct/indirect for the LIVE "Find Broken Library Links" tool) — worth checking
+  whether that one shares the fix or needs its own pass; it's a different code path (live
+  bpy.data walk vs offline BAT recursion).
+- **NOT BUILT — Circular reference findings aren't actionable.** Screenshot: "Circular library
+  reference: PSM_Stage_v5.1 -> People1_v5.1 -> PSM_Stage_v5.1" expands to 3 child rows that are
+  just the SAME file names again (`core.depscan.build_dep_report`'s `circular_link` Finding
+  uses `items=list(cycle)`, i.e. the file-node list — zero new information over the message
+  text). User wants the actual DATABLOCKS crossing each direction of the loop, so they can
+  judge which direction to break. Fix: for each consecutive pair in the cycle, call
+  `core.datablock_links.datablocks_from_library(linker_path, linked_basename)` (offline BAT,
+  already built) and nest the returned (kind, name) list as real, click-to-select children
+  under that pair — needs a `circular_link`-specific branch in `core.depscan.
+  build_dependency_tree`'s `cat_node` (today it's generic/flat across every category).
+- **NOT BUILT — "Duplicate data-blocks (.NNN copies — wasted memory)" should group by TYPE,
+  collapsed by default.** Today `core.datablock_graph.build_live_report` adds every
+  `duplicate_family` Finding into ONE flat category (sorted by type label then base name, but
+  not actually grouped — a Material family and an Action family sit side by side in the same
+  flat list). User wants real type sub-groups (Material/Action/Object/...), each collapsed by
+  default, matching the established house style (Missing/Duplicate Textures' material-grouped
+  collapsible sections). `core.tree.report_to_tree` is generic (category -> finding -> items, 3
+  levels) — this needs either a 4th level special-cased for `duplicate_family` (mirroring the
+  circular-reference fix above) or restructuring into one synthetic category per type. Decide
+  which approach when this is picked up.
+- **FLAGGED FOR DISCUSSION (after Phase 4 Apply is solved) — f7live's "Duplicate data-blocks
+  (.NNN copies — wasted memory)" overclaims for types with no real fingerprint.** Real user
+  report (2026-06-26 screenshot): "Collection: awning ×8" lists `awning`/`awning.001`/`.002`/...
+  as if confirmed duplicates, but the user found the underlying meshes already differ
+  (`Mesh.059` vs `Mesh.060` — diverged after a cloth sim bake). `core.datablock_graph.
+  duplicate_families` is and always was purely NAME-based (`.NNN`-suffix stripping, zero content
+  check) for every type except Action and (as of this session) Shape Key. **User explicitly
+  rejected my proposed fix (reword the category/message to hedge "unverified" for types with no
+  fingerprinter) — "I don't think a name change is the right approach."** Real ask is to verify
+  duplicates are ACTUALLY identical, not just relabel the uncertainty — i.e. something closer to
+  the "deeper idea" below, not a wording tweak. Needs a real discussion of what "verify deeper"
+  should mean before any code — don't build the reword fix, and don't build the deeper one either
+  without the user's input. **Explicitly deferred until the Phase 4 Apply (Flatten Link) safety
+  problem is solved** — do not pick this up before then unless redirected.
+  **Candidate deeper direction (not agreed, for discussion):** offer a "verify mesh identity" hint
+  per family by walking each member object's `.data` through the ALREADY-EXISTING
+  `core.fingerprint.fingerprint_mesh` (F5's tool) — meaningful for Object families, fuzzier for
+  Collection families (a collection's "content" is its whole subtree, not one mesh).
+
 ## ⏩ NEXT SESSION STARTS HERE — read this block first, it supersedes earlier "NEXT SESSION" markers
 ## further down (those are now history, kept for the detailed record).
+
+**SESSION END (2026-06-26): user said "wrap everything up... end this session cleanly," then
+explicitly chose to LEAVE THE WHOLE v0.2.64→v0.2.66 STACK UNCOMMITTED** (asked directly rather than
+assumed — this project's standing pattern is "keep accumulating, commit explicitly," and the user
+confirmed that's still the call here, mainly because NONE of this session's UI/mutating changes have
+been live-tested in Blender yet). Suite 358→377, all green, working tree sitting on top of commit
+`18b1c5b`. **NEXT SESSION: live-test this whole stack in Blender before anything else** — the
+report-UI redesign (arrows/collapsing/spacing) and especially the THREE new mutating tools (#6
+duplicate-library merge, #7 absolute-path-to-relative, #11 resolution-variant removal) have only ever
+been exercised through pytest; none of the bpy-dependent paths have run for real. Only after a live
+pass should committing be reconsidered.
+
+**SESSION DIGEST — 2026-06-25/26, v0.2.65→v0.2.66, suite 366→377. Items #6/#7/#11 (deferred at the
+end of the previous digest) BUILT — NOT yet live-Blender verified, NOT committed.**
+
+All three reuse the SAME generic row PropertyGroup (`ASSETDOCTOR_PG_broken_lib`, already multi-
+purposed across this addon — `name`/`stored`/`group`/`selected`/`tag` cover every shape needed here
+too) and the SAME generic collapsible-group toggle (`assetdoctor.toggle_inline_detail` +
+`assetdoctor_detail_expanded`, the inline-disclosure state built earlier this session) — no new
+single-purpose PropertyGroups or toggle operators beyond the radio-select ones each item needs.
+
+- **#6 Duplicate/Inconsistent Library Paths.** Two parts: (1) the OFFLINE Check Link Chain report's
+  `INCONSISTENT_PATH`/`DUPLICATE_REF` findings now list EVERY stored form as a child item (was just
+  one — `core/depscan.py::build_dep_report`), each with a proper click-to-select ref (reuses the #5a
+  fix). (2) A real LIVE action: `core/relink.py::LibFixPlan.duplicates` now carries each member's
+  stored path (not just its name); a new "Duplicate library paths" list (under the existing Path
+  Normalization box) shows each duplicate group's stored-path forms as RADIO checkboxes (only one
+  enabled per group — `ASSETDOCTOR_OT_dup_lib_select` enforces it) plus a per-group "Use Selected
+  Paths" button (`ASSETDOCTOR_OT_merge_duplicate_libraries`) that keeps the ticked library's path and
+  `user_remap`s everything the OTHER duplicate(s) provide onto it — this IS Examine Library's exact
+  mechanism (`_merge_library` reuses `ops.examine_library._iter_library_blocks`), just auto-targeted
+  at the other half of a duplicate pair instead of a user-picked replacement. Orphan-purges the
+  now-unused victim library afterward (mirrors Reconnect's `do_linked_ids=True` purge) so the re-scan
+  honestly shows the group resolved.
+- **#7 Absolute Paths by drive.** New `core/relink.py::plan_absolute_paths` groups every absolute,
+  existing library by drive letter — same-drive groups are fixable (free multi-select checkboxes,
+  default pre-ticked, + one "Make Selected Relative" button per group via
+  `ASSETDOCTOR_OT_make_selected_relative`); cross-drive groups are shown read-only with no checkboxes
+  ("there is no relative path between Windows drives"). Closed a real transparency gap along the way:
+  cross-drive absolute libraries were previously INVISIBLE to Path Normalization (`plan.renames`
+  silently drops anything `to_relative` can't resolve) — now they're reported, just flagged unfixable.
+- **#11 Resolution Variants.** `core/imageres.py` gained `res_value`/`highest_member`/`lowest_member`
+  (token→comparable-int, for ordering "1k" < "2k" < "4k"). New actionable list in
+  `ops/image_dedup.py`: a per-member "keep this one" radio checkbox per variant group
+  (`ASSETDOCTOR_OT_res_variant_keep`), "Select High/Low Resolution" buttons that tick every group's
+  highest/lowest member at once (`ASSETDOCTOR_OT_res_variant_select`), and "Remove Excess Variants"
+  (`ASSETDOCTOR_OT_remove_excess_variants`) which — for every group with a ticked keeper — reuses the
+  ALREADY-EXISTING generic `core.datablock_dedup.victims_for_keeper` (the same engine Materials/
+  Datablocks dedup already use) to `user_remap` the other resolution(s) onto the kept one and remove
+  them. Deliberately no default keeper (unlike #6/#7's safe normalizations, picking a resolution to
+  discard is a real decision) — the button is disabled-by-warning until the user ticks one. Resolution
+  Variants' Analyze row now follows the Materials/Data-blocks pattern (its own headline + actionable
+  box, the generic tree disclosure dropped) instead of the generic `_draw_report_detail` shape every
+  other report still uses.
+
+Also fixed while building #6: `core/depscan.py`'s `DUPLICATE_REF` finding had the identical
+"items only holds one value" display bug as `INCONSISTENT_PATH` — fixed the same way.
+
+**Previous digest below, now superseded — kept for the detailed record of the FIRST half of this
+session (items 1-5/8-10 + the original report-UI redesign a-g batch):**
+
+**SESSION DIGEST — 2026-06-25, v0.2.64→v0.2.65, suite 358→366. Report-UI redesign pass (two
+feedback batches in one session) — NOT yet live-Blender verified, NOT committed.**
+
+**Batch 1 (the generic Analyze disclosure, items a–g):** rewrote the inline "Details" disclosure
+under every generic Analyze report (f7/f7live/f7chain/f7links/f6res/geo/f4/f2) in
+`ui/panels.py::_draw_report_detail` — the expand arrow now lives on the SAME row as the headline
+(no separate "Details" line), every category below it is its OWN collapsible row defaulting
+COLLAPSED (a new inline-only `assetdoctor_detail_expanded` key set, independent of the dedicated
+Reports tab's own `exp_prop` so it doesn't inherit that tab's pre-expanded state), the node a
+headline already quotes verbatim is excluded from the body (no more literal duplicate line), and a
+clean/negative result with nothing else to show draws NO arrow at all. Dropped the "Fake Explorer"
+ASCII tree-connector glyphs everywhere (`core/tree.py`'s `Row.guide`/`_guide_prefix` removed
+outright) in favor of plain depth indentation, matching the Missing Textures section's house style
+— this also fixed the dedicated Reports-tab `UIList`. **Item g (Find Flattenable Characters
+returning "nothing found" on a Stage file that holds zero local overrides):** root-caused — Phase
+B's live picker can only see `override_library` on objects local to the CURRENTLY open file; a
+character several hops deep (People1.blend) is invisible to it even though Phase A's offline census
+already found it. Fixed: `core/linkchain.remote_posing_files` + a new "found in <file> — open it
+directly" message (`assetdoctor_flatten_remote_note`) instead of a misleading "nothing found."
+
+**Batch 2 (a 10-item live-UI-feedback list from the user, items 1–11; #6/#7/#11 NOT built, see
+below):** #1 deleted the stale "Fix-it buttons... not designed yet" info note. #2 split "Map a
+Folder"/"Safe to delete?" out of Analyze into a new sibling panel `ASSETDOCTOR_PT_analyze_external`
+("Analyze External Files", `bl_order=2`); Analyze renamed "Analyze This File". #3 folded Find
+Duplicate Materials/Geometry/Content into ONE "Find Duplicates" trigger alongside Find Duplicate
+Data-blocks (`core.analyze_steps.DUPLICATE_STEPS` + `ops.analyze_all.ASSETDOCTOR_OT_find_duplicates`,
+a subclass of the Analyze-All dispatcher scoped to 4 steps) — each scan's own report/list section is
+UNCHANGED in place (Find Duplicate Content's box still lives in the Results panel, not relocated).
+#4 the File Map wrapper-around-exactly-one-root collapsed into ONE headline row ("<root> — File map —
+<size> · N librar(y/ies) (total <size>)", Blender-file icon not folder — `core/depscan._file_map_node`)
+— a new GENERAL rule worth applying elsewhere: a wrapper holding exactly one child should usually
+just become that child's own row. #5a click-to-select wired up for every f7 Errors-category item
+(`core/depscan.py`'s `cat_node` now attaches a `{"type": "Library", "name": ...}` ref — resolution
+needs the real filename WITH its extension even though the label drops it). #5b ".blend" dropped from
+every displayed name in `core/depscan.py`/`core/linkchain.py` (`_name`/`_display_name`); only ever
+applied to .blend files, NOT textures/other extensions elsewhere. #5c/5d answered in conversation, not
+built (see below). #8 investigated + fixed a real bug: a Mesh/Curve/Lattice <-> its own Key
+(shape_keys / Key.user mirror each other) is INTRINSIC Blender plumbing, not a real override-resync
+loop — `core/datablock_graph.find_datablock_loops` now drops that bare reciprocal 2-node pair
+(`_is_shape_key_reciprocal`), which very likely explains why loop counts on real files looked
+suspiciously huge. #9 status icons were tied ONLY to the Analyze-All run's own per-step collection
+(blank forever for an individually-clicked button) — `_analyze_step_status_icon` now falls back to
+each feature's own "has data" check so every button shows CHECKMARK/RADIOBUT_OFF correctly regardless
+of how it was run. #10 Resolution Variants' redundant "headline → Summary category → Multi-resolution
+variants category → list" collapsed to "headline → variants → list" by switching its trailing Finding
+from `category="summary"` to the flat `"overview"`.
+
+**NOT built this session (#6, #7, #11 — each is a real new MUTATING feature, deliberately not rushed):**
+- **#6 Inconsistent Paths:** show BOTH stored path forms per duplicated library (not just one),
+  per-form checkbox (radio-like — only one selectable per group) + a "Use Selected Paths" button that
+  rewrites every reference to the chosen form.
+- **#7 Absolute Paths:** group by drive (same-drive entries get a checkbox + "Make Selected Relative";
+  cross-drive entries are flagged as un-fixable — a relative path can't cross drives).
+- **#11 Multi-resolution variants:** per-member checkboxes + 3 buttons (Select High Resolution / Select
+  Low Resolution / Remove Excess Variants) — removing a variant must transfer its USERS onto the kept
+  resolution before deleting the datablock (mirrors the existing dedup "keeper" pattern in
+  `core/imagededup.py`/`core/datablock_dedup.py` — likely the right model to extend, not a fresh design).
+
+All three need their own design-then-build pass (selection-state UI + a new mutating operator each) —
+flagged to the user rather than built blind in the same sitting that already shipped ~12 other
+changes. **Resume here next session** unless the user redirects.
+
+**Conceptual answers given in conversation (no code, recorded so they aren't re-litigated):**
+- **5c (does cross-linking a low-poly stage object between PSM_Stage and People1 cause real
+  problems?):** that specific pattern (linking a SHARED prop back and forth where neither side
+  modifies what the other provides) is not itself dangerous — Blender handles diamond/shared links
+  fine. The actual disease in this project's files is the SAME library reached via many different
+  stored path strings (duplicate library blocks) and override resync loops, not "any 2-way link
+  between two files." A real CIRCULAR reference (A's data depends on B's data which depends back on
+  A's) is the risky case Check Link Chain flags.
+- **5d (what's the right fix for a real circular reference?):** make the dependency a strict
+  one-way hierarchy — pick which file is logically "downstream" (usually the one being assembled,
+  e.g. the Stage), then in the OTHER (upstream/source) file remove/make-local whatever it links back
+  from the downstream file, save, re-scan. This is the existing documented guidance (see
+  `[[project_assetdoctor]]`'s "Cycle-fix guidance"); turning it into a guided in-UI action needs
+  datablock-level link detail to show exactly what to localize — not yet built.
 
 **SESSION DIGEST — 2026-06-25, v0.2.61→v0.2.63. Phase 4 Apply LIVE-VERIFIED for the first time
 (headless probe against the real 14.4GB People1_v5.1.blend, no crash) + a live-UI-feedback batch

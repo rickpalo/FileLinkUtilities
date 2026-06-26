@@ -283,9 +283,17 @@ def classify_posing(info: ObjectPosingInfo) -> str:
 
 # --- report -------------------------------------------------------------------
 
+def _strip_blend_ext(name: str) -> str:
+    """Drop a trailing ``.blend`` (user feedback, 2026-06-25 item 5b: "leave
+    the file extension off all the reports... it can be assumed" — every
+    file this report names is a .blend, so the extension carries no
+    information, only width)."""
+    return name[:-6] if name.lower().endswith(".blend") else name
+
+
 def _name(path: str) -> str:
     import ntpath
-    return ntpath.basename(path) or path
+    return _strip_blend_ext(ntpath.basename(path) or path)
 
 
 def _display_name(path: str) -> str:
@@ -294,7 +302,7 @@ def _display_name(path: str) -> str:
     core.datablock_links for the same caveat. Used wherever a path comes from
     a BAT-read DNA field rather than a plain filesystem path (those go
     through ``_name`` instead)."""
-    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    return _strip_blend_ext(path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1])
 
 
 def _basename(path: str) -> str:
@@ -358,7 +366,7 @@ def build_chain_report(graph: DepGraph, root: str, posing: list[ObjectPosingInfo
                 msg += " — its source chain could not be determined"
             report.add(Finding(
                 category="posing_override", message=msg, severity="info",
-                items=[f"Object/{info.name}"]))
+                items=[f"Object/{info.name}"], data={"source_file": info.source_file}))
         elif mech == MODIFIER_DRIVEN:
             report.add(Finding(
                 category="posing_modifier",
@@ -485,6 +493,27 @@ def routes_from_report(report: Report) -> dict[str, list[list[str]]]:
         paths = finding.data.get("paths") or []
         routes.setdefault(target, []).extend(paths)
     return routes
+
+
+def remote_posing_files(report: Report, current_file: str) -> list[str]:
+    """Distinct file(s), other than ``current_file``, where ``build_chain_report``
+    already found an ``override_with_transform`` character.
+
+    Phase B's live picker (``ops.linkchain.scan_flatten_candidates``) can only
+    see overrides local to whichever .blend is open right now — a multi-hop
+    character several files deep (e.g. People1.blend, several hops below a
+    Stage file that holds zero local overrides) is invisible to it even
+    though Phase A's offline census (this report) already found it. Used to
+    turn a misleading "nothing found" into "found, but open THIS file"."""
+    current = _basename(current_file) if current_file else ""
+    files: set[str] = set()
+    for f in report.findings:
+        if f.category != "posing_override":
+            continue
+        src = f.data.get("source_file", "")
+        if src and _basename(src) != current:
+            files.add(_display_name(src))
+    return sorted(files)
 
 
 def build_flatten_plan_report(plans: list[FlattenPlan]) -> Report:
@@ -660,7 +689,8 @@ __all__ = [
     "ObjectPosingInfo", "OverrideReference", "OverrideProperty", "FlattenPlan",
     "find_chains", "multihop_routes", "read_object_posing", "read_override_reference",
     "classify_objects", "classify_posing", "transform_differs_from_identity",
-    "build_chain_report", "build_flatten_plan", "routes_from_report", "build_flatten_plan_report",
+    "build_chain_report", "build_flatten_plan", "routes_from_report", "remote_posing_files",
+    "build_flatten_plan_report",
     "flatten_plan_to_dict", "flatten_plan_from_dict", "summarize_properties", "build_rig_rollup",
     "FlattenApplyResult", "build_flatten_apply_report",
 ]

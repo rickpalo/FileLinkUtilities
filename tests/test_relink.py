@@ -59,7 +59,53 @@ def test_plan_detects_duplicates():
         _lib("matB", r"C:\proj\materialMaster.blend", r"C:\proj\materialMaster.blend"),
     ]
     plan = relink.plan_library_fixes(libs, r"C:\proj")
-    assert list(plan.duplicates.values()) == [["matA", "matB"]]
+    assert list(plan.duplicates.values()) == [
+        [("matA", "//materialMaster.blend"), ("matB", r"C:\proj\materialMaster.blend")]]
+
+
+# --- plan_absolute_paths (item 7, 2026-06-25) --------------------------------
+
+def test_plan_absolute_paths_groups_same_drive_as_fixable():
+    libs = [
+        _lib("a.blend", r"C:\proj\libs\a.blend", r"C:\proj\libs\a.blend"),
+        _lib("b.blend", r"C:\other\b.blend", r"C:\other\b.blend"),
+    ]
+    groups = relink.plan_absolute_paths(libs, r"C:\proj\scene")
+    assert len(groups) == 1
+    assert groups[0].drive == "C:"
+    assert groups[0].fixable is True
+    assert {m.name for m in groups[0].members} == {"a.blend", "b.blend"}
+    assert all(m.new for m in groups[0].members)  # every member got a relative path
+
+
+def test_plan_absolute_paths_cross_drive_is_reported_but_unfixable():
+    if os.name != "nt":
+        return  # cross-drive semantics are Windows-only
+    libs = [_lib("d.blend", r"D:\libs\d.blend", r"D:\libs\d.blend")]
+    groups = relink.plan_absolute_paths(libs, r"C:\proj\scene")
+    assert len(groups) == 1
+    assert groups[0].drive == "D:"
+    assert groups[0].fixable is False
+    assert groups[0].members[0].new == ""  # no relative path across drives
+
+
+def test_plan_absolute_paths_skips_relative_and_missing():
+    libs = [
+        _lib("ok", "//ok.blend", r"C:\proj\ok.blend"),  # already relative
+        _lib("gone", r"C:\proj\gone.blend", r"C:\proj\gone.blend", exists=False),  # missing
+    ]
+    assert relink.plan_absolute_paths(libs, r"C:\proj") == []
+
+
+def test_plan_absolute_paths_fixable_groups_sort_first():
+    if os.name != "nt":
+        return
+    libs = [
+        _lib("d.blend", r"D:\libs\d.blend", r"D:\libs\d.blend"),
+        _lib("c.blend", r"C:\proj\libs\c.blend", r"C:\proj\libs\c.blend"),
+    ]
+    groups = relink.plan_absolute_paths(libs, r"C:\proj\scene")
+    assert [g.drive for g in groups] == ["C:", "D:"]
 
 
 def test_find_relink_candidates_unique_match(tmp_path):
@@ -97,6 +143,20 @@ def test_build_libfix_report_no_summary_row():
     # no redundant Summary row; normalize_path is the self-describing top line
     assert all(f.category != "summary" for f in report.findings)
     assert report.findings[0].category == "normalize_path"
+
+
+def test_build_libfix_report_duplicate_carries_members():
+    """Item 6, 2026-06-25: the UI needs each member's own STORED path (not
+    just its name) to render a per-form checkbox."""
+    libs = [
+        _lib("matA", "//materialMaster.blend", r"C:\proj\materialMaster.blend"),
+        _lib("matB", r"C:\proj\materialMaster.blend", r"C:\proj\materialMaster.blend"),
+    ]
+    plan = relink.plan_library_fixes(libs, r"C:\proj")
+    report = relink.build_libfix_report(plan, blend_name="scene.blend")
+    dup = next(f for f in report.findings if f.category == "duplicate_library")
+    assert dup.data["members"] == [
+        ["matA", "//materialMaster.blend"], ["matB", r"C:\proj\materialMaster.blend"]]
 
 
 def test_broken_links_report_lists_each():

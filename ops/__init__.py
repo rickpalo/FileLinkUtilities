@@ -18,8 +18,11 @@ from .datablock_inspect import (
     ASSETDOCTOR_OT_analyze_overrides,
     ASSETDOCTOR_OT_scan_all_missing,
 )
-from .analyze_all import ASSETDOCTOR_OT_analyze_all
+from .analyze_all import ASSETDOCTOR_OT_analyze_all, ASSETDOCTOR_OT_find_duplicates
 from .relink import (
+    ASSETDOCTOR_OT_dup_lib_select,
+    ASSETDOCTOR_OT_make_selected_relative,
+    ASSETDOCTOR_OT_merge_duplicate_libraries,
     ASSETDOCTOR_OT_normalize_library_paths,
     ASSETDOCTOR_OT_relink_pick_file,
     ASSETDOCTOR_OT_relink_selected,
@@ -63,6 +66,9 @@ from .image_dedup import (
     ASSETDOCTOR_OT_dup_material_keeper,
     ASSETDOCTOR_OT_dup_category_toggle,
     ASSETDOCTOR_OT_scan_res_variants,
+    ASSETDOCTOR_OT_res_variant_keep,
+    ASSETDOCTOR_OT_res_variant_select,
+    ASSETDOCTOR_OT_remove_excess_variants,
 )
 from .progress import ASSETDOCTOR_OT_toggle_pause, ASSETDOCTOR_OT_request_cancel
 from .make_local import ASSETDOCTOR_OT_make_local
@@ -93,11 +99,15 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_check_dependents,
     ASSETDOCTOR_OT_analyze_overrides,
     ASSETDOCTOR_OT_analyze_all,
+    ASSETDOCTOR_OT_find_duplicates,
     ASSETDOCTOR_OT_scan_all_missing,
     ASSETDOCTOR_OT_scan_broken_links,
     ASSETDOCTOR_OT_relink_pick_file,
     ASSETDOCTOR_OT_relink_selected,
     ASSETDOCTOR_OT_normalize_library_paths,
+    ASSETDOCTOR_OT_dup_lib_select,
+    ASSETDOCTOR_OT_merge_duplicate_libraries,
+    ASSETDOCTOR_OT_make_selected_relative,
     ASSETDOCTOR_OT_scan_reconnect_targets,
     ASSETDOCTOR_OT_reconnect_pick_source,
     ASSETDOCTOR_OT_reconnect_selected,
@@ -127,6 +137,9 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_dup_material_keeper,
     ASSETDOCTOR_OT_dup_category_toggle,
     ASSETDOCTOR_OT_scan_res_variants,
+    ASSETDOCTOR_OT_res_variant_keep,
+    ASSETDOCTOR_OT_res_variant_select,
+    ASSETDOCTOR_OT_remove_excess_variants,
     ASSETDOCTOR_OT_toggle_pause,
     ASSETDOCTOR_OT_request_cancel,
     ASSETDOCTOR_OT_make_local,

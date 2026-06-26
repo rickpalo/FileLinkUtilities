@@ -43,6 +43,7 @@ _CATEGORY_TITLES = {
     "clean": "Status",
     "summary": "Summary",
     "override_loop": "Override dependency loops (cause resync spam / bloat)",
+    "shape_key_override_risk": "Shape keys at risk (override-mesh write warnings)",
     "duplicate_family": "Duplicate data-blocks (.NNN copies — wasted memory)",
     "multihop_route": "Multi-hop link chains",
     "posing_override": "Flattenable overrides (Library Override + transform)",
@@ -80,7 +81,6 @@ class Row:
     ref: dict | None = None
     detail: str = ""
     icon: str = ""
-    guide: str = ""  # precomputed "│  ├─ "-style indent-guide prefix (own connector last)
 
 
 def node_to_dict(n: TreeNode) -> dict:
@@ -180,34 +180,27 @@ def report_to_tree(report: Report) -> list[TreeNode]:
     return nodes
 
 
-def _guide_prefix(is_last_chain: list[bool]) -> str:
-    """File-explorer-style indent guide: a "│  " continuation per ancestor that
-    still has siblings below it, blank ("   ") once an ancestor was the last
-    child, then this node's own connector ("├─ "/"└─ "). Empty at depth 0 (top
-    rows stay unindented, matching the pre-guide look)."""
-    if not is_last_chain:
-        return ""
-    parts = ["   " if last else "│  " for last in is_last_chain[:-1]]
-    parts.append("└─ " if is_last_chain[-1] else "├─ ")
-    return "".join(parts)
-
-
 def flatten_visible(nodes: list[TreeNode], expanded: set[str]) -> list[Row]:
-    """DFS into ``expanded`` nodes only, producing ordered indented rows."""
+    """DFS into ``expanded`` nodes only, producing ordered indented rows.
+
+    Indentation is plain depth only (no ASCII tree-connector glyphs) — a
+    file-explorer-style "│  ├─ " guide was tried and dropped (user feedback,
+    2026-06-25: "garbage, don't want it"); every report renders the same
+    plain icon + indent + label shape now, matching the Missing Textures
+    section's house style."""
     rows: list[Row] = []
 
-    def walk(node: TreeNode, depth: int, is_last_chain: list[bool]) -> None:
+    def walk(node: TreeNode, depth: int) -> None:
         has = bool(node.children)
         is_exp = node.key in expanded
         rows.append(Row(depth, node.key, node.label, node.severity, has, is_exp,
-                        node.ref, node.detail, node.icon, _guide_prefix(is_last_chain)))
+                        node.ref, node.detail, node.icon))
         if has and is_exp:
-            last_idx = len(node.children) - 1
-            for i, child in enumerate(node.children):
-                walk(child, depth + 1, is_last_chain + [i == last_idx])
+            for child in node.children:
+                walk(child, depth + 1)
 
     for n in nodes:
-        walk(n, 0, [])
+        walk(n, 0)
     return rows
 
 
