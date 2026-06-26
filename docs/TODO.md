@@ -71,20 +71,26 @@ never in question once verified three ways.
 ### Group 1 — `core/depscan.py` + `core/datablock_links.py` cluster (do together: same two
 ### files, same reused primitive (`datablocks_from_library`/`linked_datablocks`), same report —
 ### Check Link Chain). All report-only, no mutation, no design ambiguity.
-1. Add `depths: dict[str,int]` to `DepScan`, label every Missing/Circular finding's linking file
-   "direct" vs "indirect (N hops via X)" — answers "Outliner shows 9, report shows 15."
-2. "Show what's linked from here" action on indirect File Map rows (offline BAT read of the
+### **DONE @ v0.2.72 (2026-06-26), items 1-4 — see the SESSION DIGEST below for detail/tests.**
+1. ~~Add `depths: dict[str,int]` to `DepScan`, label every Missing/Circular finding's linking
+   file "direct" vs "indirect (N hops via X)" — answers "Outliner shows 9, report shows 15."~~
+2. ~~"Show what's linked from here" action on indirect File Map rows (offline BAT read of the
    PARENT file via `datablocks_from_library`, since indirect libraries aren't real
-   `bpy.data.libraries` entries and can't click-to-select today).
-3. Circular-reference findings: nest the actual datablocks crossing each direction of the loop
+   `bpy.data.libraries` entries and can't click-to-select today).~~
+3. ~~Circular-reference findings: nest the actual datablocks crossing each direction of the loop
    (same primitive) instead of just repeating the file names — needs a `circular_link`-specific
-   branch in `build_dependency_tree`'s `cat_node`.
-4. Cross-reference `linked_datablocks(blend)` to downgrade a library with ZERO real referencing
+   branch in `build_dependency_tree`'s `cat_node`.~~
+4. ~~Cross-reference `linked_datablocks(blend)` to downgrade a library with ZERO real referencing
    placeholders from "missing/error" to "stale, not actually used" — closes the "is everything in
-   the chain actually relevant" gap.
-5. Check whether the older, still-unfixed v0.2.27 item #8 (`ops/relink.py::_gather_libs` not
-   marking direct/indirect for the live "Find Broken Library Links" tool) shares this fix or
-   needs its own pass (different code path: live bpy.data walk, not offline BAT).
+   the chain actually relevant" gap.~~
+5. **INVESTIGATED, does NOT share the fix — deferred as its own item.** `ops/relink.py::
+   _gather_libs` is a flat one-level read of the CURRENT file's own `bpy.data.libraries` (no
+   recursion at all — different in kind from `depscan`'s offline BFS, which is what items 1-4's
+   `depths`/`parents` came from for free). A live direct/indirect signal for THIS tool would need
+   a different computation entirely: for each `Library`, walk `bpy.data.user_map()` from every ID
+   it provides and check whether any user is LOCAL (`id.library is None`) vs only reachable through
+   ANOTHER linked library — genuinely new bpy-dependent logic, not reachable from pytest, needing
+   its own design + live verification pass. Not started.
 
 ### Group 2 — Duplicate data-blocks report shape (`core/datablock_graph.py` + `core/tree.py`)
 6. Group the "Duplicate data-blocks (.NNN copies)" category by TYPE, collapsed by default
@@ -185,25 +191,35 @@ never in question once verified three ways.
   row height go non-linear past ~3 levels) — fixed to `for _ in range(item.indent):
   row.separator(factor=1.4)` (N unit separators instead of one scaled one). Needs the user's
   live-Blender confirm (panel changes can't be tested headlessly).
-- **NOT BUILT — "Show what's linked from here" for indirect File Map rows.** Clicking an
-  INDIRECT library row (e.g. `LS.blend`, reached via `Asset_bundle → LS`, never a direct
-  entry in the open file's own `bpy.data.libraries`) currently does nothing — click-to-select
-  only works when a row's library is ALSO a live `bpy.data.libraries` entry. Fix: reuse the
-  already-built (2026-06-16, never wired to UI) `core.datablock_links.datablocks_from_library
-  (blend, basename)` — offline BAT read of the PARENT file (here, `Asset_bundle.blend`) to
-  list exactly what it pulls from the child row's file, by kind+name, with real click-to-select
-  refs. Answers "since X isn't in my Libraries, how do I see what's linked through it."
-- **NOT BUILT — Check Link Chain doesn't distinguish "actually used" from "stale link-table
-  entry."** Confirmed via code: `core.depscan.scan_recursive_steps`/`scan_file` reads each
-  file's FULL library (LI) link table and recurses into everything unconditionally — it never
-  checks whether any LIVE datablock placeholder in that file still references the linked
+- **DONE @ v0.2.72 (2026-06-26) — "Show what's linked from here" for indirect File Map rows,
+  built as a transient POPUP (not a permanent inline expand — agreed with the user, who also
+  noted the dedicated Reports tab is expected to go away once the Phase 3 panel restructuring
+  is done, but it's wired there too since it's still live today).** New `TreeNode.popup`/
+  `Row.popup` field (`{"parent","basename"}`, JSON round-tripped); `core.depscan._filemap_popup`
+  sets it on any File Map row with `depths[node] >= 2` (a library only reachable through another
+  library — `depth is None` for a missing/never-visited target is explicitly NOT treated as
+  direct). New `ASSETDOCTOR_OT_show_linked_from` operator (`ops/report_store.py`) calls
+  `datablocks_from_library(parent, basename)` on click and lists the results in a
+  `window_manager.popup_menu`, each row reusing the existing `select_datablock` operator. Wired
+  into both the inline Analyze disclosure (`ui/panels.py::_draw_report_detail`) and the dedicated
+  Reports tab (`ASSETDOCTOR_PG_tree_row.popup_parent/popup_basename` +
+  `ASSETDOCTOR_OT_row_label`). Not live-Blender verified yet (UI/popups can't be headlessly
+  tested) — Blender was occupied (likely a render) when this was built, so it still needs a
+  click-through pass.
+- **DONE @ v0.2.70 (2026-06-26) — Check Link Chain doesn't distinguish "actually used" from
+  "stale link-table entry."** Confirmed via code: `core.depscan.scan_recursive_steps`/`scan_file`
+  reads each file's FULL library (LI) link table and recurses into everything unconditionally —
+  it never checks whether any LIVE datablock placeholder in that file still references the linked
   library. Blender doesn't auto-clean stale LI entries (same disease F4 Orphans targets, one
   level up), so a vestigial library reference with zero real users can still surface as a
-  `missing_link`/`error` on par with a real break. Fix: cross-reference against
-  `core.datablock_links.linked_datablocks(blend)` (also already built) — if a library has zero
-  actual referencing placeholder blocks, downgrade it to informational ("stale, not actually
-  used") instead of an error.
-- **NOT BUILT — Missing/Circular findings don't distinguish DIRECT vs INDIRECT libraries**
+  `missing_link`/`error` on par with a real break. Fixed: `build_dep_report` now takes an
+  injectable `linked_datablocks_fn` (defaults to the real `core.datablock_links.
+  linked_datablocks`), caches one offline read per linking file, and downgrades a MISSING finding
+  to a new `STALE_LINK` info-severity category ("stale, not actually used") when that file holds
+  zero live placeholders for the stored path. An unreadable file (the lookup itself raises) does
+  NOT get downgraded — fails safe to the real MISSING finding rather than hiding a possible break.
+- **DONE @ v0.2.70 (2026-06-26) — Missing/Circular findings don't distinguish DIRECT vs INDIRECT
+  libraries**
   (2026-06-26 screenshot: Outliner shows 9 libraries, Check Link Chain reports 15 missing —
   user correctly guessed the gap is "libraries of libraries" but it isn't labeled). `core.
   depscan.DepScan` tracks BFS visit order but not each file's DEPTH from the root. Fix: add a
@@ -211,19 +227,22 @@ never in question once verified three ways.
   in the BFS queue tuple, just never stored), then have `build_dep_report` label each
   Finding's linking file as "direct" or "indirect (N hops via <intermediate>)" — this is the
   SAME conceptual gap as the older, still-unfixed v0.2.27 item #8 (`ops/relink.py::_gather_libs`
-  not marking direct/indirect for the LIVE "Find Broken Library Links" tool) — worth checking
-  whether that one shares the fix or needs its own pass; it's a different code path (live
-  bpy.data walk vs offline BAT recursion).
-- **NOT BUILT — Circular reference findings aren't actionable.** Screenshot: "Circular library
-  reference: PSM_Stage_v5.1 -> People1_v5.1 -> PSM_Stage_v5.1" expands to 3 child rows that are
-  just the SAME file names again (`core.depscan.build_dep_report`'s `circular_link` Finding
-  uses `items=list(cycle)`, i.e. the file-node list — zero new information over the message
-  text). User wants the actual DATABLOCKS crossing each direction of the loop, so they can
-  judge which direction to break. Fix: for each consecutive pair in the cycle, call
-  `core.datablock_links.datablocks_from_library(linker_path, linked_basename)` (offline BAT,
-  already built) and nest the returned (kind, name) list as real, click-to-select children
-  under that pair — needs a `circular_link`-specific branch in `core.depscan.
-  build_dependency_tree`'s `cat_node` (today it's generic/flat across every category).
+  not marking direct/indirect for the LIVE "Find Broken Library Links" tool) — checked
+  2026-06-26: it does NOT share this fix (see Group 1 item #5's resolution above — `_gather_libs`
+  has no recursion/BFS to draw a `depths` field from at all; a live direct/indirect signal for it
+  needs its own `user_map`-based design, not started).
+- **DONE @ v0.2.71 (2026-06-26) — Circular reference findings aren't actionable.** Screenshot:
+  "Circular library reference: PSM_Stage_v5.1 -> People1_v5.1 -> PSM_Stage_v5.1" expanded to 3
+  child rows that were just the SAME file names again (`core.depscan.build_dep_report`'s
+  `circular_link` Finding used `items=list(cycle)`, i.e. the file-node list — zero new information
+  over the message text). User wanted the actual DATABLOCKS crossing each direction of the loop,
+  so they can judge which direction to break. Fixed: `build_dependency_tree` gained an injectable
+  `datablocks_from_library_fn` (defaults to the real `core.datablock_links.datablocks_from_
+  library`); its `cat_node` now special-cases `circular_link` (`_circular_pair_nodes`) — for each
+  consecutive pair in the cycle, one node per direction holding the real (kind, name) datablocks
+  as click-to-select leaves (`core.datablock_links.kind_ref` maps the few friendly kind labels
+  that don't match their real `bpy.types` class name — Node Group→NodeTree, Shape Key→Key,
+  Particle→ParticleSettings — everything else already matches verbatim).
 - **NOT BUILT — "Duplicate data-blocks (.NNN copies — wasted memory)" should group by TYPE,
   collapsed by default.** Today `core.datablock_graph.build_live_report` adds every
   `duplicate_family` Finding into ONE flat category (sorted by type label then base name, but
@@ -255,6 +274,24 @@ never in question once verified three ways.
 
 ## ⏩ NEXT SESSION STARTS HERE — read this block first, it supersedes earlier "NEXT SESSION" markers
 ## further down (those are now history, kept for the detailed record).
+
+**SESSION DIGEST — 2026-06-26, v0.2.69→v0.2.72, suite 384→400. Consolidated TODO Group 1
+(items 1-4) BUILT — items 1, 3, 4 are pure offline/bpy-free and fully pytest-covered; item 2
+(the new popup operator + its two UI wiring call-sites) is NOT live-Blender verified — Blender
+had a process already running (likely the user's render) when this was built, so the headless
+registration smoke test was skipped too. Item 5 was investigated and concluded (does NOT share
+the fix, deferred as its own not-yet-started item) rather than built. NOT yet committed — working tree
+sits on top of `63529e6`.**
+
+See the "DONE @ v0.2.7x" annotations inline in Group 1 and its "Detail-on-demand" section above
+for the full per-item writeup (depths/parents + direct-vs-indirect labeling, the stale-link-table
+downgrade, the circular-reference datablock nesting, and the show-linked-from popup). **NEXT
+SESSION: live-click-through the popup feature specifically** (an indirect File Map row in a real
+multi-hop file — `Check Link Chain` on something like `PSM_Stage_v5.1.blend` or `People1_v5.1.
+blend` should have one) **before trusting it**, same standing caution as every other UI-only
+change this project ships sight-unseen (Group 9 item #28, the standing live-verify-sweep item).
+
+**Previous digest below, now superseded — kept for the detailed record:**
 
 **SESSION END (2026-06-26): user said "wrap everything up... end this session cleanly," then
 explicitly chose to LEAVE THE WHOLE v0.2.64→v0.2.66 STACK UNCOMMITTED** (asked directly rather than

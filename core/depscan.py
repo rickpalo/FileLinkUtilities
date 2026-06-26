@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
 from .blendscan import LinkRef, scan_file as _bat_scan_file
+from .datablock_links import datablocks_from_library, kind_ref, linked_datablocks
 from .graph import DepGraph
 from .report import Finding, Report, SEVERITIES
 from .tree import TreeNode, _CATEGORY_TITLES
@@ -39,6 +40,9 @@ INCONSISTENT_PATH = "inconsistent_path"
 DRIVE_REMAP = "drive_remap"
 
 ScanFileFn = Callable[[pathlib.Path], "list[LinkRef]"]
+LinkedDatablocksFn = Callable[[str], "dict[str, list[tuple[str, str]]]"]
+DatablocksFromLibraryFn = Callable[[str, str], "list[tuple[str, str]]"]
+STALE_LINK = "stale_link"
 
 
 def _canon(path: str) -> str:
@@ -94,6 +98,8 @@ class DepScan:
     order: list[str] = field(default_factory=list)  # visit order (file keys)
     roots: list[str] = field(default_factory=list)  # the start file keys
     sizes: dict[str, int] = field(default_factory=dict)  # file key -> bytes on disk
+    depths: dict[str, int] = field(default_factory=dict)  # file key -> hops from a root
+    parents: dict[str, str] = field(default_factory=dict)  # file key -> BFS-discovering file
 
 
 def new_dep_scan() -> DepScan:
@@ -112,17 +118,17 @@ def scan_recursive_steps(
     fraction is approximate (discovered frontier grows during the walk):
     ``processed / (processed + queued)``.
     """
-    queue: deque[tuple[pathlib.Path, int]] = deque()
+    queue: deque[tuple[pathlib.Path, int, str | None]] = deque()
     visited: set[str] = set()  # normalized keys (case/sep-insensitive)
     for s in starts:
         s = pathlib.Path(s)
         result.roots.append(_canon(str(s)))
-        queue.append((s, 0))
+        queue.append((s, 0, None))
 
     processed = 0
     yield 0.0, f"Scanning {len(starts)} file(s)…"
     while queue:
-        path, depth = queue.popleft()
+        path, depth, parent = queue.popleft()
         node = _canon(str(path))
         nk = _key(node)  # normalized key for dedup; node keeps original case
         if nk in visited:
@@ -130,6 +136,9 @@ def scan_recursive_steps(
         visited.add(nk)
         result.order.append(node)
         result.graph.add_node(node)
+        result.depths[node] = depth
+        if parent is not None:
+            result.parents[node] = parent
         try:  # disk size is ~free here (we already have the path); see _build_file_map
             result.sizes[node] = path.stat().st_size
         except OSError:
@@ -155,7 +164,7 @@ def scan_recursive_steps(
             result.graph.add_edge(node, _canon(target), ref.stored_path)
             if ref.exists and ref.resolved_path.lower().endswith(".blend"):
                 if _key(ref.resolved_path) not in visited:
-                    queue.append((pathlib.Path(ref.resolved_path), depth + 1))
+                    queue.append((pathlib.Path(ref.resolved_path), depth + 1, node))
 
 
 def scan_recursive(
@@ -239,7 +248,42 @@ def drive_remap_candidates(scan: DepScan) -> list[tuple[str, str]]:
     return out
 
 
-def build_dep_report(scan: DepScan) -> Report:
+def _provenance(scan: DepScan, fkey: str) -> str:
+    """"direct" if ``fkey`` is a scan root, else "indirect (N hops via <parent>)".
+
+    Answers "Outliner shows 9 libraries, the report shows 15" — only a depth-0
+    (root) file's links are real entries in the open file's own
+    ``bpy.data.libraries``; anything deeper is a library-of-a-library this
+    offline recursive scan finds but the live Outliner never lists."""
+    depth = scan.depths.get(fkey, 0)
+    if depth <= 0:
+        return "direct"
+    parent = scan.parents.get(fkey)
+    via = f" via {_name(parent)}" if parent else ""
+    hop = "hop" if depth == 1 else "hops"
+    return f"indirect ({depth} {hop}{via})"
+
+
+def _is_stale_reference(fkey: str, stored_path: str, cache: dict[str, dict | None],
+                        linked_datablocks_fn: LinkedDatablocksFn) -> bool:
+    """True if ``fkey``'s own file holds ZERO live ID placeholder blocks sourced
+    from ``stored_path`` — a vestigial library-table (LI) entry Blender never
+    cleaned up, not a real break (item 4, 2026-06-26: "is everything in the
+    chain actually relevant"). One offline read per linking file, cached,
+    since a file can hold several missing/broken references."""
+    if fkey not in cache:
+        try:
+            cache[fkey] = linked_datablocks_fn(fkey)
+        except Exception:
+            cache[fkey] = None  # unreadable here too - don't claim "stale", just skip
+    grouped = cache[fkey]
+    if grouped is None:
+        return False
+    return not grouped.get(stored_path)
+
+
+def build_dep_report(scan: DepScan,
+                     linked_datablocks_fn: LinkedDatablocksFn = linked_datablocks) -> Report:
     """Turn a :class:`DepScan` into the F7 dependency report."""
     start_names = ", ".join(_name(k) for k in scan.roots) or "(file)"
     report = Report(title=f"Dependencies: {start_names}", feature="F7")
@@ -250,12 +294,23 @@ def build_dep_report(scan: DepScan) -> Report:
                            severity="error", items=[path]))
 
     # Intrinsic per-link issues.
+    stale_cache: dict[str, dict | None] = {}
     for fkey in scan.order:
         for ref in scan.refs.get(fkey, []):
             issues = link_issues(ref)
             if MISSING in issues:
+                if _is_stale_reference(fkey, ref.stored_path, stale_cache, linked_datablocks_fn):
+                    report.add(Finding(category=STALE_LINK,
+                                       message=f"{_name(fkey)}'s reference to {ref.stored_path} "
+                                               f"is a stale link-table entry — nothing in "
+                                               f"{_name(fkey)} actually uses it "
+                                               f"({_provenance(scan, fkey)})",
+                                       severity="info", items=[fkey],
+                                       data={"stored": ref.stored_path}))
+                    continue
                 report.add(Finding(category=MISSING,
-                                   message=f"{_name(fkey)} links missing library {ref.stored_path}",
+                                   message=f"{_name(fkey)} links missing library {ref.stored_path} "
+                                           f"({_provenance(scan, fkey)})",
                                    severity="error",
                                    items=[fkey, ref.resolved_path or ref.stored_path],
                                    data={"stored": ref.stored_path}))
@@ -301,11 +356,17 @@ def build_dep_report(scan: DepScan) -> Report:
                            severity="warning", items=[stored, match],
                            data={"stored": stored, "candidate": match}))
 
-    # Circular library references.
+    # Circular library references. Provenance is reported for the cycle's
+    # shallowest member (its entry point from a root) — direct/via-chain for
+    # the others follows from the same BFS depths/parents, but the entry
+    # point is what tells the user whether THIS loop is even reachable from
+    # the open file directly or only through another library.
     for cycle in scan.graph.find_cycles():
+        entry = min(cycle, key=lambda n: scan.depths.get(n, 0))
         report.add(Finding(category="circular_link",
                            message="Circular library reference: "
-                                   + " -> ".join(_name(n) for n in cycle),
+                                   + " -> ".join(_name(n) for n in cycle)
+                                   + f" ({_provenance(scan, entry)})",
                            severity="error", items=list(cycle)))
 
     # Most-linked libraries (the diamond/dup census), info.
@@ -337,6 +398,7 @@ _F7_TITLES = {
     "circular_link": "Circular references",
     "most_linked": "Most-linked libraries",
     "unreadable_file": "Unreadable files",
+    STALE_LINK: "Stale references (link-table entry, not actually used)",
 }
 # Severity tiers — how worried the user should be. Each lists the categories it
 # owns, worst-first within the tier. This is how we convey severity now (named
@@ -349,7 +411,7 @@ _F7_TIERS = [
     ("portability", "Portability only (works on this machine)",
      ["absolute_path", "mixed_slash"]),
     ("info", "Informational (normal)",
-     ["most_linked"]),
+     ["most_linked", STALE_LINK]),
 ]
 
 
@@ -376,6 +438,23 @@ def _worst(severities) -> str:
 ICON_BLEND = "FILE_BLEND"
 ICON_MISSING = "LIBRARY_DATA_BROKEN"
 ICON_EXTERNAL = "FILE_FOLDER"
+
+
+def _filemap_popup(scan: DepScan, node_key: str) -> dict | None:
+    """"Show what's linked from here" data for an INDIRECT File Map row (item 2,
+    2026-06-26): a library reached only via another library (depth >= 2) was
+    never directly linked into the open file, so it has no real
+    ``bpy.data.libraries`` entry for click-to-select to find — the popup asks
+    the BFS PARENT file (an offline BAT read) what it actually pulls from this
+    one instead. ``depth is None`` means the node was never visited (a missing/
+    unresolved target), not a real depth-0 root — must not be treated as direct."""
+    depth = scan.depths.get(node_key)
+    if depth is None or depth < 2:
+        return None
+    parent = scan.parents.get(node_key)
+    if not parent:
+        return None
+    return {"parent": parent, "basename": ntpath.basename(node_key) or node_key}
 
 
 def _build_file_map(scan: DepScan) -> list[TreeNode]:
@@ -407,7 +486,8 @@ def _build_file_map(scan: DepScan) -> list[TreeNode]:
         label = name + (f"   [{', '.join(markers)}]" if markers else "")
         size = scan.sizes.get(node_key)
         node = TreeNode(key=newkey(), label=label, severity=sev, icon=icon,
-                        detail=_fmt_size(size) if size else "")
+                        detail=_fmt_size(size) if size else "",
+                        popup=_filemap_popup(scan, node_key))
         child_path = path | {node_key}
         for r in scan.refs.get(node_key, []):
             target = _canon(r.resolved_path or r.stored_path)
@@ -447,7 +527,37 @@ def _file_map_node(scan: DepScan) -> TreeNode:
                     icon=root.icon, children=root.children)
 
 
-def build_dependency_tree(scan: DepScan) -> list[TreeNode]:
+def _circular_pair_nodes(key_prefix: str, cycle: list[str], severity: str,
+                         datablocks_from_library_fn: DatablocksFromLibraryFn) -> list[TreeNode]:
+    """One node per consecutive (linker, linked) pair in a cycle, holding the
+    actual datablocks the linker pulls from the linked file as real,
+    click-to-select leaves (item 3, 2026-06-26: the loop used to just repeat
+    the same file names again — zero new information over the message text
+    the user can already read). ``cycle`` closes on itself (e.g. [A, B, A]),
+    so consecutive pairs cover BOTH directions of the loop."""
+    nodes: list[TreeNode] = []
+    for k, (linker, linked) in enumerate(zip(cycle, cycle[1:])):
+        basename = ntpath.basename(linked) or linked
+        try:
+            items = datablocks_from_library_fn(linker, basename)
+        except Exception:
+            items = []
+        pair = TreeNode(key=f"{key_prefix}:{k}",
+                        label=f"{_name(linker)} → {_name(linked)}",
+                        severity=severity, detail=str(len(items)) if items else "")
+        for j, (kind, name) in enumerate(items):
+            pair.children.append(TreeNode(
+                key=f"{key_prefix}:{k}:{j}", label=f"{kind}: {name}",
+                severity=severity, ref=kind_ref(kind, name)))
+        nodes.append(pair)
+    return nodes
+
+
+def build_dependency_tree(
+    scan: DepScan,
+    linked_datablocks_fn: LinkedDatablocksFn = linked_datablocks,
+    datablocks_from_library_fn: DatablocksFromLibraryFn = datablocks_from_library,
+) -> list[TreeNode]:
     """The F7 Dependencies view: **File map** (root + link hierarchy, one
     headline row) → **Errors (N)** (the issue categories). Rendered directly
     as a TreeNode tree (the file map needs arbitrary depth, which the flat
@@ -455,7 +565,7 @@ def build_dependency_tree(scan: DepScan) -> list[TreeNode]:
     ("N files in subtree, M link(s)") is superseded by the File map headline
     above and deliberately dropped here — showing both said almost the same
     thing twice (item e's redundancy rule)."""
-    report = build_dep_report(scan)
+    report = build_dep_report(scan, linked_datablocks_fn=linked_datablocks_fn)
 
     groups: dict[str, list[Finding]] = {}
     for f in report.findings:
@@ -472,17 +582,22 @@ def build_dependency_tree(scan: DepScan) -> list[TreeNode]:
         for i, f in enumerate(findings):
             fn = TreeNode(key=f"f7err:{cat}:{i}", label=f.message,
                           severity=f.severity, detail=f.detail)
-            for j, item in enumerate(f.items):
-                # Every item here is a .blend file path — click-to-select it as
-                # a Library (item 5a, 2026-06-25: "if I click on one of the
-                # libraries, it should take me to that item in the Outliner" —
-                # a standing design rule that was never wired up for this
-                # report). Resolution needs the real basename WITH its
-                # extension (ntpath.basename(item), not the display-only
-                # ``_name``), since Library datablocks are named by filename.
-                fn.children.append(TreeNode(
-                    key=f"f7err:{cat}:{i}:{j}", label=_name(item), severity=f.severity,
-                    ref={"type": "Library", "name": ntpath.basename(item) or item}))
+            if cat == "circular_link":
+                fn.children.extend(_circular_pair_nodes(
+                    f"f7err:{cat}:{i}", f.items, f.severity, datablocks_from_library_fn))
+            else:
+                for j, item in enumerate(f.items):
+                    # Every item here is a .blend file path — click-to-select
+                    # it as a Library (item 5a, 2026-06-25: "if I click on one
+                    # of the libraries, it should take me to that item in the
+                    # Outliner" — a standing design rule that was never wired
+                    # up for this report). Resolution needs the real basename
+                    # WITH its extension (ntpath.basename(item), not the
+                    # display-only ``_name``), since Library datablocks are
+                    # named by filename.
+                    fn.children.append(TreeNode(
+                        key=f"f7err:{cat}:{i}:{j}", label=_name(item), severity=f.severity,
+                        ref={"type": "Library", "name": ntpath.basename(item) or item}))
             node.children.append(fn)
         return node
 

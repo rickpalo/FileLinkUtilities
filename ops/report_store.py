@@ -7,6 +7,8 @@ select-the-datablock (with the agreed non-intrusive behaviour), row labels (whic
 carry the full text as a tooltip), clear, and export.
 """
 
+import os
+
 import bpy
 
 from ..core.report import Report
@@ -130,6 +132,9 @@ def _fill_rows(coll, rows, prop: str) -> None:
         if r.ref:
             item.ref_type = r.ref.get("type", "")
             item.ref_name = r.ref.get("name", "")
+        if r.popup:
+            item.popup_parent = r.popup.get("parent", "")
+            item.popup_basename = r.popup.get("basename", "")
 
 
 def rebuild_report_rows(wm) -> None:
@@ -332,6 +337,8 @@ class ASSETDOCTOR_OT_row_label(bpy.types.Operator):
     has_children: bpy.props.BoolProperty()
     ref_type: bpy.props.StringProperty()
     ref_name: bpy.props.StringProperty()
+    popup_parent: bpy.props.StringProperty()
+    popup_basename: bpy.props.StringProperty()
 
     @classmethod
     def description(cls, context, properties):
@@ -347,6 +354,9 @@ class ASSETDOCTOR_OT_row_label(bpy.types.Operator):
             focus_row(wm, self.prop, self.key)
             if context.area:
                 context.area.tag_redraw()
+        elif self.popup_parent:
+            bpy.ops.assetdoctor.show_linked_from(
+                "INVOKE_DEFAULT", parent=self.popup_parent, basename=self.popup_basename)
         elif self.ref_type:
             bpy.ops.assetdoctor.select_datablock(type=self.ref_type, name=self.ref_name)
         return {"FINISHED"}
@@ -503,6 +513,53 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
                 else:
                     stack.append(user)
         return found, materials
+
+
+class ASSETDOCTOR_OT_show_linked_from(bpy.types.Operator):
+    """"Show what's linked from here" for an INDIRECT File Map row (item 2,
+    2026-06-26): the row's file was never directly linked into the open file
+    (only a library-of-a-library), so it has no real ``bpy.data.libraries``
+    entry for ``select_datablock`` to find. Reads the PARENT file offline
+    instead (the already-built ``core.datablock_links.datablocks_from_library``)
+    and lists exactly what it pulls from this row's file, in a transient popup
+    -- each entry reuses ``select_datablock`` so a name that DOES happen to
+    also be loaded locally is still clickable."""
+
+    bl_idname = "assetdoctor.show_linked_from"
+    bl_label = "Show What's Linked From Here"
+    bl_description = (
+        "This library was never linked directly into the open file (only "
+        "through another library), so it has no entry to select. Read the "
+        "linking file and list what it actually pulls from here"
+    )
+    bl_options = {"INTERNAL"}
+
+    parent: bpy.props.StringProperty()  # type: ignore[valid-type]
+    basename: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+    def invoke(self, context, event):
+        from ..core.datablock_links import datablocks_from_library
+
+        try:
+            self._items = datablocks_from_library(self.parent, self.basename)
+        except Exception as exc:
+            self.report({"ERROR"}, f"Could not read {os.path.basename(self.parent)}: {exc}")
+            return {"CANCELLED"}
+        title = f"Linked from {self.basename} (via {os.path.basename(self.parent)})"
+        context.window_manager.popup_menu(self._draw, title=title)
+        return {"FINISHED"}
+
+    def _draw(self, menu_self, context):
+        from ..core.datablock_links import kind_ref
+
+        layout = menu_self.layout
+        if not self._items:
+            layout.label(text="Nothing found")
+            return
+        for kind, name in self._items:
+            ref = kind_ref(kind, name)
+            op = layout.operator("assetdoctor.select_datablock", text=f"{kind}: {name}")
+            op.type, op.name = ref["type"], ref["name"]
 
 
 def _tree_to_text(nodes, title: str) -> str:

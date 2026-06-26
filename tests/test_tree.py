@@ -156,6 +156,22 @@ def test_flatten_carries_icon():
     assert rows[0].icon == "FILE_FOLDER"
 
 
+def test_popup_survives_json_roundtrip():
+    n = TreeNode(key="k", label="L", popup={"parent": "C:/a.blend", "basename": "b.blend"})
+    back = node_from_dict(node_to_dict(n))
+    assert back.popup == {"parent": "C:/a.blend", "basename": "b.blend"}
+
+
+def test_popup_defaults_none():
+    assert TreeNode(key="k", label="L").popup is None
+
+
+def test_flatten_carries_popup():
+    root = TreeNode(key="r", label="root", popup={"parent": "p", "basename": "b"})
+    rows = flatten_visible([root], expanded=set())
+    assert rows[0].popup == {"parent": "p", "basename": "b"}
+
+
 def test_flatten_indent_is_plain_depth_no_connector_glyphs():
     """No "│  ├─ "-style connector prefix (dropped per user feedback,
     2026-06-25: "garbage, don't want it") -- just depth."""

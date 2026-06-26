@@ -32,6 +32,18 @@ _PREFIX_KINDS = {
 }
 
 
+# A few friendly kind labels above don't match the real bpy.types class name
+# (used for click-to-select refs, which match on type(datablock).__name__) --
+# everything else in _PREFIX_KINDS already is the real class name verbatim.
+_KIND_TO_CLASS = {"Node Group": "NodeTree", "Shape Key": "Key", "Particle": "ParticleSettings"}
+
+
+def kind_ref(kind: str, name: str) -> dict[str, str]:
+    """A click-to-select ref for a ``(kind, name)`` pair from this module's
+    functions (e.g. ``{"type": "NodeTree", "name": "Foo"}``)."""
+    return {"type": _KIND_TO_CLASS.get(kind, kind), "name": name}
+
+
 def linked_datablocks(blend_path) -> dict[str, list[tuple[str, str]]]:
     """``{library stored path: [(kind, name), …]}`` for every datablock in
     ``blend_path`` that comes from a library.

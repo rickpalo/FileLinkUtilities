@@ -58,6 +58,8 @@ class ASSETDOCTOR_PG_tree_row(bpy.types.PropertyGroup):
     icon: bpy.props.StringProperty()  # optional per-node icon override (e.g. File Map)  # type: ignore[valid-type]
     ref_type: bpy.props.StringProperty()  # type: ignore[valid-type]
     ref_name: bpy.props.StringProperty()  # type: ignore[valid-type]
+    popup_parent: bpy.props.StringProperty()  # type: ignore[valid-type]
+    popup_basename: bpy.props.StringProperty()  # type: ignore[valid-type]
     prop: bpy.props.StringProperty()  # expanded-keys WM prop this row belongs to
 
 
@@ -114,6 +116,9 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
         if item.ref_type:
             op.ref_type = item.ref_type
             op.ref_name = item.ref_name
+        if item.popup_parent:
+            op.popup_parent = item.popup_parent
+            op.popup_basename = item.popup_basename
         if item.detail:
             sub = row.row()
             sub.alignment = "RIGHT"
@@ -656,7 +661,11 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
             drow.label(text="", icon="BLANK1")
         if r.icon:
             drow.label(text="", icon=r.icon)
-        if r.ref:
+        if r.popup:
+            pop = drow.operator("assetdoctor.show_linked_from", text=r.label,
+                                icon="NONE", emboss=False)
+            pop.parent, pop.basename = r.popup["parent"], r.popup["basename"]
+        elif r.ref:
             bop = drow.operator("assetdoctor.select_datablock", text=r.label,
                                  icon="NONE", emboss=False)
             bop.type, bop.name = r.ref["type"], r.ref["name"]

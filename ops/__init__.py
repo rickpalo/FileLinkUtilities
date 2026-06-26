@@ -86,6 +86,7 @@ from .report_store import (
     ASSETDOCTOR_OT_report_toggle,
     ASSETDOCTOR_OT_row_label,
     ASSETDOCTOR_OT_select_datablock,
+    ASSETDOCTOR_OT_show_linked_from,
     ASSETDOCTOR_OT_toggle_inline_detail,
 )
 
@@ -157,6 +158,7 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_report_clear,
     ASSETDOCTOR_OT_row_label,
     ASSETDOCTOR_OT_select_datablock,
+    ASSETDOCTOR_OT_show_linked_from,
     ASSETDOCTOR_OT_toggle_inline_detail,
     ASSETDOCTOR_OT_export_report,
 )

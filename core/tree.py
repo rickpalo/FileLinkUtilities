@@ -68,6 +68,11 @@ class TreeNode:
     ref: dict | None = None  # optional {"type","name"} for click-to-select
     detail: str = ""  # optional right-aligned value column (e.g. sizes)
     icon: str = ""  # optional Blender icon id override (e.g. "FILE_BLEND")
+    # optional {"parent","basename"} -- a live, on-demand lookup the row's own
+    # label triggers via a popup instead of a click-to-select (e.g. an
+    # indirect File Map row, which isn't a real bpy.data.libraries entry on
+    # the open file so there's nothing for `ref` to select).
+    popup: dict | None = None
 
 
 @dataclass
@@ -81,12 +86,14 @@ class Row:
     ref: dict | None = None
     detail: str = ""
     icon: str = ""
+    popup: dict | None = None
 
 
 def node_to_dict(n: TreeNode) -> dict:
     return {
         "key": n.key, "label": n.label, "severity": n.severity, "detail": n.detail,
-        "ref": n.ref, "icon": n.icon, "children": [node_to_dict(c) for c in n.children],
+        "ref": n.ref, "icon": n.icon, "popup": n.popup,
+        "children": [node_to_dict(c) for c in n.children],
     }
 
 
@@ -94,6 +101,7 @@ def node_from_dict(d: dict) -> TreeNode:
     return TreeNode(
         key=d["key"], label=d["label"], severity=d.get("severity", "info"),
         detail=d.get("detail", ""), ref=d.get("ref"), icon=d.get("icon", ""),
+        popup=d.get("popup"),
         children=[node_from_dict(c) for c in d.get("children", [])],
     )
 
@@ -194,7 +202,7 @@ def flatten_visible(nodes: list[TreeNode], expanded: set[str]) -> list[Row]:
         has = bool(node.children)
         is_exp = node.key in expanded
         rows.append(Row(depth, node.key, node.label, node.severity, has, is_exp,
-                        node.ref, node.detail, node.icon))
+                        node.ref, node.detail, node.icon, node.popup))
         if has and is_exp:
             for child in node.children:
                 walk(child, depth + 1)

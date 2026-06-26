@@ -271,6 +271,189 @@ def test_steps_yield_progress_and_status():
     assert all(0.0 <= f <= 1.0 for f in fracs)
 
 
+# --- depth/provenance (consolidated TODO Group 1, item 1) -------------------
+
+@pytest.fixture
+def chain():
+    """scene -> libA -> libB, three real hops, libB has its own missing link."""
+    mapping = {
+        depscan._key("C:/proj/scene.blend"): [
+            _R("//libA.blend", "C:/proj/libA.blend", True, True),
+        ],
+        depscan._key("C:/proj/libA.blend"): [
+            _R("//libB.blend", "C:/proj/libB.blend", True, True),
+        ],
+        depscan._key("C:/proj/libB.blend"): [
+            _R("//gone.blend", "C:/proj/gone.blend", True, False),
+        ],
+    }
+    return depscan.scan_recursive([pathlib.Path("C:/proj/scene.blend")],
+                                  scan_file=_stub(mapping))
+
+
+def test_depths_and_parents_recorded(chain):
+    scene = next(k for k in chain.order if _base(k) == "scene.blend")
+    libA = next(k for k in chain.order if _base(k) == "liba.blend")
+    libB = next(k for k in chain.order if _base(k) == "libb.blend")
+    assert chain.depths[scene] == 0
+    assert chain.depths[libA] == 1
+    assert chain.depths[libB] == 2
+    assert chain.parents[libA] == scene
+    assert chain.parents[libB] == libA
+    assert scene not in chain.parents  # roots have no parent
+
+
+def test_provenance_direct_vs_indirect(chain):
+    scene = next(k for k in chain.order if _base(k) == "scene.blend")
+    libA = next(k for k in chain.order if _base(k) == "liba.blend")
+    libB = next(k for k in chain.order if _base(k) == "libb.blend")
+    assert depscan._provenance(chain, scene) == "direct"
+    assert depscan._provenance(chain, libA) == "indirect (1 hop via scene)"
+    assert depscan._provenance(chain, libB) == "indirect (2 hops via libA)"
+
+
+def test_missing_finding_labels_direct_at_root(crafted):
+    report = depscan.build_dep_report(crafted)
+    finding = next(f for f in report.findings if f.category == MISSING)
+    assert "(direct)" in finding.message
+
+
+def test_missing_finding_labels_indirect_deep_in_chain(chain):
+    # A live placeholder for the missing link, so it stays MISSING (not downgraded
+    # to stale by item 4's check) -- this test is purely about the depth label.
+    report = depscan.build_dep_report(
+        chain, linked_datablocks_fn=lambda fkey: {"//gone.blend": [("Object", "y")]})
+    finding = next(f for f in report.findings if f.category == MISSING)
+    assert "indirect (2 hops via libA)" in finding.message
+
+
+def test_file_map_direct_row_has_no_popup(chain):
+    """A depth-1 row (directly linked by the open/root file) IS a real
+    bpy.data.libraries entry -- no on-demand lookup needed for it."""
+    nodes = depscan.build_dependency_tree(
+        chain, linked_datablocks_fn=lambda fkey: {"//gone.blend": [("Object", "y")]})
+    filemap = next(n for n in nodes if n.key == "f7:filemap")
+    libA_row = filemap.children[0]
+    assert _base(libA_row.label.split("   ")[0]) == "liba"
+    assert libA_row.popup is None
+
+
+def test_file_map_indirect_row_gets_popup(chain):
+    """Item 2, 2026-06-26: a depth-2+ row (a library only reachable through
+    another library) isn't a real bpy.data.libraries entry on the open file,
+    so it carries {"parent","basename"} for a "show what's linked from here"
+    popup instead of a click-to-select ref."""
+    nodes = depscan.build_dependency_tree(
+        chain, linked_datablocks_fn=lambda fkey: {"//gone.blend": [("Object", "y")]})
+    filemap = next(n for n in nodes if n.key == "f7:filemap")
+    libA_row = filemap.children[0]
+    libB_row = libA_row.children[0]
+    assert libB_row.popup is not None
+    assert _base(libB_row.popup["parent"]) == "liba.blend"
+    assert libB_row.popup["basename"].lower() == "libb.blend"
+
+
+def test_file_map_missing_target_has_no_popup(chain):
+    """A missing/never-visited target has no recorded depth at all -- must not
+    be mistaken for a real depth-0 root and treated as "direct"/clickable."""
+    nodes = depscan.build_dependency_tree(
+        chain, linked_datablocks_fn=lambda fkey: {"//gone.blend": [("Object", "y")]})
+    filemap = next(n for n in nodes if n.key == "f7:filemap")
+    libB_row = filemap.children[0].children[0]
+    missing_row = libB_row.children[0]
+    assert "missing" in missing_row.label
+    assert missing_row.popup is None
+
+
+def test_circular_finding_labels_provenance(crafted):
+    """The 2-cycle in `crafted` is scene <-> libA; scene is the root (depth 0),
+    so the loop is reachable directly from the open file."""
+    report = depscan.build_dep_report(crafted)
+    finding = next(f for f in report.findings if f.category == "circular_link")
+    assert "(direct)" in finding.message
+
+
+# --- stale link-table entries (consolidated TODO Group 1, item 4) -----------
+
+def test_missing_finding_downgraded_when_no_live_placeholder(crafted):
+    """If nothing in the linking file's own ID blocks actually references the
+    missing library, it's a vestigial LI table entry, not a real break."""
+    report = depscan.build_dep_report(crafted, linked_datablocks_fn=lambda fkey: {})
+    assert not any(f.category == MISSING for f in report.findings)
+    stale = next(f for f in report.findings if f.category == depscan.STALE_LINK)
+    assert "stale" in stale.message.lower()
+    assert stale.severity == "info"
+
+
+def test_missing_finding_kept_when_live_placeholder_exists(crafted):
+    def fake_linked(fkey):
+        return {"D:/old/human.blend": [("Object", "Foo")]}
+
+    report = depscan.build_dep_report(crafted, linked_datablocks_fn=fake_linked)
+    assert any(f.category == MISSING for f in report.findings)
+    assert not any(f.category == depscan.STALE_LINK for f in report.findings)
+
+
+def test_stale_check_unreadable_file_does_not_claim_stale(crafted):
+    def boom(fkey):
+        raise OSError("nope")
+
+    report = depscan.build_dep_report(crafted, linked_datablocks_fn=boom)
+    assert any(f.category == MISSING for f in report.findings)
+    assert not any(f.category == depscan.STALE_LINK for f in report.findings)
+
+
+# --- circular reference datablock nesting (consolidated TODO Group 1, item 3)
+
+def test_circular_finding_nests_real_datablocks():
+    """Item 3, 2026-06-26: a circular reference used to just repeat the same
+    file names again under itself -- this nests the actual (kind, name) pairs
+    crossing each direction of the loop, with real click-to-select refs."""
+    mapping = {
+        depscan._key("C:/proj/a.blend"): [_R("//b.blend", "C:/proj/b.blend", True, True)],
+        depscan._key("C:/proj/b.blend"): [_R("//a.blend", "C:/proj/a.blend", True, True)],
+    }
+    scan = depscan.scan_recursive([pathlib.Path("C:/proj/a.blend")], scan_file=_stub(mapping))
+
+    def fake_datablocks(linker, basename):
+        if _base(linker) == "a.blend" and basename.lower() == "b.blend":
+            return [("Object", "Tree")]
+        if _base(linker) == "b.blend" and basename.lower() == "a.blend":
+            return [("Material", "Wood")]
+        return []
+
+    nodes = depscan.build_dependency_tree(scan, datablocks_from_library_fn=fake_datablocks)
+    tier = next(n for n in nodes if n.key == "f7tier:will_break")
+    cat = next(c for c in tier.children if c.key == "f7err:circular_link")
+    finding = cat.children[0]
+    # Both directions of the loop are represented as their own pair node.
+    assert any(c.label.startswith("a") and "b" in c.label for c in finding.children)
+    assert any(c.label.startswith("b") and "a" in c.label for c in finding.children)
+    a_to_b = next(c for c in finding.children if c.label.startswith("a"))
+    assert a_to_b.children[0].label == "Object: Tree"
+    assert a_to_b.children[0].ref == {"type": "Object", "name": "Tree"}
+    b_to_a = next(c for c in finding.children if c.label.startswith("b"))
+    assert b_to_a.children[0].label == "Material: Wood"
+
+
+def test_circular_pair_node_maps_friendly_kind_to_bpy_class():
+    """A friendly kind label that doesn't match the real bpy class name (Node
+    Group/Shape Key/Particle) must still resolve to the real class for
+    click-to-select, not the display label."""
+    mapping = {
+        depscan._key("C:/proj/a.blend"): [_R("//b.blend", "C:/proj/b.blend", True, True)],
+        depscan._key("C:/proj/b.blend"): [_R("//a.blend", "C:/proj/a.blend", True, True)],
+    }
+    scan = depscan.scan_recursive([pathlib.Path("C:/proj/a.blend")], scan_file=_stub(mapping))
+    nodes = depscan.build_dependency_tree(
+        scan, datablocks_from_library_fn=lambda linker, basename: [("Node Group", "Shader")])
+    tier = next(n for n in nodes if n.key == "f7tier:will_break")
+    cat = next(c for c in tier.children if c.key == "f7err:circular_link")
+    finding = cat.children[0]
+    leaf = finding.children[0].children[0]
+    assert leaf.ref == {"type": "NodeTree", "name": "Shader"}
+
+
 # --- real fixture (scene -> libA -> libB) ----------------------------------
 
 pytestmark = pytest.mark.skipif(
