@@ -527,7 +527,9 @@ never in question once verified three ways.
 ## ⏩ NEXT SESSION STARTS HERE — read this block first, it supersedes earlier "NEXT SESSION" markers
 ## further down (those are now history, kept for the detailed record).
 
-**SESSION DIGEST — 2026-06-26, v0.2.81 (NOT yet committed, NOT yet pushed). Same session as the
+**SESSION DIGEST — 2026-06-26, v0.2.81, COMMITTED as `14f8538` — NOT pushed/published yet
+(deliberate: the user chose to hold off publishing until this is live-Blender-confirmed, given
+the scale of UI change; see the "NEXT SESSION" note at the end of this digest). Same session as the
 digest below (kept verbatim further down for the Group 10 #34/#35/#39 detail) — this digest adds
 everything built AFTER that: Group 10 #38's duplicate_family removal from f7live (RESOLVED, see
 Group 2 items 6/7 above) and the full Group 11 panel consolidation (5 phases, items #42-46
@@ -551,11 +553,21 @@ to confirm 3 separately-failing smoke tests (`smoke_idle_scan`, `smoke_examine_l
 real bugs, just not new ones, not investigated further here (candidate for a future session).
 **NEXT SESSION: this whole Group 11 pass (and Group 10 #34/#35/#38/#39) still needs ONE live-
 Blender confirm pass** — deliberately batched, not per-phase, per the user's own request this
-session. After that: Group 10 #36 (checked, not a bug, no action) then #37/#40/#41 (real design
+session. **Publish is deliberately ON HOLD pending that confirm** — asked explicitly (2026-06-26)
+whether to publish v0.2.81 now given the scale of untested UI change; the user chose to hold off
+and just commit. Once live-confirmed, publish per `docs/RELEASING.md` (bump patch if anything
+needed fixing, build the zip, tag, push, GitHub Release, refresh the gh-pages single-version
+index). After that: Group 10 #36 (checked, not a bug, no action) then #37/#40/#41 (real design
 asks, #37+#40 already agreed to be designed TOGETHER but mechanics aren't settled — see the
 Group 10 detail below) need a design discussion before any code, per
 [[feedback-suggest-better-designs]]. The 3 pre-existing smoke-test failures above are a separate,
-not-yet-investigated follow-up — flag if picked up, don't assume they're related to Group 11.**
+not-yet-investigated follow-up — flag if picked up, don't assume they're related to Group 11.
+**Also flagged this session, NOT acted on (separate, large, deliberately deferred task):**
+`README.md`/`docs/USER_GUIDE.md`/`CHANGELOG.md` are all consistently ~60+ versions stale (still
+describe the v0.1.x F1-F5/N-panel-era feature set and panel layout, predating nearly all of the
+v0.2.x Analyze/Cleanup/Utilities work) — matches the standing [[feedback-docs]] "batch later, not
+per-change" preference, so left alone; flagged here rather than silently ignored, in case the user
+wants to schedule a dedicated docs-catch-up session.
 
 **Previous digest below, now partially superseded (the Group 10 #34/#35/#39 detail is still
 accurate and current; the surrounding "NEXT SESSION" framing is superseded by the digest above):**
