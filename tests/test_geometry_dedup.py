@@ -1,6 +1,6 @@
 """Unit tests for core.geometry_dedup."""
 
-from core.geometry_dedup import build_instance_plan, choose_canonical
+from core.geometry_dedup import build_instance_plan, choose_canonical, removable_count
 
 
 def _it(id_, fp, users=1, linked=False, kind="Mesh"):
@@ -45,3 +45,14 @@ def test_different_kinds_do_not_merge():
     items = [_it("M", "H", kind="Mesh"), _it("C", "H", kind="Curve")]
     _, plan = build_instance_plan(items)
     assert plan == []
+
+
+def test_removable_count():
+    """Group 11 #44, 2026-06-26: drives the selective-apply UI's headline."""
+    plan = [{"kind": "Mesh", "canonical": "A", "victims": ["B", "C"]},
+            {"kind": "Mesh", "canonical": "D", "victims": ["E"]}]
+    assert removable_count(plan) == 3
+
+
+def test_removable_count_empty_plan():
+    assert removable_count([]) == 0

@@ -76,7 +76,6 @@ class LiveExtract:
     """Everything the bpy walk pulls out of the current file for Phase 2."""
 
     totals: dict[str, int] = field(default_factory=dict)          # type label -> count
-    duplicates: dict[str, dict[str, list[str]]] = field(default_factory=dict)  # type -> families
     library_counts: list[tuple[str, int]] = field(default_factory=list)  # (lib name, #blocks)
     override_count: int = 0
     loops: list[list[str]] = field(default_factory=list)          # datablock cycles
@@ -88,29 +87,33 @@ class LiveExtract:
     shape_key_risks: list[tuple[str, str]] = field(default_factory=list)
 
 
-def wasted_copies(duplicates: dict[str, dict[str, list[str]]]) -> int:
-    """Total redundant datablocks across all families (members minus one each)."""
-    return sum(len(members) - 1
-               for fams in duplicates.values() for members in fams.values())
-
-
 def build_live_report(extract: LiveExtract, file_label: str = "current file") -> Report:
-    """Turn a :class:`LiveExtract` into the F7 live (overrides & duplicates) report."""
-    report = Report(title=f"Overrides & duplicates: {file_label}", feature="f7live")
+    """Turn a :class:`LiveExtract` into the F7 live (overrides & duplicates) report.
+
+    Deliberately does NOT report ``.NNN``-suffix duplicate families here
+    (removed 2026-06-26, user request): the name-only heuristic across every
+    datablock type (Mesh, Object, Collection, ...) overclaimed badly — Blender
+    appends ``.NNN`` constantly for objects that diverge after linking (e.g. a
+    cloth-sim bake), not just true duplicates. Images, the one type where
+    ``.NNN`` families are commonly REAL duplicates, already have a dedicated
+    content-hash-verified tool (Duplicate Textures); the rest are covered by
+    "Find Duplicate Data-blocks" (`core.datablock_dedup`), which is the same
+    name-only heuristic but at least scoped to a deliberate own button rather
+    than bundled into this audit."""
+    report = Report(title=f"Overrides: {file_label}", feature="f7live")
 
     # Headline counts as a flat top row, read at a glance without drilling into
     # each category (mirrors core.missingdata's "overview" row).
     n_loops = len(extract.loops)
-    waste = wasted_copies(extract.duplicates)
     n_libs = len(extract.library_counts)
-    severity = "error" if n_loops else ("warning" if waste else "info")
+    severity = "error" if n_loops else "info"
     report.add(Finding(
         category="overview",
-        message=(f"{n_loops} override loop(s) · {waste} duplicate data-block(s) · "
+        message=(f"{n_loops} override loop(s) · "
                  f"{n_libs} librar{'y' if n_libs == 1 else 'ies'} · "
                  f"{extract.override_count} override(s)"),
         severity=severity,
-        data={"loops": n_loops, "wasted": waste, "libraries": n_libs,
+        data={"loops": n_loops, "libraries": n_libs,
               "overrides": extract.override_count}))
 
     # Override dependency loops first — these are the crash/resync cause.
@@ -137,21 +140,6 @@ def build_live_report(extract: LiveExtract, file_label: str = "current file") ->
                      "likely cause of Blender's \"KEKey ... not linkable, but flagged "
                      "as directly linked\" write warnings for this file"),
             severity="warning", items=[f"Mesh/{mesh_name}"]))
-
-    # Duplicate families (the .NNN bloat), worst first, grouped by type.
-    for type_label in sorted(extract.duplicates):
-        fams = extract.duplicates[type_label]
-        for base in sorted(fams, key=lambda b: -len(fams[b])):
-            members = fams[base]
-            # The ops layer feeds "Type/Name"-prefixed strings (so core.tree._parse_ref
-            # wires up click-to-select on each member); strip that prefix back off for
-            # the human-readable message/base, members keep it for selection.
-            display_base = base.split("/", 1)[-1] if "/" in base else base
-            report.add(Finding(category="duplicate_family",
-                               message=f"{type_label}: {display_base} ×{len(members)}",
-                               severity="warning",
-                               items=members, detail=f"{len(members)}",
-                               data={"type": type_label, "base": display_base}))
 
     # Library blocks (how many datablocks come from each library).
     for lib, n in extract.library_counts:

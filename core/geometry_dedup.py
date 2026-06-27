@@ -27,6 +27,11 @@ def choose_canonical(members: list[dict]) -> dict:
     return sorted(members, key=lambda m: (m["linked"], -m.get("users", 0), m["name"]))[0]
 
 
+def removable_count(plan: list[dict]) -> int:
+    """Total mesh datablocks the plan would remove (sum of victims per group)."""
+    return sum(len(group["victims"]) for group in plan)
+
+
 def build_instance_plan(items: list[dict]):
     """Return (Report, plan). plan entries: {kind, canonical: id, victims: [id]}."""
     report = Report(title="Instanceable duplicate geometry", feature="F5")

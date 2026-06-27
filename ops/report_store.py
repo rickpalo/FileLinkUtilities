@@ -33,7 +33,7 @@ FEATURES = [
     ("f7", "Dependencies"),
     ("f7chain", "Link Chain Analysis"),
     ("f7flatten", "Flatten Plan"),
-    ("f7live", "Overrides & Dups"),
+    ("f7live", "Overrides"),
     ("f7rev", "Safe to Delete?"),
     ("f7links", "Broken Library Links"),
     ("f7fix", "Path Fixes"),
@@ -245,78 +245,14 @@ class ASSETDOCTOR_OT_toggle_inline_detail(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_report_expand_all(bpy.types.Operator):
-    """Expand or collapse every node of the CURRENTLY SHOWN report at once (e.g.
-    the F7 File Map can run many levels deep — drilling in one row at a time
-    gets tedious)."""
-
-    bl_idname = "assetdoctor.report_expand_all"
-    bl_label = "Expand/Collapse All"
-    bl_options = {"INTERNAL"}
-
-    feature: bpy.props.StringProperty()  # type: ignore[valid-type]
-    prop: bpy.props.StringProperty()  # type: ignore[valid-type]
-    expand: bpy.props.BoolProperty(default=True)  # type: ignore[valid-type]
-
-    @classmethod
-    def description(cls, context, properties):
-        return "Expand every row" if properties.expand else "Collapse every row"
-
-    def execute(self, context):
-        wm = context.window_manager
-        raw = getattr(wm, data_prop(self.feature), "")
-        if not raw:
-            return {"CANCELLED"}
-        try:
-            if self.feature in TREE_FEATURES:
-                nodes = nodes_from_json(raw)
-            else:
-                nodes = report_to_tree(Report.from_json(raw))
-        except Exception:
-            return {"CANCELLED"}
-        set_expanded(wm, all_keys(nodes) if self.expand else set(), self.prop)
-        rebuild_rows_for_prop(wm, self.prop)
-        if context.area:
-            context.area.tag_redraw()
-        return {"FINISHED"}
-
-
-class ASSETDOCTOR_OT_report_select(bpy.types.Operator):
-    bl_idname = "assetdoctor.report_select"
-    bl_label = "Show Report"
-    bl_options = {"INTERNAL"}
-
-    feature: bpy.props.StringProperty()  # type: ignore[valid-type]
-
-    @classmethod
-    def description(cls, context, properties):
-        label = dict(FEATURES).get(properties.feature, properties.feature)
-        return f"Show the {label} report"
-
-    def execute(self, context):
-        wm = context.window_manager
-        wm.assetdoctor_active_report = self.feature
-        rebuild_report_rows(wm)
-        if context.area:
-            context.area.tag_redraw()
-        return {"FINISHED"}
-
-
-class ASSETDOCTOR_OT_report_clear(bpy.types.Operator):
-    bl_idname = "assetdoctor.report_clear"
-    bl_label = "Clear Report"
-    bl_description = "Clear the report currently shown"
-    bl_options = {"INTERNAL"}
-
-    def execute(self, context):
-        wm = context.window_manager
-        active = active_feature(wm)
-        if active:
-            setattr(wm, data_prop(active), "")
-            setattr(wm, exp_prop(active), "")
-        remaining = available_features(wm)
-        wm.assetdoctor_active_report = remaining[0][0] if remaining else ""
-        rebuild_report_rows(wm)
+# ASSETDOCTOR_OT_report_expand_all / _report_select / _report_clear were
+# deleted (Group 11 #46, 2026-06-26) along with the generic Reports selector
+# panel (ui.panels.ASSETDOCTOR_PT_results) they exclusively powered — every
+# feature now has its own inline display. rebuild_report_rows/
+# assetdoctor_report_rows/active_feature's role in stash_report are left in
+# place even though nothing displays assetdoctor_report_rows anymore — they
+# run unconditionally from the core stash pipeline every scan operator uses,
+# so removing them is a deeper, separate cleanup, not part of this change.
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}
@@ -540,11 +476,21 @@ class ASSETDOCTOR_OT_show_linked_from(bpy.types.Operator):
     def invoke(self, context, event):
         from ..core.datablock_links import datablocks_from_library
 
+        # This is a real, BLOCKING disk read of the parent .blend (BAT block-
+        # table scan) — up to ~1 min/file on this project's large production
+        # files (see project memory) — with no other progress indication, so
+        # a slow read was indistinguishable from "the click did nothing"
+        # (docs/TODO.md Group 10 #39). A wait cursor is an OS-level cursor
+        # swap, not dependent on a redraw, so it shows immediately even
+        # though this whole call happens inside one blocking Python frame.
+        context.window.cursor_modal_set("WAIT")
         try:
             self._items = datablocks_from_library(self.parent, self.basename)
         except Exception as exc:
             self.report({"ERROR"}, f"Could not read {os.path.basename(self.parent)}: {exc}")
             return {"CANCELLED"}
+        finally:
+            context.window.cursor_modal_restore()
         title = f"Linked from {self.basename} (via {os.path.basename(self.parent)})"
         context.window_manager.popup_menu(self._draw, title=title)
         return {"FINISHED"}

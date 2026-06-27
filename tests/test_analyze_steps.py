@@ -11,7 +11,7 @@ def test_steps_have_unique_keys_and_opnames():
 
 
 def test_steps_nonempty_and_well_formed():
-    assert len(STEPS) == 13
+    assert len(STEPS) == 14
     for step in STEPS:
         assert step.key and step.label and step.opname.startswith("assetdoctor.")
         assert isinstance(step.kwargs, dict)
@@ -30,6 +30,15 @@ def test_step_by_key_found_and_missing():
     assert step is not None
     assert step.opname == "assetdoctor.scan_broken_links"
     assert step_by_key("nonexistent") is None
+
+
+def test_check_library_paths_step_is_report_only():
+    """Group 11 #43, 2026-06-26: Path Normalization gained an Analyze trigger
+    (it previously had none) -- must report-only, like every other check."""
+    step = step_by_key("check_library_paths")
+    assert step is not None
+    assert step.opname == "assetdoctor.normalize_library_paths"
+    assert step.kwargs == {"apply": False}
 
 
 def test_duplicate_steps_is_the_right_subset():

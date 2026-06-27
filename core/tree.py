@@ -44,7 +44,6 @@ _CATEGORY_TITLES = {
     "summary": "Summary",
     "override_loop": "Override dependency loops (cause resync spam / bloat)",
     "shape_key_override_risk": "Shape keys at risk (override-mesh write warnings)",
-    "duplicate_family": "Duplicate data-blocks (.NNN copies — wasted memory)",
     "multihop_route": "Multi-hop link chains",
     "posing_override": "Flattenable overrides (Library Override + transform)",
     "posing_modifier": "Modifier-driven (not flattenable yet)",

@@ -127,7 +127,8 @@ def register() -> None:
     from .ui.panels import (ASSETDOCTOR_PG_analyze_step, ASSETDOCTOR_PG_broken_lib,
                             ASSETDOCTOR_PG_datablock_family, ASSETDOCTOR_PG_dup_family,
                             ASSETDOCTOR_PG_examine_row, ASSETDOCTOR_PG_flatten_candidate,
-                            ASSETDOCTOR_PG_material_family, ASSETDOCTOR_PG_missing_block,
+                            ASSETDOCTOR_PG_geo_family, ASSETDOCTOR_PG_material_family,
+                            ASSETDOCTOR_PG_missing_block, ASSETDOCTOR_PG_orphan_row,
                             ASSETDOCTOR_PG_tree_row)
 
     bpy.types.WindowManager.assetdoctor_report_rows = bpy.props.CollectionProperty(
@@ -230,6 +231,23 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_mat_removable = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_mat_linked = bpy.props.IntProperty(default=0)
 
+    # Group 11 #44 (2026-06-26): Find Duplicate Geometry gets the same
+    # selective checkbox/Instance-Selected shape as the other dedup tools,
+    # instead of the old blunt "Instance & Merge (Apply everything)" button.
+    bpy.types.WindowManager.assetdoctor_geo_families = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_geo_family)
+    bpy.types.WindowManager.assetdoctor_geo_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_geo_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.assetdoctor_geo_removable = bpy.props.IntProperty(default=0)
+
+    # Group 11 #45 (2026-06-26): Find Orphans gets a checkbox/Purge-Selected
+    # shape for TRUE orphans (no keeper — purge is binary). Fake-user-only and
+    # identical-cluster findings stay read-only, drawn straight from the f4
+    # report (deliberate, existing design — see ops.orphans).
+    bpy.types.WindowManager.assetdoctor_orphan_rows = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_orphan_row)
+    bpy.types.WindowManager.assetdoctor_orphan_index = bpy.props.IntProperty(default=0)
+
     # Examine Library: retarget AWAY from a chosen (working) library.
     bpy.types.WindowManager.assetdoctor_examine_library_pick = bpy.props.StringProperty(
         name="Library", description="The library to examine (prop_search over bpy.data.libraries)")
@@ -326,6 +344,9 @@ def unregister() -> None:
                 "assetdoctor_mat_families", "assetdoctor_mat_index",
                 "assetdoctor_mat_scanned", "assetdoctor_mat_removable",
                 "assetdoctor_mat_linked",
+                "assetdoctor_geo_families", "assetdoctor_geo_index",
+                "assetdoctor_geo_scanned", "assetdoctor_geo_removable",
+                "assetdoctor_orphan_rows", "assetdoctor_orphan_index",
                 "assetdoctor_examine_library_pick", "assetdoctor_examine_library",
                 "assetdoctor_examine_rows", "assetdoctor_examine_index",
                 "assetdoctor_examine_scanned", "assetdoctor_examine_expanded",

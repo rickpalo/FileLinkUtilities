@@ -27,18 +27,21 @@ def _call(opname: str, kwargs: dict):
     getattr(getattr(bpy.ops, category), name)(**kwargs)
 
 
-class ASSETDOCTOR_OT_analyze_all(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.analyze_all"
-    bl_label = "Analyze All"
-    bl_description = (
-        "Run every Analyze check below in sequence against the CURRENT file, one "
-        "click instead of N. Read-only — each step's own report/list is filled in "
-        "exactly as if you'd clicked it yourself"
-    )
-    bl_options = {"REGISTER"}
+class _AnalyzeSequencerMixin:
+    """Shared dispatcher body for both sequencer operators below. Deliberately
+    a PLAIN mixin (not a registered Operator) — subclassing one already-
+    registered ``bpy.types.Operator`` from another corrupts Blender's RNA
+    python-class binding for the FIRST one once the second is also
+    registered (confirmed via an isolated repro: the parent's ``execute``
+    silently stops running and ``bpy.ops`` calls return FINISHED having done
+    nothing). That was the actual cause of "Analyze All no longer works"
+    (docs/TODO.md Group 10 #34) — ``ASSETDOCTOR_OT_find_duplicates`` used to
+    subclass ``ASSETDOCTOR_OT_analyze_all`` directly.
 
-    # Overridden by ASSETDOCTOR_OT_find_duplicates to scope this same
-    # dispatcher to a subset of steps; the label feeds the closing message.
+    Set per-operator via class attributes: ``_steps`` (which
+    ``AnalyzeStep``s to run) and ``_run_label`` (feeds the closing message).
+    """
+
     _steps = STEPS
     _run_label = "Analyze All"
 
@@ -74,7 +77,21 @@ class ASSETDOCTOR_OT_analyze_all(ModalProgressMixin, bpy.types.Operator):
         self.report({"WARNING"} if errors else {"INFO"}, msg)
 
 
-class ASSETDOCTOR_OT_find_duplicates(ASSETDOCTOR_OT_analyze_all):
+class ASSETDOCTOR_OT_analyze_all(_AnalyzeSequencerMixin, ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "assetdoctor.analyze_all"
+    bl_label = "Analyze All"
+    bl_description = (
+        "Run every Analyze check below in sequence against the CURRENT file, one "
+        "click instead of N. Read-only — each step's own report/list is filled in "
+        "exactly as if you'd clicked it yourself"
+    )
+    bl_options = {"REGISTER"}
+
+    _steps = STEPS
+    _run_label = "Analyze All"
+
+
+class ASSETDOCTOR_OT_find_duplicates(_AnalyzeSequencerMixin, ModalProgressMixin, bpy.types.Operator):
     """Item 3, 2026-06-25 (user request): "Find Duplicate Materials/Geometry/
     Content" folded into ONE "Find Duplicates" trigger alongside Find
     Duplicate Data-blocks — same dispatcher as Analyze All, just scoped to the
@@ -91,6 +108,7 @@ class ASSETDOCTOR_OT_find_duplicates(ASSETDOCTOR_OT_analyze_all):
         "one click (was 4 separate buttons). Read-only — each one's own report/"
         "list below is filled in exactly as if you'd clicked it yourself"
     )
+    bl_options = {"REGISTER"}
 
     _steps = DUPLICATE_STEPS
     _run_label = "Find Duplicates"

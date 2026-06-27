@@ -14,6 +14,8 @@ from .panels import (
     ASSETDOCTOR_PG_missing_block,
     ASSETDOCTOR_PG_datablock_family,
     ASSETDOCTOR_PG_material_family,
+    ASSETDOCTOR_PG_geo_family,
+    ASSETDOCTOR_PG_orphan_row,
     ASSETDOCTOR_PG_examine_row,
     ASSETDOCTOR_UL_tree,
     ASSETDOCTOR_UL_broken_libs,
@@ -21,19 +23,17 @@ from .panels import (
     ASSETDOCTOR_PT_current_file_data,
     ASSETDOCTOR_PT_analyze,
     ASSETDOCTOR_PT_analyze_external,
-    ASSETDOCTOR_PT_orphans,
-    ASSETDOCTOR_PT_geometry,
     ASSETDOCTOR_PT_utilities,
-    ASSETDOCTOR_PT_results,
 )
 
 # PropertyGroup + UIList first (panels' template_list draws them, and the WM
 # CollectionProperty in register() needs the PropertyGroup to exist), then the
 # parent Scene panel (must register BEFORE its bl_parent_id children below),
 # then its collapsible children (bl_order: Current File Data=0, Analyze This
-# File=1, Analyze External Files=2, the legacy Batch-5 panels 4-5/7 (3 and 6,
-# Resource Analyzer, were folded into Analyze and deleted), Results=8 last —
-# see each class for its number).
+# File=1, Analyze External Files=2, Utilities=7 — the legacy Batch-5 panels 3-6
+# were folded into Analyze/Utilities one by one and deleted, Results=8 last
+# of all, deleted in the Group 11 panel-consolidation pass, 2026-06-26 — see
+# each remaining class for its number).
 REGISTER_CLASSES = (
     ASSETDOCTOR_PG_tree_row,
     ASSETDOCTOR_PG_analyze_step,
@@ -43,6 +43,8 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_PG_missing_block,
     ASSETDOCTOR_PG_datablock_family,
     ASSETDOCTOR_PG_material_family,
+    ASSETDOCTOR_PG_geo_family,
+    ASSETDOCTOR_PG_orphan_row,
     ASSETDOCTOR_PG_examine_row,
     ASSETDOCTOR_UL_tree,
     ASSETDOCTOR_UL_broken_libs,
@@ -50,8 +52,5 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_PT_current_file_data,
     ASSETDOCTOR_PT_analyze,
     ASSETDOCTOR_PT_analyze_external,
-    ASSETDOCTOR_PT_orphans,
-    ASSETDOCTOR_PT_geometry,
     ASSETDOCTOR_PT_utilities,
-    ASSETDOCTOR_PT_results,
 )

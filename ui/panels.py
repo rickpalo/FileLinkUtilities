@@ -334,6 +334,37 @@ class ASSETDOCTOR_PG_material_family(bpy.types.PropertyGroup):
     removable: bpy.props.IntProperty()  # type: ignore[valid-type]
 
 
+class ASSETDOCTOR_PG_geo_family(bpy.types.PropertyGroup):
+    """One duplicate-geometry instancing group for the Find Duplicates section
+    (Group 11 #44, 2026-06-26) — mirrors :class:`ASSETDOCTOR_PG_material_family`'s
+    shape but no keeper dropdown: instancing always keeps the canonical mesh
+    ``core.geometry_dedup.choose_canonical`` already picked (most-shared
+    local), no ambiguity to override."""
+
+    # `name` (built-in) = the canonical mesh's id (core.geometry_dedup format).
+    kind: bpy.props.StringProperty()  # always "Mesh" today; kept for future kinds  # type: ignore[valid-type]
+    victims: bpy.props.StringProperty()  # newline-joined victim ids  # type: ignore[valid-type]
+    selected: bpy.props.BoolProperty(
+        default=True, name="",
+        description="Include this group when you Instance Selected")  # type: ignore[valid-type]
+    removable: bpy.props.IntProperty()  # type: ignore[valid-type]
+
+
+class ASSETDOCTOR_PG_orphan_row(bpy.types.PropertyGroup):
+    """One TRUE orphan (users==0) datablock for the Find Orphans section
+    (Group 11 #45, 2026-06-26) — checkbox-only, no keeper: purging is binary,
+    no "which one survives" decision like the dedup tools. Fake-user-only and
+    identical-cluster findings stay read-only/informational (deliberate,
+    existing design — see ``ops.orphans``'s module docstring: clearing fake
+    users or merging identical datablocks "reflects intent, not just
+    cleanup")."""
+
+    # `name` (built-in) = "Type/Name" ref (core.tree._parse_ref format).
+    selected: bpy.props.BoolProperty(
+        default=True, name="",
+        description="Include this datablock when you Purge Selected")  # type: ignore[valid-type]
+
+
 class ASSETDOCTOR_PG_datablock_family(bpy.types.PropertyGroup):
     """One content-identical ``.NNN`` duplicate family for the generic Duplicate
     Data-blocks list (Batch C #3) — any datablock type ``ops.datablock_dup``
@@ -652,7 +683,13 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
 
     for r in flatten_visible(remaining, expanded):
         drow = col.row(align=True)
-        drow.separator(factor=2.8 + r.indent * 1.4)
+        # N unit separators per level, not one separator scaled by r.indent —
+        # the same non-linear-breakage fix already applied to the dedicated
+        # Reports-tab UIList (ASSETDOCTOR_UL_tree.draw_item) at v0.2.67; this
+        # second tree-drawing call site never got it (docs/TODO.md #35).
+        drow.separator(factor=2.8)
+        for _ in range(r.indent):
+            drow.separator(factor=1.4)
         if r.has_children:
             top = drow.operator("assetdoctor.toggle_inline_detail", text="",
                                 icon="TRIA_DOWN" if r.expanded else "TRIA_RIGHT", emboss=False)
@@ -748,11 +785,11 @@ def _draw_duplicates_summary(layout, wm, narrow: bool) -> None:
     (Data-blocks/Materials/Geometry/Content), so its result needs all 4 of
     their headlines — none of the section boxes below show their own
     anymore (each used to rely on its now-removed individual Analyze row).
-    Find Duplicate Geometry is the one exception: it's tree-based and
-    already draws its own headline+arrow row via ``_draw_report_detail``
-    (called separately), so it is deliberately NOT repeated here."""
+    Geometry joined this list @ Group 11 #44 (2026-06-26) once it got its own
+    actionable checkbox UI (``_draw_geo_dups``), replacing its old read-only
+    tree disclosure (which drew its own headline+arrow row separately)."""
     for bit in (_datablock_dups_headline(wm), _material_dups_headline(wm),
-                _duplicate_textures_headline(wm, narrow)):
+                _geo_dups_headline(wm), _duplicate_textures_headline(wm, narrow)):
         if not bit:
             continue
         row = layout.row(align=True)
@@ -804,6 +841,60 @@ def _all_missing_summary(wm) -> str:
     return f"{broken} broken link(s), {missing} missing data-block(s)"
 
 
+def _broken_links_headline(wm) -> str:
+    """Find Broken Library Links' own header summary, mirrors
+    ``_reconnect_headline`` (Group 11 #43, 2026-06-26) so the Analyze button
+    can show the same line inline instead of the generic tree disclosure
+    (which would now just double-display the same rows a second way, since
+    the interactive UIList below already shows everything actionable)."""
+    if not _feature_has_run(wm, "f7links"):
+        return ""
+    coll = wm.assetdoctor_broken_libs
+    if not len(coll):
+        return "Broken Library Links — none found"
+    matched = sum(1 for item in coll if item.target)
+    return f"Broken Library Links — {len(coll)} missing, {matched} matched"
+
+
+def _path_normalization_headline(wm) -> str:
+    """Path Normalization's own header summary, mirrors ``_reconnect_headline``
+    (Group 11 #43, 2026-06-26). Counts renames from the f7fix report + the
+    duplicate-library/absolute-path GROUPS from the interactive checkbox
+    lists below (the actionable surface) — deliberately skips drawing the
+    read-only f7fix tree itself, same reasoning as Broken Library Links."""
+    from ..core.report import Report
+    from ..ops.report_store import data_prop
+
+    if not _feature_has_run(wm, "f7fix"):
+        return ""
+    try:
+        report = Report.from_json(getattr(wm, data_prop("f7fix"), ""))
+        renames = sum(1 for f in report.findings if f.category == "normalize_path")
+    except Exception:
+        renames = 0
+    dup_groups = len({item.group for item in wm.assetdoctor_dup_lib_members})
+    abs_groups = len({item.group for item in wm.assetdoctor_abs_path_members})
+    if not renames and not dup_groups and not abs_groups:
+        return "Path Normalization — ✓ clean"
+    bits = []
+    if renames:
+        bits.append(f"{renames} path(s) to normalize")
+    if dup_groups:
+        bits.append(f"{dup_groups} duplicate-library group(s)")
+    if abs_groups:
+        bits.append(f"{abs_groups} absolute-path drive group(s)")
+    return "Path Normalization — " + ", ".join(bits)
+
+
+def _normalize_action_button(row) -> None:
+    """The "Normalize" action for Path Normalization's Analyze row (Group 11
+    #43) — a tiny named function rather than a lambda since it needs to set
+    ``apply=True`` on the returned operator properties, which a single-
+    expression lambda can't do."""
+    row.operator("assetdoctor.normalize_library_paths",
+                 text="Normalize", icon="CHECKMARK").apply = True
+
+
 def _flatten_candidates_summary(wm) -> str:
     """``assetdoctor_flatten_plans_json`` is non-empty (even if "{}") once a
     scan has run, so its presence — not the row count — is the "has this
@@ -850,7 +941,8 @@ def _draw_resource_breakdown(layout, wm):
     erow.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "resource"
 
 
-def _analyze_row(layout, wm, step_key, opname, text, icon, summary="", has_run=None):
+def _analyze_row(layout, wm, step_key, opname, text, icon, summary="", has_run=None,
+                  draw_action=None):
     """One Analyze trigger button, full-width (Phase 3 feedback item 2a,
     2026-06-25: one per row so each gets a status icon AND a result line),
     with its inline result summary directly below when there's one to show.
@@ -858,7 +950,13 @@ def _analyze_row(layout, wm, step_key, opname, text, icon, summary="", has_run=N
     ``has_run`` drives the status icon (item 9, 2026-06-25) — defaults to
     "the summary text is non-empty" (true for every feature whose headline
     this draws directly); the tree-based features that now draw their own
-    headline inside ``_draw_report_detail`` instead must pass it explicitly."""
+    headline inside ``_draw_report_detail`` instead must pass it explicitly.
+
+    ``draw_action``: optional ``callable(row)`` that draws ONE narrow extra
+    operator on the right side of the summary row (e.g. "Reconnect Selected")
+    instead of as its own full-width button in a box below (Group 11 #43,
+    2026-06-26) — for sections whose fix action belongs right next to its
+    result line, per the user's own screenshots."""
     if has_run is None:
         has_run = bool(summary)
     row = layout.row(align=True)
@@ -868,6 +966,10 @@ def _analyze_row(layout, wm, step_key, opname, text, icon, summary="", has_run=N
         srow = layout.row(align=True)
         srow.separator(factor=2.2)
         srow.label(text=summary)
+        if draw_action is not None:
+            action_row = srow.row()
+            action_row.scale_x = 0.7
+            draw_action(action_row)
     return op
 
 
@@ -928,6 +1030,15 @@ def _draw_flatten_candidates(layout, wm):
             mrow.label(text=f"{m.name}  —  {m.status}",
                       icon="CHECKMARK" if m.ready else "QUESTION")
 
+    # The detailed per-property Flatten Plan preview/apply result (Group 11
+    # #46, 2026-06-26) — the FILE_TEXT button above stashes it; previously
+    # only reachable via the now-deleted generic Reports selector. One shared
+    # slot (whichever rig was last previewed/applied), so it draws once here
+    # rather than per-rig — the rollup INFO line above is the per-rig summary,
+    # this is the deeper "every recorded property" dump for whichever rig you
+    # most recently clicked the preview button for.
+    _draw_report_detail(layout, wm, "f7flatten")
+
 
 class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
     """Phase 3a (2026-06-25) — the second named section: every "look for
@@ -974,8 +1085,11 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
 
         _analyze_row(layout, wm, "find_broken_links", "assetdoctor.scan_broken_links",
                      "Find Broken Library Links", "LIBRARY_DATA_BROKEN",
-                     has_run=_feature_has_run(wm, "f7links"))
-        _draw_report_detail(layout, wm, "f7links")
+                     _broken_links_headline(wm),
+                     draw_action=(lambda r: r.operator(
+                         "assetdoctor.relink_selected", text="Relink Selected", icon="FILE_REFRESH"))
+                     if len(wm.assetdoctor_broken_libs) else None)
+        _draw_broken_links(layout, wm)
         # Item 3, 2026-06-25 (user request): Find Duplicate Materials/Geometry/
         # Content folded into ONE "Find Duplicates" trigger alongside Find
         # Duplicate Data-blocks — one click runs all 4 scans; each one's own
@@ -989,17 +1103,30 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         _draw_duplicates_summary(layout, wm, narrow)
         _draw_datablock_dups(layout, wm)
         _draw_material_dups(layout, wm)
-        _draw_report_detail(layout, wm, "geo")
+        _draw_geo_dups(layout, wm)
+        _draw_duplicate_textures(layout, wm, narrow)
 
         _analyze_row(layout, wm, "find_reconnectable", "assetdoctor.scan_reconnect_targets",
                      "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
-                     _reconnect_headline(wm))
+                     _reconnect_headline(wm),
+                     draw_action=(lambda r: r.operator(
+                         "assetdoctor.reconnect_selected", text="Reconnect Selected", icon="LINKED"))
+                     if wm.assetdoctor_missing_scanned and len(wm.assetdoctor_missing_blocks) else None)
+        _draw_reconnect(layout, wm)
         _analyze_row(layout, wm, "", "assetdoctor.scan_all_missing",
                      "Find All Missing", "VIEWZOOM", _all_missing_summary(wm))
+
+        _analyze_row(layout, wm, "check_library_paths", "assetdoctor.normalize_library_paths",
+                     "Check Library Paths", "FILE_REFRESH",
+                     _path_normalization_headline(wm),
+                     draw_action=_normalize_action_button
+                     if _feature_has_run(wm, "f7fix") else None).apply = False
+        _draw_path_normalization(layout, wm)
 
         _analyze_row(layout, wm, "find_missing_textures", "assetdoctor.scan_broken_textures",
                      "Find Missing Textures", "IMAGE_DATA",
                      _missing_textures_headline(wm, narrow))
+        _draw_missing_textures(layout, wm, narrow)
 
         _analyze_row(layout, wm, "find_resolution_variants", "assetdoctor.scan_res_variants",
                      "Find Resolution Variants", "FULLSCREEN_ENTER",
@@ -1007,8 +1134,8 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         _draw_res_variants(layout, wm)
 
         _analyze_row(layout, wm, "find_orphans", "assetdoctor.scan_orphans",
-                     "Find Orphans", "NONE", has_run=_feature_has_run(wm, "f4")).purge_orphans = False
-        _draw_report_detail(layout, wm, "f4")
+                     "Find Orphans", "NONE", _orphans_headline(wm)).purge_orphans = False
+        _draw_orphans(layout, wm)
 
         # Footprint/impact analyses — a different KIND of analysis (not "is
         # something broken") — separated from the find-a-problem buttons above
@@ -1025,11 +1152,8 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
                      "Make Local Impact", "LIBRARY_DATA_DIRECT",
                      has_run=_feature_has_run(wm, "f2")).apply = False
         _draw_report_detail(layout, wm, "f2")
-        # Profile Render actually renders — too slow/disruptive for the Analyze
-        # All sequencer (core.analyze_steps.STEPS deliberately excludes it);
-        # manual only, no step status to show.
-        _analyze_row(layout, wm, "", "assetdoctor.profile_render",
-                     "Profile Render (Real RAM)", "RENDER_STILL", _profile_render_summary(wm))
+        # Profile Render relocated to Utilities (Group 11 #42, 2026-06-26) — it
+        # actually renders, more "one-off tool" than "is something broken."
 
 
 class ASSETDOCTOR_PT_analyze_external(_SceneFeaturePanel, bpy.types.Panel):
@@ -1052,6 +1176,11 @@ class ASSETDOCTOR_PT_analyze_external(_SceneFeaturePanel, bpy.types.Panel):
         pmap.prop(context.scene, "assetdoctor_scan_dir", text="")
         pmap.operator("assetdoctor.scan_folder", text="Map Folder → Open Graph",
                       icon="VIEWZOOM").directory = context.scene.assetdoctor_scan_dir
+        # Group 11 #46, 2026-06-26: the scan ALSO stashes a flat f1 report
+        # (legacy — its real surface is the HTML graph the button above opens)
+        # — give it a home here rather than losing access entirely now that
+        # the generic Reports selector is gone.
+        _draw_report_detail(pmap, wm, "f1")
 
         rev = layout.box().column(align=True)
         rev.label(text="Safe to delete? (who links this file)", icon="TRASH")
@@ -1071,30 +1200,6 @@ class ASSETDOCTOR_PT_analyze_external(_SceneFeaturePanel, bpy.types.Panel):
             vrow.label(text=wm.assetdoctor_dep_verdict_text, icon="ERROR")
 
 
-class ASSETDOCTOR_PT_orphans(_SceneFeaturePanel, bpy.types.Panel):
-    bl_label = "Orphans & Fake Users"
-    bl_idname = "ASSETDOCTOR_PT_orphans"
-    bl_order = 4
-
-    def draw(self, context):
-        # Its "Find Orphans" report trigger now lives in the Analyze sub-panel
-        # (Phase 3a, 2026-06-25); this panel keeps the Apply action.
-        layout = self.layout
-        layout.operator("assetdoctor.scan_orphans", text="Scan + Purge Orphans").purge_orphans = True
-
-
-class ASSETDOCTOR_PT_geometry(_SceneFeaturePanel, bpy.types.Panel):
-    bl_label = "Duplicate Geometry"
-    bl_idname = "ASSETDOCTOR_PT_geometry"
-    bl_order = 5
-
-    def draw(self, context):
-        # Its "Find Duplicate Geometry" report trigger now lives in the Analyze
-        # sub-panel (Phase 3a, 2026-06-25); this panel keeps the Apply action.
-        layout = self.layout
-        layout.operator("assetdoctor.instance_geometry", text="Instance & Merge (Apply)").apply = True
-
-
 class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
     bl_label = "Utilities"
     bl_idname = "ASSETDOCTOR_PT_utilities"
@@ -1105,18 +1210,114 @@ class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         from ..prefs import get_prefs
 
         layout = self.layout
+        wm = context.window_manager
         layout.prop(context.scene, "assetdoctor_debug_log")
         layout.operator("assetdoctor.open_preferences",
                         text="Lists & Backups: Add-on Preferences…", icon="PREFERENCES")
 
         prefs = get_prefs(context)
         if prefs is not None and prefs.idle_scan_enabled:
-            wm = context.window_manager
             secs = getattr(wm, "assetdoctor_idle_seconds", 0.0)
             detected = getattr(wm, "assetdoctor_idle_detected", False)
             layout.separator()
             layout.label(text=f"Idle-scan prototype — {secs:.0f}s since input"
                         + (" (idle)" if detected else ""), icon="TIME")
+
+        # Phase 3 panel consolidation (Group 11 #42, 2026-06-26) — one-off tools that
+        # measure/probe rather than "is something broken," relocated here from the old
+        # Results holding pen / Analyze panel.
+        layout.separator()
+        _analyze_row(layout, wm, "", "assetdoctor.profile_render",
+                     "Profile Render (Real RAM)", "RENDER_STILL", _profile_render_summary(wm))
+
+        layout.separator()
+        dry = layout.box().column(align=True)
+        dry.label(text="Dry-run render (catches render-time warnings)", icon="RENDER_STILL")
+        if bpy.data.filepath and bpy.data.is_dirty:
+            drow = dry.row()
+            drow.alert = True
+            drow.label(text="Unsaved changes — save first (renders from disk)", icon="ERROR")
+        dry.operator("assetdoctor.dryrun_render", text="Run Dry-Run Render",
+                     icon="RENDER_STILL")
+        # Group 11 #46, 2026-06-26: the render-warnings result, previously only
+        # reachable via the now-deleted generic Reports selector.
+        _draw_report_detail(dry, wm, "f9")
+
+        layout.separator()
+        self._draw_examine_library(context, layout, wm)
+
+    def _draw_examine_library(self, context, layout, wm):
+        """Examine Library: list everything the current file links from a chosen
+        (working) library and offer to re-source it from memory first — local,
+        then another already-loaded library — falling back to Make Local or a
+        per-row manual file+item pick. Grouped by KIND, mirrors the Duplicate
+        Data-blocks section's shape."""
+        rows = wm.assetdoctor_examine_rows
+        scanned = wm.assetdoctor_examine_scanned
+
+        box = layout.box().column(align=True)
+        box.label(text="Examine Library", icon="LIBRARY_DATA_DIRECT")
+        box.label(text="Retarget everything a library provides to your local file or "
+                  "another library (e.g. to break a circular reference).", icon="INFO")
+        pick = box.row(align=True)
+        pick.prop_search(wm, "assetdoctor_examine_library_pick", bpy.data, "libraries", text="")
+        pick.operator("assetdoctor.examine_library", text="Examine", icon="VIEWZOOM")
+
+        if scanned and len(rows):
+            staged = sum(1 for r in rows if r.selected)
+            suggested = sum(1 for r in rows if r.suggested_kind != "none")
+            box.label(text=f"{len(rows)} data-block(s) from {wm.assetdoctor_examine_library} — "
+                      f"{suggested} in-memory match(es), {staged} staged",
+                      icon="LIBRARY_DATA_OVERRIDE")
+            box.operator("assetdoctor.examine_apply_selected",
+                         text="Apply Selected (Backup)", icon="LINKED")
+        elif scanned:
+            box.label(text="✓ Nothing currently links from that library", icon="CHECKMARK")
+        if not (scanned and len(rows)):
+            return
+
+        expanded = set(filter(None, wm.assetdoctor_examine_expanded.split("\n")))
+        groups: dict[str, list] = {}
+        for idx, item in enumerate(rows):
+            groups.setdefault(item.kind, []).append((idx, item))
+
+        for kind in sorted(groups, key=str.lower):
+            members = groups[kind]
+            is_exp = kind in expanded
+            crow = box.row(align=True)
+            crow.operator("assetdoctor.examine_category_toggle", text="",
+                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = kind
+            crow.label(text=f"{kind}  ({len(members)})", icon="LIBRARY_DATA_DIRECT")
+            if not is_exp:
+                continue
+            for idx, item in members:
+                frow = box.row(align=True)
+                frow.separator(factor=2.0)
+                frow.prop(item, "selected", text="")
+                frow.label(text=item.name, icon="LIBRARY_DATA_DIRECT")
+                if item.make_local:
+                    pass  # the Make Local checkbox below already says it all
+                elif item.use_suggested and item.suggested_kind == "local":
+                    s = frow.row()
+                    s.alignment = "RIGHT"
+                    text, icon = _graph_match_suffix(f"local: {item.suggested_name}", item.graph_match)
+                    s.label(text=text, icon=icon)
+                elif item.use_suggested and item.suggested_kind == "library":
+                    s = frow.row()
+                    s.alignment = "RIGHT"
+                    base = (f"{os.path.basename(item.suggested_library)}: "
+                            f"{item.suggested_name}")
+                    text, icon = _graph_match_suffix(base, item.graph_match)
+                    s.label(text=text, icon=icon)
+                elif item.source_blend:
+                    frow.prop(item, "target", text="")
+                else:
+                    s = frow.row()
+                    s.alignment = "RIGHT"
+                    s.label(text="no in-memory match", icon="QUESTION")
+                frow.prop(item, "make_local", text="", icon="FILE_TICK")
+                frow.operator("assetdoctor.examine_pick_source", text="",
+                              icon="FILEBROWSER").index = idx
 
 
 def _libraries_at_a_glance():
@@ -1390,756 +1591,696 @@ def _draw_material_dups(layout, wm) -> None:
         keep.prop(row, "keeper", text="")
 
 
-class ASSETDOCTOR_PT_results(_SceneFeaturePanel, bpy.types.Panel):
-    """Everything that used to draw inline in the parent panel's own body
-    (Duplicate Data-blocks through the generic Reports selector) — moved here
-    wholesale (v0.2.56, 2026-06-25 user report) so it actually renders BELOW
-    Current File Data/Analyze/the legacy panels, instead of always ahead of
-    them regardless of bl_order (see ASSETDOCTOR_PT_scene_deps.draw() for why).
-    Placed last (highest bl_order) as a holding pen — NOT a Phase 3b/3c design;
-    that 3-way split (Reporting & Recommendations / Cleanup & Fixes / Info &
-    Utilities) still hasn't happened. Content/order inside is UNCHANGED from
-    before the move."""
+def _geo_dups_headline(wm) -> str:
+    """The Find Duplicate Geometry Analyze row's own summary (Group 11 #44,
+    2026-06-26) — replaces the generic tree disclosure now that this section
+    has its own actionable checkbox UI, mirroring Find Duplicate Materials/
+    Data-blocks."""
+    if not wm.assetdoctor_geo_scanned:
+        return ""
+    groups = wm.assetdoctor_geo_families
+    if not len(groups):
+        return "✓ no duplicate geometry found"
+    removable = wm.assetdoctor_geo_removable
+    return f"{len(groups)} group(s), {removable} mesh(es) instanceable"
 
-    bl_label = "Results"
-    bl_idname = "ASSETDOCTOR_PT_results"
-    bl_order = 8
 
-    # f6tex (the old before/after Missing-Textures report) is gone — the Missing
-    # Textures section now lists everything inline, so no separate report is
-    # needed. f6dup is excluded from the Reports selector below — the Duplicate
-    # Materials/Textures section already lists everything inline (with a keeper
-    # dropdown), so its report is only kept around for the inline Export button,
-    # and showing it as a selectable tab would just be a second, redundant route
-    # to the same data (see the 2026-06-23 #9 fix this preserves).
-    _SELECTOR_EXCLUDE = frozenset({"f6dup"})
+def _draw_geo_dups(layout, wm) -> None:
+    """Find Duplicate Geometry — checkbox + Instance Selected (Group 11 #44,
+    2026-06-26), replacing the old read-only tree report. No keeper dropdown
+    needed (unlike Materials/Data-blocks/Images): instancing always keeps
+    the canonical mesh ``core.geometry_dedup.choose_canonical`` already
+    picked, no ambiguity to override. Flat list — every row is already one
+    identical-mesh group (all "Mesh" today; ``kind`` is kept for future
+    geometry types, same shape as Materials' flat list)."""
+    groups = wm.assetdoctor_geo_families
+    if not (wm.assetdoctor_geo_scanned and len(groups)):
+        return
+    box = layout.box().column(align=True)
+    box.operator("assetdoctor.instance_geometry_selected",
+                 text="Instance Selected (Backup)", icon="AREA_JOIN")
+    for row in groups:
+        frow = box.row(align=True)
+        frow.prop(row, "selected", text="")
+        frow.label(text=f"{row.name}  (−{row.removable})", icon="MESH_DATA")
 
-    def draw(self, context):
-        from ..core.report import Report
-        from ..ops.report_store import (
-            TREE_FEATURES, active_feature, available_features, data_prop, exp_prop,
-        )
 
-        layout = self.layout
-        wm = context.window_manager
+# Below this name-token overlap, a duplicate family's material looks mis-attributed
+# (e.g. a lightBlue texture under a brown material) → flag it + offer the eyedropper.
+_DUP_MISMATCH_AFFINITY = 0.5
 
-        # Phase 3 path fixes are TWO independent jobs (user, 2026-06-21):
-        #  (1) relink broken/missing library links — per-link + pick-a-file, so you
-        #      can fix one specific link (e.g. a broken material library);
-        #  (2) normalize the paths of libraries that already resolve.
-        # Both Find triggers (Find Broken Library Links, the old Find Missing
-        # Data-blocks — now folded into Find Reconnectable Data-blocks below)
-        # moved to Analyze (Phase 3a); this box keeps the results list + Relink
-        # Selected.
-        links = layout.box().column(align=True)
-        links.label(text="Broken Library Links & missing data-blocks", icon="LIBRARY_DATA_BROKEN")
-        if len(wm.assetdoctor_broken_libs):
-            links.template_list(
-                "ASSETDOCTOR_UL_broken_libs", "brokenlibs",
-                wm, "assetdoctor_broken_libs",
-                wm, "assetdoctor_broken_index", rows=4)
-            links.operator("assetdoctor.relink_selected",
-                           text="Relink Selected (Creates Backup)", icon="FILE_REFRESH")
 
-        # Batch C #2: reconnect missing data-blocks to a real datablock in a chosen
-        # source .blend (separate from the broken-LIBRARY-link relinker above — a
-        # missing data-block's library can resolve fine; the block itself was just
-        # renamed/removed at the source).
-        self._draw_reconnect(context, layout, wm)
+def _draw_duplicate_textures(layout, wm, narrow: bool) -> None:
+    """F6 Layer 2/3 — the redesigned Duplicate Materials/Textures section: an
+    inline summary header, top Find/Merge/Export, then collapsible material
+    groups whose rows are content-identical merge families, each with an
+    include checkbox + a keeper dropdown (pick which datablock survives).
+    Mirrors the Missing section; no separate report (it's still stashed for
+    the Export button). Relocated into the unified Find Duplicates sequence
+    in Analyze (Group 11 #44, 2026-06-26) — was the one of the 4 duplicate-
+    finding sections still stuck in the old Results holding pen. (History: a
+    separate fast/name-only "Find .NNN" scan was removed 2026-06-24 —
+    confirmed redundant with Find Content Dups, which uses the identical
+    fingerprint over a strict superset of images.)"""
+    scanned = wm.assetdoctor_dup_scanned
+    families = wm.assetdoctor_dup_families
 
-        # Examine Library: proactively retarget AWAY from a chosen WORKING library
-        # (e.g. a shared bundle causing circular references) — distinct from the
-        # reconnect box above, which only triggers on BROKEN placeholders.
-        self._draw_examine_library(context, layout, wm)
+    dup = layout.box().column(align=True)
+    conflicts = wm.assetdoctor_dup_conflicts
+    # Summary header (the visible result); the Analyze panel's "Find
+    # Duplicates" button shows the same line inline (Phase 3c).
+    headline = _duplicate_textures_headline(wm, narrow)
+    if headline:
+        dup.label(text=headline, icon="IMAGE_DATA")
 
-        norm = layout.box().column(align=True)
-        norm.label(text="Path normalization", icon="FILE_REFRESH")
-        nr = norm.row(align=True)
-        nr.operator("assetdoctor.normalize_library_paths", text="Check").apply = False
-        nr.operator("assetdoctor.normalize_library_paths",
-                    text="Normalize (Creates Backup)", icon="CHECKMARK").apply = True
-        self._draw_duplicate_library_paths(context, norm, wm)
-        self._draw_absolute_paths(context, norm, wm)
+    if scanned and len(families):
+        brow = dup.row(align=True)
+        brow.operator("assetdoctor.merge_dup_selected",
+                      text="Merge Selected (Backup)", icon="AREA_JOIN")
+        brow.operator("assetdoctor.export_report", text="",
+                      icon="EXPORT").feature = "f6dup"
+    if not (scanned and (len(families) or conflicts)):
+        return
 
-        # F6: missing image textures (the magenta). Everything lists inline here —
-        # header summary, then collapsible material/folder categories with per-file
-        # rows — so no separate report is needed. The three relink paths share one
-        # "stage a target → Relink Selected applies" model:
-        #   • Search a folder (recursive) — stage matches for ALL missing textures
-        #   • category folder button      — stage matches for one group
-        #   • per-file file button        — pick one file
-        self._draw_missing_textures(context, layout, wm)
+    from ..core.imagematch import name_affinity
 
-        # F6 Layer 2: merge content-identical .NNN duplicate image datablocks
-        # (verified by dimensions + hash). Redesigned to mirror the Missing section:
-        # collapsible material groups, a per-family keeper dropdown, inline summary.
-        self._draw_duplicate_textures(context, layout, wm)
+    def _eff_mat(row):
+        return (row.material_override.name if row.material_override
+                else (row.material or "(no material)"))
 
-        # Batch D: catch render-TIME problems (missing textures, driver errors)
-        # that no static scan above can see, by rendering one low-res frame in a
-        # SEPARATE background Blender process — this session's UI/file is untouched.
-        dry = layout.box().column(align=True)
-        dry.label(text="Dry-run render (catches render-time warnings)", icon="RENDER_STILL")
-        if bpy.data.filepath and bpy.data.is_dirty:
-            drow = dry.row()
-            drow.alert = True
-            drow.label(text="Unsaved changes — save first (renders from disk)", icon="ERROR")
-        dry.operator("assetdoctor.dryrun_render", text="Run Dry-Run Render",
-                     icon="RENDER_STILL")
+    def _mismatch(row):
+        # An "apparent mismatch" = the (effective) material's name barely overlaps
+        # the texture's name, e.g. a lightBlue texture under a brown material.
+        eff = _eff_mat(row)
+        return eff != "(no material)" and name_affinity(row.name, eff) < _DUP_MISMATCH_AFFINITY
 
-        # Every report that currently has data (ALL features, not just F7/F6/F9 —
-        # this absorbed the old N-panel's standalone Report panel in Batch 5, so
-        # F1/F2/F3/F4/Geometry dry-run reports need a home here too); a small
-        # selector when more than one. The Reports area always gets its own header
-        # so a lone report isn't mistaken for part of the section above it (user,
-        # 2026-06-23).
-        layout.separator()
-        hrow = layout.row(align=True)
-        hrow.label(text="Reports", icon="PRESET")
-        hrow.operator("assetdoctor.report_clear", text="", icon="X", emboss=False)
-        present = [(k, lbl) for k, lbl in available_features(wm) if k not in self._SELECTOR_EXCLUDE]
-        if not present:
-            layout.label(text="Run a scan or analysis to see results.", icon="INFO")
-            return
+    expanded = set(filter(None, wm.assetdoctor_dup_expanded.split("\n")))
+    groups: dict[str, list] = {}
+    for row in families:
+        groups.setdefault(_eff_mat(row), []).append(row)
 
-        active = active_feature(wm)
-        if active not in dict(present):
-            active = present[0][0]
-        selrow = layout.row(align=True)
-        for key, lbl in present:
-            selrow.operator("assetdoctor.report_select", text=lbl,
-                            depress=(key == active)).feature = key
-        selrow.operator("assetdoctor.export_report", text="", icon="EXPORT").source = "report"
+    for key in sorted(groups, key=str.lower):
+        members = groups[key]
+        removable_here = sum(r.removable for r in members)
+        mism = [r for r in members if _mismatch(r)]
+        is_exp = key in expanded
+        crow = dup.row(align=True)
+        crow.operator("assetdoctor.dup_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = key
+        # Alert only the label (not the whole row) when some textures here don't
+        # look like they belong to this material.
+        lab = crow.row()
+        lab.alert = bool(mism)
+        suffix = f", ⚠{len(mism)} mismatch" if mism else ""
+        lab.label(text=f"{key}  ({len(members)} family, −{removable_here}{suffix})",
+                  icon="ERROR" if mism else "MATERIAL")
+        # Master keeper for the whole material (sets every family's keeper by a
+        # policy) — the material-level counterpart to the per-family dropdowns.
+        crow.operator("assetdoctor.dup_material_keeper", text="",
+                      icon="DOWNARROW_HLT").material = key
+        if not is_exp:
+            continue
+        for row in members:
+            bad = _mismatch(row)
+            frow = dup.row(align=True)
+            frow.separator(factor=2.0)
+            frow.prop(row, "selected", text="")
+            name = frow.row()
+            name.alert = bad
+            name.label(text=f"{row.name}  (−{row.removable})",
+                       icon="ERROR" if bad else "IMAGE_DATA")
+            # Alternate material picker (eyedropper): re-home a mis-attributed
+            # family under the correct material. Shown when it looks wrong (or was
+            # already overridden). Organizational only — doesn't rewire nodes.
+            if bad or row.material_override:
+                frow.prop(row, "material_override", text="")
+            keep = frow.row()
+            keep.alignment = "RIGHT"
+            keep.label(text="keep", icon="PINNED")
+            keep.prop(row, "keeper", text="")
 
-        if active not in TREE_FEATURES:
-            try:
-                report = Report.from_json(getattr(wm, data_prop(active)))
-            except Exception:
-                layout.label(text="(could not read report)", icon="ERROR")
-                return
-            titlerow = layout.row(align=True)
-            titlerow.label(text=report.title, icon="PRESET")
+    # Families with differing content — shown (collapsible) but never merged.
+    conflict_lines = [ln for ln in wm.assetdoctor_dup_conflicts_text.split("\n") if ln]
+    if conflict_lines:
+        ckey = "\x02conflicts"
+        is_exp = ckey in expanded
+        crow = dup.row(align=True)
+        crow.operator("assetdoctor.dup_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
+        crow.label(text=f"Different content — kept separate ({len(conflict_lines)})",
+                   icon="QUESTION")
+        if is_exp:
+            for ln in conflict_lines:
+                r = dup.row(align=True)
+                r.separator(factor=2.0)
+                r.label(text=ln, icon="DOT")
+
+
+def _orphans_headline(wm) -> str:
+    """Find Orphans' own Analyze-row summary (Group 11 #45, 2026-06-26) —
+    replaces the generic tree disclosure now that orphans have their own
+    actionable checkbox UI; fake-user-only/identical stay informational
+    (deliberate — see ``ops.orphans``'s module docstring) but their counts
+    still come from the same report's "summary" Finding."""
+    from ..core.report import Report
+    from ..ops.report_store import data_prop
+
+    if not _feature_has_run(wm, "f4"):
+        return ""
+    try:
+        report = Report.from_json(getattr(wm, data_prop("f4"), ""))
+        summary = next(f for f in report.findings if f.category == "summary")
+        d = summary.data
+    except Exception:
+        return ""
+    if not d.get("orphans") and not d.get("fake_only") and not d.get("identical_groups"):
+        return "✓ no orphans, fake users, or identical datablocks found"
+    return (f"{d.get('orphans', 0)} orphan(s), {d.get('fake_only', 0)} fake-user-only, "
+            f"{d.get('identical_groups', 0)} identical group(s)")
+
+
+def _draw_orphans(layout, wm) -> None:
+    """Find Orphans — checkbox + Purge Selected for TRUE orphans (Group 11
+    #45, 2026-06-26), replacing the old read-only tree report. Fake-user-only
+    and identical-cluster findings stay informational/read-only (deliberate,
+    existing design — ``ops.orphans``'s module docstring: clearing fake users
+    or merging identical datablocks "reflects intent, not just cleanup", so
+    no checkbox/bulk-action for those here), drawn straight from the report."""
+    from ..core.report import Report
+    from ..ops.report_store import data_prop
+
+    if not _feature_has_run(wm, "f4"):
+        return
+    try:
+        report = Report.from_json(getattr(wm, data_prop("f4"), ""))
+    except Exception:
+        return
+
+    rows = wm.assetdoctor_orphan_rows
+    fakes = next((f for f in report.findings if f.category == "fake_only"), None)
+    identical = [f for f in report.findings if f.category == "identical"]
+    if not (len(rows) or (fakes and fakes.items) or identical):
+        return
+
+    box = layout.box().column(align=True)
+    if len(rows):
+        box.operator("assetdoctor.purge_orphans_selected",
+                     text="Purge Selected (Backup)", icon="TRASH")
+        for row in rows:
+            type_name, _, name = row.name.partition("/")
+            frow = box.row(align=True)
+            frow.prop(row, "selected", text="")
+            op = frow.operator("assetdoctor.select_datablock", text=name,
+                               icon="NONE", emboss=False)
+            op.type, op.name = type_name, name
+
+    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+
+    if fakes and fakes.items:
+        ckey = "orphans:fake_only"
+        is_exp = ckey in expanded
+        crow = box.row(align=True)
+        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
+                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+        top.key = ckey
+        crow.label(text=fakes.message, icon="INFO")
+        if is_exp:
+            for label in fakes.items:
+                type_name, _, name = label.partition("/")
+                frow = box.row(align=True)
+                frow.separator(factor=2.0)
+                op = frow.operator("assetdoctor.select_datablock", text=name,
+                                   icon="NONE", emboss=False)
+                op.type, op.name = type_name, name
+
+    if identical:
+        ckey = "orphans:identical"
+        is_exp = ckey in expanded
+        crow = box.row(align=True)
+        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
+                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+        top.key = ckey
+        crow.label(text=f"{len(identical)} identical-datablock group(s)", icon="INFO")
+        if is_exp:
+            for i, f in enumerate(identical):
+                fkey = f"orphans:identical:{i}"
+                f_is_exp = fkey in expanded
+                frow = box.row(align=True)
+                frow.separator(factor=2.0)
+                ftop = frow.operator("assetdoctor.toggle_inline_detail", text="",
+                                     icon="TRIA_DOWN" if f_is_exp else "TRIA_RIGHT", emboss=False)
+                ftop.key = fkey
+                frow.label(text=f.message)
+                if not f_is_exp:
+                    continue
+                for label in f.items:
+                    type_name, _, name = label.partition("/")
+                    mrow = box.row(align=True)
+                    mrow.separator(factor=3.0)
+                    op = mrow.operator("assetdoctor.select_datablock", text=name,
+                                       icon="NONE", emboss=False)
+                    op.type, op.name = type_name, name
+
+
+# Reconnect confidence -> (icon, short label). "none" shows neither — the row
+# just offers the source's full candidate list with no particular guess.
+# "transitive" is set by ops.datablock_reconnect.reconnect_selected AFTER an
+# apply attempt found the chosen candidate was itself unresolved further
+# upstream — distinct from "none" (never tried) so the user can tell "this
+# is genuinely stuck, the library itself doesn't have it either" from
+# "just hasn't been matched yet". "external" (2026-06-25, real-file
+# diagnosis) is set when the remap call reports success but the
+# placeholder still has real users — those users live inside data that is
+# ITSELF linked from another library, so the pointer can't actually be
+# rewritten from this file; the fix has to happen by opening that OTHER
+# file directly. Distinct from "transitive" — there the SOURCE library
+# doesn't have the data at all; here it does, the fix just can't be
+# applied from here.
+_RECONNECT_CONF = {
+    "exact": ("CHECKMARK", "exact"),
+    "numbered": ("FILE_REFRESH", "renamed"),
+    "fuzzy": ("QUESTION", "fuzzy"),
+    "transitive": ("ERROR", "missing upstream too"),
+    "external": ("ERROR", "fix at the source library"),
+    "none": ("BLANK1", ""),
+}
+
+
+def _draw_reconnect(layout, wm) -> None:
+    """Batch C #2 — reconnect missing data-blocks' drill-down list. Rows group
+    by their broken/renamed source LIBRARY (the natural unit — one library's
+    blocks usually all need the same fix); a group-level file picker peeks a
+    chosen source .blend (never loads it) and suggests the closest name per
+    row (core.reconnect). Relocated under its Analyze row (Group 11 #43,
+    2026-06-26) — Reconnect Selected now lives on that row's right side
+    (``_normalize_action_button``-style, wired at the call site), so this
+    just keeps the grouped list."""
+    rows = wm.assetdoctor_missing_blocks
+    if not (wm.assetdoctor_missing_scanned and len(rows)):
+        return
+
+    box = layout.box().column(align=True)
+    expanded = set(filter(None, wm.assetdoctor_missing_expanded.split("\n")))
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for item in rows:
+        if item.library not in groups:
+            groups[item.library] = []
+            order.append(item.library)
+        groups[item.library].append(item)
+
+    for library in sorted(order, key=lambda lib: (-len(groups[lib]), lib.lower())):
+        members = groups[library]
+        matched = sum(1 for m in members
+                     if m.confidence not in ("none", "transitive", "external"))
+        stuck = sum(1 for m in members if m.confidence == "transitive")
+        external = sum(1 for m in members if m.confidence == "external")
+        lib_found = members[0].library_found
+        has_source = bool(members[0].source_blend)
+        is_exp = library in expanded
+        crow = box.row(align=True)
+        crow.operator("assetdoctor.reconnect_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = library
+        disp = library or "(unknown library)"
+        bits = []
+        if matched:
+            bits.append(f"{matched} suggested")
+        if stuck:
+            bits.append(f"{stuck} stuck (missing upstream too)")
+        if external:
+            bits.append(f"{external} fix at the source library")
+        label = f"{disp}  ({', '.join(bits)})" if bits else f"{disp}  ({len(members)})"
+        # ERROR icon when the group's OWN library can't be found anywhere in
+        # this session AND no source has been picked yet — distinguishes
+        # "genuinely needs a manual file pick" from the normal broken-link
+        # icon (user report 2026-06-24: these looked identical before).
+        crow.label(text=label,
+                  icon="LIBRARY_DATA_BROKEN" if (lib_found or has_source) else "ERROR")
+        pick = crow.operator("assetdoctor.reconnect_pick_source", text="",
+                             icon="FILEBROWSER")
+        pick.library = library
+        if not is_exp:
+            continue
+        source = members[0].source_blend
+        srow = box.row(align=True)
+        srow.separator(factor=2.0)
+        if source:
+            srow.label(text=os.path.basename(source), icon="FILE_BLEND")
+        elif lib_found:
+            srow.label(text="no source picked yet — click the folder icon above",
+                      icon="QUESTION")
         else:
-            titlerow = layout.row(align=True)
-        # Expand/Collapse All — deep trees (e.g. the File Map) are tedious to open
-        # one row at a time.
-        titlerow.alignment = "RIGHT"
-        ea = titlerow.operator("assetdoctor.report_expand_all", text="", icon="ZOOM_IN")
-        ea.feature, ea.prop, ea.expand = active, exp_prop(active), True
-        ca = titlerow.operator("assetdoctor.report_expand_all", text="", icon="ZOOM_OUT")
-        ca.feature, ca.prop, ca.expand = active, exp_prop(active), False
-        layout.template_list(
-            "ASSETDOCTOR_UL_tree", "f7report",
-            wm, "assetdoctor_report_rows",
-            wm, "assetdoctor_report_index",
-            rows=14, sort_lock=True,
-        )
+            srow.label(text="library not found anywhere in this session — pick a "
+                      "source .blend manually", icon="ERROR")
+        for item in members:
+            frow = box.row(align=True)
+            frow.separator(factor=2.0)
+            frow.prop(item, "selected", text="")
+            frow.label(text=f"{item.kind}: {item.name}", icon="LIBRARY_DATA_BROKEN")
+            icon, conf_label = _RECONNECT_CONF.get(item.confidence, ("BLANK1", ""))
+            if conf_label:
+                cf = frow.row()
+                cf.alignment = "RIGHT"
+                cf.label(text=conf_label, icon=icon)
+            frow.prop(item, "target", text="")
 
-    def _draw_missing_textures(self, context, layout, wm):
-        """The unified Missing Textures section: a header summary, then collapsible
-        material/folder categories whose members are per-file rows. All three relink
-        paths STAGE a target (folder-search / category-folder / per-file pick); the
-        single Relink Selected then applies. Replaces the old flat list + report."""
-        n_missing = len(wm.assetdoctor_broken_imgs)
-        scanned = wm.assetdoctor_tex_scanned
-        narrow = bool(context.region) and context.region.width < 320
 
-        tex = layout.box().column(align=True)
-        # Header summary (the visible result — no separate report needed); the
-        # Analyze panel's "Find Missing Textures" button shows the same line
-        # inline (Phase 3c) via the same _missing_textures_headline helper.
-        headline = _missing_textures_headline(wm, narrow)
-        if headline:
-            tex.label(text=headline, icon="IMAGE_DATA")
-        # Its "Find Missing Textures" trigger now lives in the Analyze sub-panel
-        # (Phase 3a, 2026-06-25); this box keeps everything else.
-        if not scanned:
-            return
-        if not n_missing:
-            self._draw_linked_missing_textures(context, tex, wm)
-            return
+def _draw_broken_links(layout, wm) -> None:
+    """Find Broken Library Links' drill-down list. Relocated under its
+    Analyze row (Group 11 #43, 2026-06-26) — Relink Selected now lives on
+    that row's right side; this just keeps the UIList."""
+    if not len(wm.assetdoctor_broken_libs):
+        return
+    layout.template_list(
+        "ASSETDOCTOR_UL_broken_libs", "brokenlibs",
+        wm, "assetdoctor_broken_libs",
+        wm, "assetdoctor_broken_index", rows=4)
 
-        # Recursive staged search over ALL missing textures (between List and the list).
-        # Exact-basename first; the fuzzy matcher is the FALLBACK for vendor-renamed
-        # files (proposals land in the Possible Matches sub-section below).
-        srow = tex.row(align=True)
-        srow.operator("assetdoctor.search_textures_folder",
-                      text="Search a Folder (Recursive)…", icon="FILEBROWSER")
-        srow.operator("assetdoctor.suggest_fuzzy_matches",
-                      text="Suggest Matches…", icon="ZOOM_SELECTED")
-        # B4 eyedropper: borrow a WORKING material's existing textures as substitute
-        # candidates for the missing ones (matched by name → staged as Possible
-        # Matches). The picker is the standard material datablock field + eyedropper.
-        tex.label(text="Substitute from a material's textures:", icon="EYEDROPPER")
-        mrow = tex.row(align=True)
-        mrow.prop(wm, "assetdoctor_tex_source_material", text="")
-        mrow.operator("assetdoctor.suggest_from_material", text="Suggest",
-                      icon="ZOOM_SELECTED")
-        # …or borrow the texture files another .blend references (offline BAT harvest).
-        tex.operator("assetdoctor.suggest_from_blend",
-                     text="Substitute from Another .blend…", icon="FILE_BLEND")
-        tex.separator()
-        hrow = tex.row(align=True)
-        hrow.label(text="Missing Textures", icon="IMAGE_DATA")
-        hrow.operator("assetdoctor.relink_textures_selected", text="Relink Selected",
-                      icon="FILE_REFRESH")
 
-        # Group by MATERIAL only (the folder view was dropped — user, 2026-06-22).
-        mode = "MATERIAL"
-        expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
-        # Sentinel for items with no folder/material (no group button). NOT "\x00" —
-        # a real bug: Blender's StringProperty round-trips through a C string, which
-        # truncates at the first NUL byte, so storing a lone "\x00" in
-        # assetdoctor_tex_expanded silently came back empty and the "(no material)"
-        # triangle could never stay expanded.
-        UNGROUPED = "\x02"
-        groups: dict[str, list] = {}
-        order: list[str] = []
-        for idx, item in enumerate(wm.assetdoctor_broken_imgs):
-            raw = (item.group if mode == "DIR" else item.material) or UNGROUPED
-            if raw not in groups:
-                groups[raw] = []
-                order.append(raw)
-            groups[raw].append((idx, item))
+def _draw_duplicate_library_paths(layout, wm) -> None:
+    """Item 6, 2026-06-25: the duplicate-library-path groups Path
+    normalization's "Check" finds — the SAME real file reached via 2+
+    stored path forms (separate Library ID blocks in this file). Each
+    form is its own radio-style checkbox row (only one enabled per
+    group — Blender has no native radio-checkbox, so a toggle operator
+    enforces it); a per-group "Use Selected Paths" button merges
+    everything the OTHER form(s) provide onto the ticked one."""
+    coll = wm.assetdoctor_dup_lib_members
+    if not len(coll):
+        return
 
-        for raw in sorted(order):
-            members = groups[raw]
-            total = len(members)
-            matched = sum(1 for _i, it in members if it.target)
-            if raw == UNGROUPED:
-                disp = "(no material)" if mode == "MATERIAL" else "(no folder)"
-            else:
-                disp = (os.path.basename(raw.rstrip("/")) or raw) if mode == "DIR" else raw
-            is_exp = raw in expanded
-            crow = tex.row(align=True)
-            crow.operator("assetdoctor.tex_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = raw
-            label = f"{disp}  ({matched} of {total} matched)" if matched else f"{disp}  ({total})"
-            crow.label(text=label,
-                       icon="CHECKMARK" if matched and matched == total else
-                       ("FILE_FOLDER" if mode == "DIR" else "MATERIAL"))
-            # Category-level "point at a folder" (stages targets for the whole group).
-            if raw != UNGROUPED:
-                cop = crow.operator("assetdoctor.point_group_at_folder", text="",
-                                    icon="FILE_FOLDER")
-                cop.group_key = raw
-                cop.by = mode
-            if not is_exp:
-                continue
-            # Individual files: checkbox + name + staged target + per-file file picker.
-            for idx, item in members:
-                frow = tex.row(align=True)
-                frow.separator(factor=2.0)
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for i, item in enumerate(coll):
+        if item.group not in groups:
+            groups[item.group] = []
+            order.append(item.group)
+        groups[item.group].append((i, item))
+
+    layout.separator()
+    hrow = layout.row(align=True)
+    hrow.label(text=f"Duplicate library paths — {len(order)} group(s)",
+              icon="LIBRARY_DATA_BROKEN")
+    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    for group_key in order:
+        members = groups[group_key]
+        ckey = f"duplib:{group_key}"
+        is_exp = ckey in expanded
+        fname = os.path.basename(members[0][1].stored.rstrip("/\\")) or members[0][1].stored
+        crow = layout.row(align=True)
+        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
+                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+        top.key = ckey
+        crow.label(text=f"{fname} — {len(members)} forms", icon="FILE_BLEND")
+        mop = crow.operator("assetdoctor.merge_duplicate_libraries",
+                            text="Use Selected Paths", icon="AREA_JOIN")
+        mop.group = group_key
+        if not is_exp:
+            continue
+        for idx, item in members:
+            frow = layout.row(align=True)
+            frow.separator(factor=2.0)
+            sop = frow.operator("assetdoctor.dup_lib_select", text="",
+                                icon="RADIOBUT_ON" if item.selected else "RADIOBUT_OFF",
+                                emboss=False)
+            sop.index = idx
+            frow.label(text=item.stored, icon="FILE_BLEND" if item.selected else "NONE")
+
+
+def _draw_absolute_paths(layout, wm) -> None:
+    """Item 7, 2026-06-25: absolute libraries grouped by drive. A
+    same-drive group gets a free-multi-select checkbox per member (any
+    subset can be converted) and ONE "Make Selected Relative" button on
+    its own title line; a cross-drive group is shown read-only — there is
+    no relative path between Windows drives, so nothing is selectable."""
+    coll = wm.assetdoctor_abs_path_members
+    if not len(coll):
+        return
+
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for i, item in enumerate(coll):
+        if item.group not in groups:
+            groups[item.group] = []
+            order.append(item.group)
+        groups[item.group].append((i, item))
+
+    layout.separator()
+    layout.label(text=f"Absolute paths — {len(order)} drive(s)", icon="FILE_FOLDER")
+    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    for group_key in order:
+        members = groups[group_key]
+        fixable = members[0][1].target != ""
+        ckey = f"abspath:{group_key}"
+        is_exp = ckey in expanded
+        crow = layout.row(align=True)
+        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
+                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+        top.key = ckey
+        label = f"{group_key} — {len(members)} librar{'y' if len(members) == 1 else 'ies'}"
+        if fixable:
+            crow.label(text=label, icon="CHECKMARK")
+            crow.operator("assetdoctor.make_selected_relative",
+                          text="Make Selected Relative", icon="FILE_REFRESH")
+        else:
+            crow.label(text=label + "  (different drive — can't be made relative)",
+                      icon="ERROR")
+        if not is_exp:
+            continue
+        for idx, item in members:
+            frow = layout.row(align=True)
+            frow.separator(factor=2.0)
+            if fixable:
                 frow.prop(item, "selected", text="")
-                frow.label(text=item.name, icon="IMAGE_DATA")
-                tgt = frow.row()
-                tgt.alignment = "RIGHT"
-                if item.target:
-                    tgt.label(text=os.path.basename(item.target) or item.target, icon="CHECKMARK")
-                elif item.ambiguous_count > 1:
-                    tgt.label(text=f"{item.ambiguous_count} found elsewhere — pick one",
-                             icon="ERROR")
-                else:
-                    tgt.label(text="no match", icon="QUESTION")
-                frow.operator("assetdoctor.relink_pick_texture", text="",
-                              icon="FILEBROWSER").index = idx
+            else:
+                frow.label(text="", icon="BLANK1")
+            frow.label(text=item.stored)
 
-        self._draw_possible_matches(context, tex, wm)
-        self._draw_linked_missing_textures(context, tex, wm)
 
-    def _draw_linked_missing_textures(self, context, tex, wm):
-        """Read-only companion list: missing textures owned by a LINKED Image —
-        can't be relinked here (the source library owns that file path), grouped
-        by library so the user knows exactly which file to go fix. No checkboxes,
-        no file pickers, no Relink button — purely visibility (see
-        ops.image_relink._gather_linked_missing_images for why this exists)."""
-        rows = list(wm.assetdoctor_linked_missing_imgs)
-        if not rows:
-            return
-        tex.separator()
-        tex.label(text=f"Linked — fix at the source library ({len(rows)})",
-                 icon="LIBRARY_DATA_BROKEN")
+def _draw_path_normalization(layout, wm) -> None:
+    """Path Normalization's interactive checkbox lists — duplicate library
+    paths (radio-select which stored form to keep) + absolute paths (tick
+    which to convert). Relocated under its Analyze row (Group 11 #43,
+    2026-06-26) — Check/Normalize now live on that row; this just keeps the
+    drill-down lists + their per-group action buttons."""
+    if not _feature_has_run(wm, "f7fix"):
+        return
+    _draw_duplicate_library_paths(layout, wm)
+    _draw_absolute_paths(layout, wm)
 
-        LM = "\x03"  # namespaced so these keys don't collide with the lists above
-        expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
-        groups: dict[str, list] = {}
-        for item in rows:
-            groups.setdefault(item.library or "(unknown library)", []).append(item)
 
-        for lib in sorted(groups):
-            members = groups[lib]
-            ckey = LM + lib
-            is_exp = ckey in expanded
-            crow = tex.row(align=True)
-            crow.operator("assetdoctor.tex_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
-            crow.label(text=f"{os.path.basename(lib)}  ({len(members)})", icon="FILE_BLEND")
-            if not is_exp:
-                continue
-            for item in members:
-                frow = tex.row(align=True)
-                frow.separator(factor=2.0)
-                frow.label(text=item.name, icon="IMAGE_DATA")
-                tail = frow.row()
-                tail.alignment = "RIGHT"
-                tail.label(text=item.material or "(no material)")
+def _draw_missing_textures(layout, wm, narrow: bool) -> None:
+    """The unified Missing Textures section: a header summary, then collapsible
+    material/folder categories whose members are per-file rows. All three relink
+    paths STAGE a target (folder-search / category-folder / per-file pick); the
+    single Relink Selected then applies. Relocated into Analyze (Group 11 #46,
+    2026-06-26) — was the last section still stuck in the old Results holding
+    pen, right after its own trigger via the existing _missing_textures_headline
+    helper that already fed the Analyze row's summary."""
+    n_missing = len(wm.assetdoctor_broken_imgs)
+    scanned = wm.assetdoctor_tex_scanned
 
-    # Confidence band -> (icon, short label, rank). Higher rank sorts to the top.
-    _CONF = {"high": ("CHECKMARK", "high", 2),
+    tex = layout.box().column(align=True)
+    headline = _missing_textures_headline(wm, narrow)
+    if headline:
+        tex.label(text=headline, icon="IMAGE_DATA")
+    if not scanned:
+        return
+    if not n_missing:
+        _draw_linked_missing_textures(tex, wm)
+        return
+
+    # Recursive staged search over ALL missing textures (between List and the list).
+    # Exact-basename first; the fuzzy matcher is the FALLBACK for vendor-renamed
+    # files (proposals land in the Possible Matches sub-section below).
+    srow = tex.row(align=True)
+    srow.operator("assetdoctor.search_textures_folder",
+                  text="Search a Folder (Recursive)…", icon="FILEBROWSER")
+    srow.operator("assetdoctor.suggest_fuzzy_matches",
+                  text="Suggest Matches…", icon="ZOOM_SELECTED")
+    # B4 eyedropper: borrow a WORKING material's existing textures as substitute
+    # candidates for the missing ones (matched by name → staged as Possible
+    # Matches). The picker is the standard material datablock field + eyedropper.
+    tex.label(text="Substitute from a material's textures:", icon="EYEDROPPER")
+    mrow = tex.row(align=True)
+    mrow.prop(wm, "assetdoctor_tex_source_material", text="")
+    mrow.operator("assetdoctor.suggest_from_material", text="Suggest",
+                  icon="ZOOM_SELECTED")
+    # …or borrow the texture files another .blend references (offline BAT harvest).
+    tex.operator("assetdoctor.suggest_from_blend",
+                 text="Substitute from Another .blend…", icon="FILE_BLEND")
+    tex.separator()
+    hrow = tex.row(align=True)
+    hrow.label(text="Missing Textures", icon="IMAGE_DATA")
+    hrow.operator("assetdoctor.relink_textures_selected", text="Relink Selected",
+                  icon="FILE_REFRESH")
+
+    # Group by MATERIAL only (the folder view was dropped — user, 2026-06-22).
+    mode = "MATERIAL"
+    expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
+    # Sentinel for items with no folder/material (no group button). NOT "\x00" —
+    # a real bug: Blender's StringProperty round-trips through a C string, which
+    # truncates at the first NUL byte, so storing a lone "\x00" in
+    # assetdoctor_tex_expanded silently came back empty and the "(no material)"
+    # triangle could never stay expanded.
+    UNGROUPED = "\x02"
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for idx, item in enumerate(wm.assetdoctor_broken_imgs):
+        raw = (item.group if mode == "DIR" else item.material) or UNGROUPED
+        if raw not in groups:
+            groups[raw] = []
+            order.append(raw)
+        groups[raw].append((idx, item))
+
+    for raw in sorted(order):
+        members = groups[raw]
+        total = len(members)
+        matched = sum(1 for _i, it in members if it.target)
+        if raw == UNGROUPED:
+            disp = "(no material)" if mode == "MATERIAL" else "(no folder)"
+        else:
+            disp = (os.path.basename(raw.rstrip("/")) or raw) if mode == "DIR" else raw
+        is_exp = raw in expanded
+        crow = tex.row(align=True)
+        crow.operator("assetdoctor.tex_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = raw
+        label = f"{disp}  ({matched} of {total} matched)" if matched else f"{disp}  ({total})"
+        crow.label(text=label,
+                   icon="CHECKMARK" if matched and matched == total else
+                   ("FILE_FOLDER" if mode == "DIR" else "MATERIAL"))
+        # Category-level "point at a folder" (stages targets for the whole group).
+        if raw != UNGROUPED:
+            cop = crow.operator("assetdoctor.point_group_at_folder", text="",
+                                icon="FILE_FOLDER")
+            cop.group_key = raw
+            cop.by = mode
+        if not is_exp:
+            continue
+        # Individual files: checkbox + name + staged target + per-file file picker.
+        for idx, item in members:
+            frow = tex.row(align=True)
+            frow.separator(factor=2.0)
+            frow.prop(item, "selected", text="")
+            frow.label(text=item.name, icon="IMAGE_DATA")
+            tgt = frow.row()
+            tgt.alignment = "RIGHT"
+            if item.target:
+                tgt.label(text=os.path.basename(item.target) or item.target, icon="CHECKMARK")
+            elif item.ambiguous_count > 1:
+                tgt.label(text=f"{item.ambiguous_count} found elsewhere — pick one",
+                         icon="ERROR")
+            else:
+                tgt.label(text="no match", icon="QUESTION")
+            frow.operator("assetdoctor.relink_pick_texture", text="",
+                          icon="FILEBROWSER").index = idx
+
+    _draw_possible_matches(tex, wm)
+    _draw_linked_missing_textures(tex, wm)
+
+
+def _draw_linked_missing_textures(tex, wm) -> None:
+    """Read-only companion list: missing textures owned by a LINKED Image —
+    can't be relinked here (the source library owns that file path), grouped
+    by library so the user knows exactly which file to go fix. No checkboxes,
+    no file pickers, no Relink button — purely visibility (see
+    ops.image_relink._gather_linked_missing_images for why this exists)."""
+    rows = list(wm.assetdoctor_linked_missing_imgs)
+    if not rows:
+        return
+    tex.separator()
+    tex.label(text=f"Linked — fix at the source library ({len(rows)})",
+             icon="LIBRARY_DATA_BROKEN")
+
+    LM = "\x03"  # namespaced so these keys don't collide with the lists above
+    expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
+    groups: dict[str, list] = {}
+    for item in rows:
+        groups.setdefault(item.library or "(unknown library)", []).append(item)
+
+    for lib in sorted(groups):
+        members = groups[lib]
+        ckey = LM + lib
+        is_exp = ckey in expanded
+        crow = tex.row(align=True)
+        crow.operator("assetdoctor.tex_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
+        crow.label(text=f"{os.path.basename(lib)}  ({len(members)})", icon="FILE_BLEND")
+        if not is_exp:
+            continue
+        for item in members:
+            frow = tex.row(align=True)
+            frow.separator(factor=2.0)
+            frow.label(text=item.name, icon="IMAGE_DATA")
+            tail = frow.row()
+            tail.alignment = "RIGHT"
+            tail.label(text=item.material or "(no material)")
+
+
+# Confidence band -> (icon, short label, rank). Higher rank sorts to the top.
+_TEX_CONF = {"high": ("CHECKMARK", "high", 2),
              "medium": ("QUESTION", "med", 1),
              "low": ("DOT", "low", 0)}
 
-    # Below this name-token overlap, a duplicate family's material looks mis-attributed
-    # (e.g. a lightBlue texture under a brown material) → flag it + offer the eyedropper.
-    _DUP_MISMATCH_AFFINITY = 0.5
 
-    def _draw_possible_matches(self, context, tex, wm):
-        """F6 step 4 — the FUZZY proposals (a vendor-renamed file the exact search
-        couldn't place). A second list grouped by material, COLLAPSIBLE and collapsed
-        by default (so a long Suggest-Matches result doesn't bury the panel), with
-        materials ordered by their best confidence (high first). Accept one row, a
-        whole material, or all; accepting moves the proposal into the Missing Textures
-        list above (ticked)."""
-        proposals = [(idx, item) for idx, item in enumerate(wm.assetdoctor_broken_imgs)
-                     if item.proposal and not item.target]
-        if not proposals:
-            return
+def _draw_possible_matches(tex, wm) -> None:
+    """F6 step 4 — the FUZZY proposals (a vendor-renamed file the exact search
+    couldn't place). A second list grouped by material, COLLAPSIBLE and collapsed
+    by default (so a long Suggest-Matches result doesn't bury the panel), with
+    materials ordered by their best confidence (high first). Accept one row, a
+    whole material, or all; accepting moves the proposal into the Missing Textures
+    list above (ticked)."""
+    proposals = [(idx, item) for idx, item in enumerate(wm.assetdoctor_broken_imgs)
+                 if item.proposal and not item.target]
+    if not proposals:
+        return
 
-        tex.separator()
-        hrow = tex.row(align=True)
-        hrow.label(text=f"Possible Matches — {len(proposals)}", icon="ZOOM_SELECTED")
-        hrow.operator("assetdoctor.accept_all_matches", text="Accept All", icon="CHECKMARK")
-        tex.label(text="Name-similarity guesses — review before accepting.", icon="INFO")
+    tex.separator()
+    hrow = tex.row(align=True)
+    hrow.label(text=f"Possible Matches — {len(proposals)}", icon="ZOOM_SELECTED")
+    hrow.operator("assetdoctor.accept_all_matches", text="Accept All", icon="CHECKMARK")
+    tex.label(text="Name-similarity guesses — review before accepting.", icon="INFO")
 
-        # Category keys are namespaced ("\x01" + material) so they don't collide with
-        # the Missing list's material keys in the shared expanded-set.
-        PM = "\x01"
-        expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
+    # Category keys are namespaced ("\x01" + material) so they don't collide with
+    # the Missing list's material keys in the shared expanded-set.
+    PM = "\x01"
+    expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
 
-        groups: dict[str, list] = {}
-        for idx, item in proposals:
-            groups.setdefault(item.material or "(no material)", []).append((idx, item))
+    groups: dict[str, list] = {}
+    for idx, item in proposals:
+        groups.setdefault(item.material or "(no material)", []).append((idx, item))
 
-        def conf_rank(it):
-            return self._CONF.get(it.proposal_confidence, ("DOT", "?", 0))[2]
+    def conf_rank(it):
+        return _TEX_CONF.get(it.proposal_confidence, ("DOT", "?", 0))[2]
 
-        def cat_rank(members):
-            return max(conf_rank(it) for _i, it in members)
+    def cat_rank(members):
+        return max(conf_rank(it) for _i, it in members)
 
-        # Materials ordered by best confidence (high→low), then name.
-        for key in sorted(groups, key=lambda k: (-cat_rank(groups[k]), k.lower())):
-            members = sorted(groups[key], key=lambda pair: -conf_rank(pair[1]))
-            ckey = PM + key
-            is_exp = ckey in expanded
-            best_lbl = self._CONF.get(
-                {2: "high", 1: "medium", 0: "low"}[cat_rank(members)], ("", "?", 0))[1]
-            crow = tex.row(align=True)
-            crow.operator("assetdoctor.tex_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
-            crow.label(text=f"{key}  ({len(members)}, {best_lbl})", icon="MATERIAL")
-            # Material-level accept (the whole rolled-up group) — CHECKMARK marks the
-            # group action, distinct from the single-row IMPORT below.
-            crow.operator("assetdoctor.accept_material_matches", text="",
-                          icon="CHECKMARK").material = key
-            if not is_exp:
-                continue
-            for idx, item in members:
-                frow = tex.row(align=True)
-                frow.separator(factor=2.0)
-                frow.label(text=item.name, icon="IMAGE_DATA")
-                prop = frow.row()
-                prop.alignment = "RIGHT"
-                icon, conf, _r = self._CONF.get(item.proposal_confidence, ("DOT", "?", 0))
-                tag = f"{conf}, diff res" if item.proposal_res_mismatch else conf
-                prop.label(text=f"{os.path.basename(item.proposal)}  ({tag})", icon=icon)
-                frow.operator("assetdoctor.accept_match", text="",
-                              icon="IMPORT").index = idx
-
-    # Reconnect confidence -> (icon, short label). "none" shows neither — the row
-    # just offers the source's full candidate list with no particular guess.
-    # "transitive" is set by ops.datablock_reconnect.reconnect_selected AFTER an
-    # apply attempt found the chosen candidate was itself unresolved further
-    # upstream — distinct from "none" (never tried) so the user can tell "this
-    # is genuinely stuck, the library itself doesn't have it either" from
-    # "just hasn't been matched yet". "external" (2026-06-25, real-file
-    # diagnosis) is set when the remap call reports success but the
-    # placeholder still has real users — those users live inside data that is
-    # ITSELF linked from another library, so the pointer can't actually be
-    # rewritten from this file; the fix has to happen by opening that OTHER
-    # file directly. Distinct from "transitive" — there the SOURCE library
-    # doesn't have the data at all; here it does, the fix just can't be
-    # applied from here.
-    _RECONNECT_CONF = {
-        "exact": ("CHECKMARK", "exact"),
-        "numbered": ("FILE_REFRESH", "renamed"),
-        "fuzzy": ("QUESTION", "fuzzy"),
-        "transitive": ("ERROR", "missing upstream too"),
-        "external": ("ERROR", "fix at the source library"),
-        "none": ("BLANK1", ""),
-    }
-
-    def _draw_duplicate_library_paths(self, context, layout, wm):
-        """Item 6, 2026-06-25: the duplicate-library-path groups Path
-        normalization's "Check" finds — the SAME real file reached via 2+
-        stored path forms (separate Library ID blocks in this file). Each
-        form is its own radio-style checkbox row (only one enabled per
-        group — Blender has no native radio-checkbox, so a toggle operator
-        enforces it); a per-group "Use Selected Paths" button merges
-        everything the OTHER form(s) provide onto the ticked one."""
-        coll = wm.assetdoctor_dup_lib_members
-        if not len(coll):
-            return
-
-        groups: dict[str, list] = {}
-        order: list[str] = []
-        for i, item in enumerate(coll):
-            if item.group not in groups:
-                groups[item.group] = []
-                order.append(item.group)
-            groups[item.group].append((i, item))
-
-        layout.separator()
-        hrow = layout.row(align=True)
-        hrow.label(text=f"Duplicate library paths — {len(order)} group(s)",
-                  icon="LIBRARY_DATA_BROKEN")
-        expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
-        for group_key in order:
-            members = groups[group_key]
-            ckey = f"duplib:{group_key}"
-            is_exp = ckey in expanded
-            fname = os.path.basename(members[0][1].stored.rstrip("/\\")) or members[0][1].stored
-            crow = layout.row(align=True)
-            top = crow.operator("assetdoctor.toggle_inline_detail", text="",
-                                icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-            top.key = ckey
-            crow.label(text=f"{fname} — {len(members)} forms", icon="FILE_BLEND")
-            mop = crow.operator("assetdoctor.merge_duplicate_libraries",
-                                text="Use Selected Paths", icon="AREA_JOIN")
-            mop.group = group_key
-            if not is_exp:
-                continue
-            for idx, item in members:
-                frow = layout.row(align=True)
-                frow.separator(factor=2.0)
-                sop = frow.operator("assetdoctor.dup_lib_select", text="",
-                                    icon="RADIOBUT_ON" if item.selected else "RADIOBUT_OFF",
-                                    emboss=False)
-                sop.index = idx
-                frow.label(text=item.stored, icon="FILE_BLEND" if item.selected else "NONE")
-
-    def _draw_absolute_paths(self, context, layout, wm):
-        """Item 7, 2026-06-25: absolute libraries grouped by drive. A
-        same-drive group gets a free-multi-select checkbox per member (any
-        subset can be converted) and ONE "Make Selected Relative" button on
-        its own title line; a cross-drive group is shown read-only — there is
-        no relative path between Windows drives, so nothing is selectable."""
-        coll = wm.assetdoctor_abs_path_members
-        if not len(coll):
-            return
-
-        groups: dict[str, list] = {}
-        order: list[str] = []
-        for i, item in enumerate(coll):
-            if item.group not in groups:
-                groups[item.group] = []
-                order.append(item.group)
-            groups[item.group].append((i, item))
-
-        layout.separator()
-        layout.label(text=f"Absolute paths — {len(order)} drive(s)", icon="FILE_FOLDER")
-        expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
-        for group_key in order:
-            members = groups[group_key]
-            fixable = members[0][1].target != ""
-            ckey = f"abspath:{group_key}"
-            is_exp = ckey in expanded
-            crow = layout.row(align=True)
-            top = crow.operator("assetdoctor.toggle_inline_detail", text="",
-                                icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-            top.key = ckey
-            label = f"{group_key} — {len(members)} librar{'y' if len(members) == 1 else 'ies'}"
-            if fixable:
-                crow.label(text=label, icon="CHECKMARK")
-                crow.operator("assetdoctor.make_selected_relative",
-                              text="Make Selected Relative", icon="FILE_REFRESH")
-            else:
-                crow.label(text=label + "  (different drive — can't be made relative)",
-                          icon="ERROR")
-            if not is_exp:
-                continue
-            for idx, item in members:
-                frow = layout.row(align=True)
-                frow.separator(factor=2.0)
-                if fixable:
-                    frow.prop(item, "selected", text="")
-                else:
-                    frow.label(text="", icon="BLANK1")
-                frow.label(text=item.stored)
-
-    def _draw_reconnect(self, context, layout, wm):
-        """Batch C #2 — reconnect missing data-blocks. Rows group by their broken/
-        renamed source LIBRARY (the natural unit — one library's blocks usually all
-        need the same fix); a group-level file picker peeks a chosen source .blend
-        (never loads it) and suggests the closest name per row (core.reconnect);
-        Reconnect Selected links the ticked rows in and user_remaps the placeholders.
-        Mirrors the Duplicate Materials/Textures section's grouped shape."""
-        rows = wm.assetdoctor_missing_blocks
-        scanned = wm.assetdoctor_missing_scanned
-
-        box = layout.box().column(align=True)
-        headline = _reconnect_headline(wm)
-        if headline:
-            box.label(text=headline, icon="LIBRARY_DATA_OVERRIDE")
-
-        # Its "Find Reconnectable Data-blocks" trigger now lives in the Analyze
-        # sub-panel (Phase 3a, 2026-06-25 — also absorbed the old, redundant Find
-        # Missing Data-blocks report, the exact same underlying scan); this box
-        # keeps the results list + Reconnect Selected.
-        if scanned and len(rows):
-            box.operator("assetdoctor.reconnect_selected",
-                         text="Reconnect Selected (Backup)", icon="LINKED")
-        if not (scanned and len(rows)):
-            return
-
-        expanded = set(filter(None, wm.assetdoctor_missing_expanded.split("\n")))
-        groups: dict[str, list] = {}
-        order: list[str] = []
-        for item in rows:
-            if item.library not in groups:
-                groups[item.library] = []
-                order.append(item.library)
-            groups[item.library].append(item)
-
-        for library in sorted(order, key=lambda lib: (-len(groups[lib]), lib.lower())):
-            members = groups[library]
-            matched = sum(1 for m in members
-                         if m.confidence not in ("none", "transitive", "external"))
-            stuck = sum(1 for m in members if m.confidence == "transitive")
-            external = sum(1 for m in members if m.confidence == "external")
-            lib_found = members[0].library_found
-            has_source = bool(members[0].source_blend)
-            is_exp = library in expanded
-            crow = box.row(align=True)
-            crow.operator("assetdoctor.reconnect_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = library
-            disp = library or "(unknown library)"
-            bits = []
-            if matched:
-                bits.append(f"{matched} suggested")
-            if stuck:
-                bits.append(f"{stuck} stuck (missing upstream too)")
-            if external:
-                bits.append(f"{external} fix at the source library")
-            label = f"{disp}  ({', '.join(bits)})" if bits else f"{disp}  ({len(members)})"
-            # ERROR icon when the group's OWN library can't be found anywhere in
-            # this session AND no source has been picked yet — distinguishes
-            # "genuinely needs a manual file pick" from the normal broken-link
-            # icon (user report 2026-06-24: these looked identical before).
-            crow.label(text=label,
-                      icon="LIBRARY_DATA_BROKEN" if (lib_found or has_source) else "ERROR")
-            pick = crow.operator("assetdoctor.reconnect_pick_source", text="",
-                                 icon="FILEBROWSER")
-            pick.library = library
-            if not is_exp:
-                continue
-            source = members[0].source_blend
-            srow = box.row(align=True)
-            srow.separator(factor=2.0)
-            if source:
-                srow.label(text=os.path.basename(source), icon="FILE_BLEND")
-            elif lib_found:
-                srow.label(text="no source picked yet — click the folder icon above",
-                          icon="QUESTION")
-            else:
-                srow.label(text="library not found anywhere in this session — pick a "
-                          "source .blend manually", icon="ERROR")
-            for item in members:
-                frow = box.row(align=True)
-                frow.separator(factor=2.0)
-                frow.prop(item, "selected", text="")
-                frow.label(text=f"{item.kind}: {item.name}", icon="LIBRARY_DATA_BROKEN")
-                icon, conf_label = self._RECONNECT_CONF.get(item.confidence, ("BLANK1", ""))
-                if conf_label:
-                    cf = frow.row()
-                    cf.alignment = "RIGHT"
-                    cf.label(text=conf_label, icon=icon)
-                frow.prop(item, "target", text="")
-
-    def _draw_examine_library(self, context, layout, wm):
-        """Examine Library: list everything the current file links from a chosen
-        (working) library and offer to re-source it from memory first — local,
-        then another already-loaded library — falling back to Make Local or a
-        per-row manual file+item pick. Grouped by KIND, mirrors the Duplicate
-        Data-blocks section's shape."""
-        rows = wm.assetdoctor_examine_rows
-        scanned = wm.assetdoctor_examine_scanned
-
-        box = layout.box().column(align=True)
-        box.label(text="Examine Library", icon="LIBRARY_DATA_DIRECT")
-        box.label(text="Retarget everything a library provides to your local file or "
-                  "another library (e.g. to break a circular reference).", icon="INFO")
-        pick = box.row(align=True)
-        pick.prop_search(wm, "assetdoctor_examine_library_pick", bpy.data, "libraries", text="")
-        pick.operator("assetdoctor.examine_library", text="Examine", icon="VIEWZOOM")
-
-        if scanned and len(rows):
-            staged = sum(1 for r in rows if r.selected)
-            suggested = sum(1 for r in rows if r.suggested_kind != "none")
-            box.label(text=f"{len(rows)} data-block(s) from {wm.assetdoctor_examine_library} — "
-                      f"{suggested} in-memory match(es), {staged} staged",
-                      icon="LIBRARY_DATA_OVERRIDE")
-            box.operator("assetdoctor.examine_apply_selected",
-                         text="Apply Selected (Backup)", icon="LINKED")
-        elif scanned:
-            box.label(text="✓ Nothing currently links from that library", icon="CHECKMARK")
-        if not (scanned and len(rows)):
-            return
-
-        expanded = set(filter(None, wm.assetdoctor_examine_expanded.split("\n")))
-        groups: dict[str, list] = {}
-        for idx, item in enumerate(rows):
-            groups.setdefault(item.kind, []).append((idx, item))
-
-        for kind in sorted(groups, key=str.lower):
-            members = groups[kind]
-            is_exp = kind in expanded
-            crow = box.row(align=True)
-            crow.operator("assetdoctor.examine_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = kind
-            crow.label(text=f"{kind}  ({len(members)})", icon="LIBRARY_DATA_DIRECT")
-            if not is_exp:
-                continue
-            for idx, item in members:
-                frow = box.row(align=True)
-                frow.separator(factor=2.0)
-                frow.prop(item, "selected", text="")
-                frow.label(text=item.name, icon="LIBRARY_DATA_DIRECT")
-                if item.make_local:
-                    pass  # the Make Local checkbox below already says it all
-                elif item.use_suggested and item.suggested_kind == "local":
-                    s = frow.row()
-                    s.alignment = "RIGHT"
-                    text, icon = _graph_match_suffix(f"local: {item.suggested_name}", item.graph_match)
-                    s.label(text=text, icon=icon)
-                elif item.use_suggested and item.suggested_kind == "library":
-                    s = frow.row()
-                    s.alignment = "RIGHT"
-                    base = (f"{os.path.basename(item.suggested_library)}: "
-                            f"{item.suggested_name}")
-                    text, icon = _graph_match_suffix(base, item.graph_match)
-                    s.label(text=text, icon=icon)
-                elif item.source_blend:
-                    frow.prop(item, "target", text="")
-                else:
-                    s = frow.row()
-                    s.alignment = "RIGHT"
-                    s.label(text="no in-memory match", icon="QUESTION")
-                frow.prop(item, "make_local", text="", icon="FILE_TICK")
-                frow.operator("assetdoctor.examine_pick_source", text="",
-                              icon="FILEBROWSER").index = idx
-
-    def _draw_duplicate_textures(self, context, layout, wm):
-        """F6 Layer 2/3 — the redesigned Duplicate Materials/Textures section: an
-        inline summary header, top Find/Merge/Export, then collapsible material
-        groups whose rows are content-identical merge families, each with an
-        include checkbox + a keeper dropdown (pick which datablock survives).
-        Mirrors the Missing section; no separate report (it's still stashed for
-        the Export button). (History: a separate fast/name-only "Find .NNN" scan
-        was removed 2026-06-24 — confirmed redundant with Find Content Dups,
-        which uses the identical fingerprint over a strict superset of images.)"""
-        scanned = wm.assetdoctor_dup_scanned
-        families = wm.assetdoctor_dup_families
-        narrow = bool(context.region) and context.region.width < 320
-
-        dup = layout.box().column(align=True)
-        conflicts = wm.assetdoctor_dup_conflicts
-        # Summary header (the visible result); the Analyze panel's "Find
-        # Duplicate Content" button shows the same line inline (Phase 3c).
-        headline = _duplicate_textures_headline(wm, narrow)
-        if headline:
-            dup.label(text=headline, icon="IMAGE_DATA")
-
-        # Its "Find Duplicate Content" + "Find Resolution Variants" triggers now
-        # live in the Analyze sub-panel (Phase 3a, 2026-06-25); this box keeps the
-        # results list + Merge Selected/Export.
-        if scanned and len(families):
-            brow = dup.row(align=True)
-            brow.operator("assetdoctor.merge_dup_selected",
-                          text="Merge Selected (Backup)", icon="AREA_JOIN")
-            brow.operator("assetdoctor.export_report", text="",
-                          icon="EXPORT").feature = "f6dup"
-        if not (scanned and (len(families) or conflicts)):
-            return
-
-        from ..core.imagematch import name_affinity
-
-        def _eff_mat(row):
-            return (row.material_override.name if row.material_override
-                    else (row.material or "(no material)"))
-
-        def _mismatch(row):
-            # An "apparent mismatch" = the (effective) material's name barely overlaps
-            # the texture's name, e.g. a lightBlue texture under a brown material.
-            eff = _eff_mat(row)
-            return eff != "(no material)" and name_affinity(row.name, eff) < self._DUP_MISMATCH_AFFINITY
-
-        expanded = set(filter(None, wm.assetdoctor_dup_expanded.split("\n")))
-        groups: dict[str, list] = {}
-        for row in families:
-            groups.setdefault(_eff_mat(row), []).append(row)
-
-        for key in sorted(groups, key=str.lower):
-            members = groups[key]
-            removable_here = sum(r.removable for r in members)
-            mism = [r for r in members if _mismatch(r)]
-            is_exp = key in expanded
-            crow = dup.row(align=True)
-            crow.operator("assetdoctor.dup_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = key
-            # Alert only the label (not the whole row) when some textures here don't
-            # look like they belong to this material.
-            lab = crow.row()
-            lab.alert = bool(mism)
-            suffix = f", ⚠{len(mism)} mismatch" if mism else ""
-            lab.label(text=f"{key}  ({len(members)} family, −{removable_here}{suffix})",
-                      icon="ERROR" if mism else "MATERIAL")
-            # Master keeper for the whole material (sets every family's keeper by a
-            # policy) — the material-level counterpart to the per-family dropdowns.
-            crow.operator("assetdoctor.dup_material_keeper", text="",
-                          icon="DOWNARROW_HLT").material = key
-            if not is_exp:
-                continue
-            for row in members:
-                bad = _mismatch(row)
-                frow = dup.row(align=True)
-                frow.separator(factor=2.0)
-                frow.prop(row, "selected", text="")
-                name = frow.row()
-                name.alert = bad
-                name.label(text=f"{row.name}  (−{row.removable})",
-                           icon="ERROR" if bad else "IMAGE_DATA")
-                # Alternate material picker (eyedropper): re-home a mis-attributed
-                # family under the correct material. Shown when it looks wrong (or was
-                # already overridden). Organizational only — doesn't rewire nodes.
-                if bad or row.material_override:
-                    frow.prop(row, "material_override", text="")
-                keep = frow.row()
-                keep.alignment = "RIGHT"
-                keep.label(text="keep", icon="PINNED")
-                keep.prop(row, "keeper", text="")
-
-        # Families with differing content — shown (collapsible) but never merged.
-        conflict_lines = [ln for ln in wm.assetdoctor_dup_conflicts_text.split("\n") if ln]
-        if conflict_lines:
-            ckey = "\x02conflicts"
-            is_exp = ckey in expanded
-            crow = dup.row(align=True)
-            crow.operator("assetdoctor.dup_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
-            crow.label(text=f"Different content — kept separate ({len(conflict_lines)})",
-                       icon="QUESTION")
-            if is_exp:
-                for ln in conflict_lines:
-                    r = dup.row(align=True)
-                    r.separator(factor=2.0)
-                    r.label(text=ln, icon="DOT")
+    # Materials ordered by best confidence (high→low), then name.
+    for key in sorted(groups, key=lambda k: (-cat_rank(groups[k]), k.lower())):
+        members = sorted(groups[key], key=lambda pair: -conf_rank(pair[1]))
+        ckey = PM + key
+        is_exp = ckey in expanded
+        best_lbl = _TEX_CONF.get(
+            {2: "high", 1: "medium", 0: "low"}[cat_rank(members)], ("", "?", 0))[1]
+        crow = tex.row(align=True)
+        crow.operator("assetdoctor.tex_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
+        crow.label(text=f"{key}  ({len(members)}, {best_lbl})", icon="MATERIAL")
+        # Material-level accept (the whole rolled-up group) — CHECKMARK marks the
+        # group action, distinct from the single-row IMPORT below.
+        crow.operator("assetdoctor.accept_material_matches", text="",
+                      icon="CHECKMARK").material = key
+        if not is_exp:
+            continue
+        for idx, item in members:
+            frow = tex.row(align=True)
+            frow.separator(factor=2.0)
+            frow.label(text=item.name, icon="IMAGE_DATA")
+            prop = frow.row()
+            prop.alignment = "RIGHT"
+            icon, conf, _r = _TEX_CONF.get(item.proposal_confidence, ("DOT", "?", 0))
+            tag = f"{conf}, diff res" if item.proposal_res_mismatch else conf
+            prop.label(text=f"{os.path.basename(item.proposal)}  ({tag})", icon=icon)
+            frow.operator("assetdoctor.accept_match", text="",
+                          icon="IMPORT").index = idx

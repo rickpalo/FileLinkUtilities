@@ -73,16 +73,15 @@ from .image_dedup import (
 from .progress import ASSETDOCTOR_OT_toggle_pause, ASSETDOCTOR_OT_request_cancel
 from .make_local import ASSETDOCTOR_OT_make_local
 from .material_dedup import ASSETDOCTOR_OT_material_dedup, ASSETDOCTOR_OT_merge_material_selected
-from .orphans import ASSETDOCTOR_OT_scan_orphans
-from .instance_dedup import ASSETDOCTOR_OT_instance_geometry
+from .orphans import ASSETDOCTOR_OT_purge_orphans_selected, ASSETDOCTOR_OT_scan_orphans
+from .instance_dedup import (
+    ASSETDOCTOR_OT_instance_geometry, ASSETDOCTOR_OT_instance_geometry_selected,
+)
 from .resource import ASSETDOCTOR_OT_analyze_resources, ASSETDOCTOR_OT_profile_render
 from .dryrun_render import ASSETDOCTOR_OT_dryrun_render
 from .open_preferences import ASSETDOCTOR_OT_open_preferences
 from .report_store import (
     ASSETDOCTOR_OT_export_report,
-    ASSETDOCTOR_OT_report_clear,
-    ASSETDOCTOR_OT_report_expand_all,
-    ASSETDOCTOR_OT_report_select,
     ASSETDOCTOR_OT_report_toggle,
     ASSETDOCTOR_OT_row_label,
     ASSETDOCTOR_OT_select_datablock,
@@ -147,15 +146,14 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_material_dedup,
     ASSETDOCTOR_OT_merge_material_selected,
     ASSETDOCTOR_OT_scan_orphans,
+    ASSETDOCTOR_OT_purge_orphans_selected,
     ASSETDOCTOR_OT_instance_geometry,
+    ASSETDOCTOR_OT_instance_geometry_selected,
     ASSETDOCTOR_OT_analyze_resources,
     ASSETDOCTOR_OT_profile_render,
     ASSETDOCTOR_OT_dryrun_render,
     ASSETDOCTOR_OT_open_preferences,
     ASSETDOCTOR_OT_report_toggle,
-    ASSETDOCTOR_OT_report_expand_all,
-    ASSETDOCTOR_OT_report_select,
-    ASSETDOCTOR_OT_report_clear,
     ASSETDOCTOR_OT_row_label,
     ASSETDOCTOR_OT_select_datablock,
     ASSETDOCTOR_OT_show_linked_from,

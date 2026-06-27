@@ -39,6 +39,8 @@ STEPS: tuple[AnalyzeStep, ...] = (
     AnalyzeStep("find_broken_links", "Find Broken Library Links", "assetdoctor.scan_broken_links", {}),
     AnalyzeStep("find_reconnectable", "Find Reconnectable Data-blocks",
                 "assetdoctor.scan_reconnect_targets", {}),
+    AnalyzeStep("check_library_paths", "Check Library Paths",
+                "assetdoctor.normalize_library_paths", {"apply": False}),
     AnalyzeStep("find_missing_textures", "Find Missing Textures",
                 "assetdoctor.scan_broken_textures", {}),
     AnalyzeStep("find_duplicate_materials", "Find Duplicate Materials",

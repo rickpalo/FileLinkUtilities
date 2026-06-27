@@ -92,12 +92,11 @@ class ASSETDOCTOR_OT_scan_all_missing(bpy.types.Operator):
 
 class ASSETDOCTOR_OT_analyze_overrides(ModalProgressMixin, bpy.types.Operator):
     bl_idname = "assetdoctor.analyze_overrides"
-    bl_label = "Analyze Overrides & Duplicates"
+    bl_label = "Analyze Overrides"
     bl_description = (
-        "Scan the CURRENT file for duplicate datablocks (the .NNN families that "
-        "bloat memory), count linked/override datablocks per library, and detect "
-        "datablock dependency loops (the cause of lib.override.resync spam). "
-        "Read-only"
+        "Scan the CURRENT file: count linked/override datablocks per library and "
+        "detect datablock dependency loops (the cause of lib.override.resync "
+        "spam). Read-only"
     )
 
     def run_steps(self, context):
@@ -115,11 +114,6 @@ class ASSETDOCTOR_OT_analyze_overrides(ModalProgressMixin, bpy.types.Operator):
                 continue
             blocks = list(coll)
             extract.totals[label] = len(blocks)
-            # "Type/Name" (via _node_id), not bare names, so duplicate_family members
-            # carry a real datablock ref for click-to-select (core.tree._parse_ref).
-            fams = dg.duplicate_families([_node_id(b) for b in blocks])
-            if fams:
-                extract.duplicates[label] = fams
             for b in blocks:
                 lib = getattr(b, "library", None)
                 ovr = getattr(b, "override_library", None)
@@ -159,6 +153,5 @@ class ASSETDOCTOR_OT_analyze_overrides(ModalProgressMixin, bpy.types.Operator):
         label = bpy.path.basename(bpy.data.filepath) or "current file"
         report = dg.build_live_report(extract, label)
         stash_report(context, report, "f7live")
-        yield 1.0, (f"Done: {len(extract.loops)} loop(s), "
-                    f"~{dg.wasted_copies(extract.duplicates)} duplicate(s)")
+        yield 1.0, f"Done: {len(extract.loops)} loop(s)"
         self.report({"INFO"}, f"Analyzed {label}: {len(extract.loops)} dependency loop(s)")

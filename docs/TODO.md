@@ -76,7 +76,8 @@ never in question once verified three ways.
    file "direct" vs "indirect (N hops via X)" — answers "Outliner shows 9, report shows 15."~~
 2. ~~"Show what's linked from here" action on indirect File Map rows (offline BAT read of the
    PARENT file via `datablocks_from_library`, since indirect libraries aren't real
-   `bpy.data.libraries` entries and can't click-to-select today).~~
+   `bpy.data.libraries` entries and can't click-to-select today).~~ **Built, but live-tested
+   2026-06-26 and found unreliable — see Group 10 item #39, re-open before trusting this.**
 3. ~~Circular-reference findings: nest the actual datablocks crossing each direction of the loop
    (same primitive) instead of just repeating the file names — needs a `circular_link`-specific
    branch in `build_dependency_tree`'s `cat_node`.~~
@@ -93,30 +94,29 @@ never in question once verified three ways.
    its own design + live verification pass. Not started.
 
 ### Group 2 — Duplicate data-blocks report shape (`core/datablock_graph.py` + `core/tree.py`)
-6. Group the "Duplicate data-blocks (.NNN copies)" category by TYPE, collapsed by default
-   (today one flat list mixes Material/Action/Object families together).
-7. **Gated — do NOT build without a fresh discussion:** the report overclaims for types with no
-   real content fingerprint (e.g. "Collection: awning ×8" when two members' meshes already
-   differ post-sim-bake). User explicitly rejected a reword-as-"unverified" fix; wants real
-   content verification instead. No code (reword OR deep-verify) without checking direction
-   with the user first. Explicitly was deferred until the Phase 4 investigation finished — that
-   investigation is now resolved (see above), so this is unblocked to discuss whenever picked up.
+6. **MOOT @ v0.2.76 (2026-06-26) — the category this referred to no longer exists.** Was: group
+   the "Duplicate data-blocks (.NNN copies)" category by TYPE, collapsed by default. Resolved by
+   REMOVAL instead (see item 7 below) — f7live's `.NNN`-family detection is gone entirely, so
+   there's nothing left to group. "Find Duplicate Data-blocks" (`ops/datablock_dup.py`), the
+   surviving home for this capability, already groups by type.
+7. **RESOLVED @ v0.2.76 (2026-06-26) — see the full writeup at the "RESOLVED" entry further down
+   this file (search "f7live's").** Was gated pending a fresh discussion; discussed as part of
+   Group 10 item #38 (2026-06-26) — final call was REMOVE the `.NNN`-family detection from
+   "Audit This File" (f7live) entirely rather than verify it deeper, since it's redundant with
+   (and less careful than) "Find Duplicate Data-blocks," and Image — the one type where it's
+   usually a real duplicate — already has its own content-hash-verified tool.
 
-### Group 3 — Phase 3 panel restructuring (`ui/panels.py`, the biggest remaining chunk, needs a
-### before/after design sign-off before any code, same process as the original Phase 3a)
-8. **"Reporting & Recommendations" section** — still just the generic Reports selector inside
-   the `ASSETDOCTOR_PT_results` holding pen.
-9. **"Cleanup & Fixes" section** — every Apply/Merge/Relink/Reconnect/Normalize button is still
-   scattered across its original box. User already specified a risk-ordering for whenever this
-   is built: cheap/reversible first (Relink Selected, Reconnect Selected, Normalize), bulk/
-   structural last (Make Local, Dedup & Remap, Instance & Merge, Scan + Purge Orphans). Standing
-   instruction: once Make Local gets a real Apply button here, delete the legacy panel outright.
-10. **"Info & Utilities" section** — Utilities panel exists but isn't renamed/relocated into it;
-    doc-help icon still in the panel header.
+### Group 3 — Phase 3 panel restructuring (`ui/panels.py`) — **items 8-10 FULLY SCOPED 2026-06-26,
+### see Group 11 below for the concrete phased plan; kept here only as the original index entries.**
+8. **"Reporting & Recommendations" section** — see Group 11 Phase E.
+9. **"Cleanup & Fixes" section** — see Group 11 Phases B/C/D.
+10. **"Info & Utilities" section** — see Group 11 Phase A.
 11. Progress-bar position — genuine Blender layout constraint (can't inject parent content
     between sibling child panels); 3 real options identified, needs the user's pick before code.
+    NOT covered by Group 11 — still open, pick up separately.
 12. UIList virtualization for Missing/Duplicate Textures, Datablock Reconnect, Examine Library
     (still manually-drawn boxes, not scrollable `template_list`s) — confirmed still true by code.
+    NOT covered by Group 11 — still open, pick up separately.
 
 ### Group 4 — Phase 4 Flatten UI polish (`ui/panels.py` + `ops/linkchain.py`)
 13. Per-character checkboxes (select which to flatten, default all checked) + a separate
@@ -182,6 +182,248 @@ never in question once verified three ways.
     (list materials by shader, missing node links, empty material slots) were ever built anywhere
     else under a different name, or are still genuinely missing.
 
+### Group 10 — v0.2.72 live-test feedback (2026-06-26, real production file; #34 FIXED @ v0.2.73,
+### #35 FIXED @ v0.2.74, #39 PARTIALLY fixed @ v0.2.75, all below — #36 checked/not-a-bug, #37/#38/
+### #40/#41 still NOT investigated/built (need a design discussion first) — documented per the
+### user's explicit "don't begin work on any" instruction; READ THIS GROUP FIRST next session,
+### ahead of Group 2).
+34. ~~**REGRESSION, top priority — the "Analyze All" button no longer works.**~~ **ROOT-CAUSED AND
+    FIXED @ v0.2.73 (2026-06-26).** Turned out NOT to need a live repro at all — `EXEC_DEFAULT`
+    bypasses `invoke()`/the modal event loop entirely and calls `execute()` directly (no window
+    needed), so it WAS exercisable headlessly; confirmed via the project's standard
+    diagnostic-probe pattern ([[env-blender-verification]]). Root cause: `ops/analyze_all.py`'s
+    `ASSETDOCTOR_OT_find_duplicates` (added 2026-06-25) subclassed the ALREADY-REGISTERED concrete
+    `ASSETDOCTOR_OT_analyze_all` operator directly. Confirmed via an isolated repro (two toy
+    operators, same pattern) that once Blender registers a SECOND `bpy.types.Operator` subclassing
+    an already-registered concrete Operator, the RNA→python-class binding for the FIRST one breaks
+    — `bpy.ops.assetdoctor.analyze_all(...)` kept returning `{'FINISHED'}` but silently ran ZERO of
+    its own code (no steps populated, no report stashed), exactly matching the live symptom ("the
+    per-step status icon never moves"). `bpy.rna` printed a console warning
+    (`unable to get Python class for RNA struct 'ASSETDOCTOR_OT_analyze_all'`) — the actual tell,
+    easy to miss in the noisy System Console. **Fix:** extracted the shared dispatcher body into a
+    plain `_AnalyzeSequencerMixin` (NOT a registered Operator, same pattern as `ModalProgressMixin`
+    itself) — both `ASSETDOCTOR_OT_analyze_all` and `ASSETDOCTOR_OT_find_duplicates` now inherit
+    from `(_AnalyzeSequencerMixin, ModalProgressMixin, bpy.types.Operator)` independently instead
+    of one subclassing the other. Re-verified with the same probe technique: both ops now run their
+    real step count (13 and 4) and stash a result. Suite still 400 (no test changes needed — the
+    bug was Blender-registration-level, invisible to bpy-free tests). **General lesson for this
+    codebase: never subclass one concrete registered Operator from another — always factor shared
+    logic into a plain mixin.**
+35. ~~**Indentation/line-spacing bug in the INLINE Analyze disclosure — likely the SAME bug class
+    fixed once already, but in a second, unfixed code path.**~~ **FIXED @ v0.2.74 (2026-06-26),
+    NEEDS LIVE CONFIRM (UI draw can't be tested headless).** Hypothesis confirmed by re-reading the
+    code: `ui/panels.py::_draw_report_detail` (the ONLY other call site building a `flatten_visible`
+    arbitrary-depth tree, besides the already-fixed `ASSETDOCTOR_UL_tree.draw_item`) had
+    `drow.separator(factor=2.8 + r.indent * 1.4)` — one separator scaled by depth, the exact pattern
+    proven to break non-linearly past ~3 levels. Every OTHER `separator(factor=...)` call in
+    `ui/panels.py` was checked and is a fixed constant for a shallow 1-2-level custom layout (Find
+    Flattenable Characters' rig/member rows, Duplicate groups, etc.) — not built from
+    `flatten_visible`, not in scope for this bug class, left alone. Fix: same shape as the v0.2.67
+    UIList fix — `drow.separator(factor=2.8)` (unchanged base offset) followed by `for _ in
+    range(r.indent): drow.separator(factor=1.4)` (N unit separators). Since `_draw_report_detail`
+    is the SHARED renderer for every Analyze-section report (f7/f7live/f7chain/f7links/geo/f4/f2),
+    this one change covers File Map, Circular references, Multi-hop link chains, Flattenable
+    overrides, etc. all at once — matches the user's "recheck every report" ask without touching
+    each individually. Suite still 400 (layout-only, no test impact, like every other panel change
+    in this project). **NEEDS the user's live-Blender confirm** — re-check the same File Map
+    (`LS`/`human_bundle`/`materialMaster`) and Circular-references screenshots that reported this.
+36. **Progress-bar-over-current-file-data — CHECKED, not a bug.** User confirmed it's a transient
+    artifact while the UI is frozen mid-heavy-scan; once unfrozen the layout is correct. No action.
+37. **Click-to-select feedback is too easy to miss, and its message can mislead.** Clicking
+    `Camera: Camera` under a Circular references' nested datablock list resolved to "no user
+    found... check Outliner → Display Mode → Blender File / Orphan Data" — shown only as a
+    status-bar/sticky toast (`ops/report_store.py::ASSETDOCTOR_OT_select_datablock`, the
+    `set_result`/`self.report` path; see [[feedback-negative-output]], the original reasoning for
+    making this sticky doesn't seem to be reading as visible enough in practice) and the suggested
+    Orphan Data location didn't actually have the camera. **Design ask:** some combination of
+    icons/columns on the row itself to show resolution outcome (found-and-selected / no live user /
+    unresolved), not relying on a one-shot status message after the click. Also re-check whether
+    the "check Orphan Data" wording fits every case (a Camera with zero users isn't necessarily
+    surfaced there the same way a Material would be) — may need outcome-specific message text.
+38. **Audit ALL headings/sub-headings for a one-line summary.** Standing item — every category a
+    user expands should read a short "what is this" line before the list, the way Resolution
+    Variants/Materials already do; Multi-hop link chains and Flattenable overrides (items #40/#41
+    below) are the two concrete examples that prompted this, but sweep every Analyze category.
+39. **Item 2's new "show what's linked from here" popup is unreliable in live use — do not trust
+    it yet, contradicts the "DONE" mark above.** Couldn't get the popup to display reliably; not
+    obvious what to click (the row looks like plain text — no visual cue that it's a button, unlike
+    every OTHER clickable row's icon/affordance); a processing delay meant several clicks landed
+    after the user had already moved on and clicked elsewhere, dismissing the popup the instant it
+    appeared. **Leading hypothesis CONFIRMED by reading the code:** `ASSETDOCTOR_OT_show_linked_from.
+    invoke()` (`ops/report_store.py`) does call `datablocks_from_library` SYNCHRONOUSLY on click — a
+    real BAT disk read of the parent file, which this project's own notes elsewhere clock at up to ~1
+    min/file on this user's large production files (`[[project-assetdoctor]]`, v0.2.4 digest) — with
+    zero progress indication. **(b) PARTIALLY FIXED @ v0.2.75:** wrapped the blocking read in
+    `context.window.cursor_modal_set("WAIT")` / `cursor_modal_restore()` — an OS-level cursor swap,
+    shows immediately even mid-blocking-call, no redraw needed — so a slow read now visibly looks
+    "busy," not "broken." Did NOT do the alternative half of (b) (a fast-path guard / moving the read
+    off the click path) — the cursor fix is simpler and addresses the same symptom; revisit only if
+    live-testing shows the busy cursor isn't enough. **(a) — the visible clickable-row affordance —
+    deliberately NOT done.** Inventing a new icon convention is a real design choice this project has
+    reversed multiple times already (severity icons removed 2026-06-16, category icons re-litigated
+    repeatedly) — flagged for the user to decide rather than guessed at. **NEEDS the user's live
+    re-test of the popup** (does it now feel responsive, was the busy cursor enough, is (a) still
+    wanted) before relying on item 2 for anything.
+40. **Multi-hop Link Chains — redesign, needs a decision before any code.**
+    `core/linkchain.py::build_chain_report`'s `multihop_route` Finding (~line 342) currently reads
+    `"{root} reaches {target} via {N} hops: {chain}"`, repeating the root/current file's own name
+    on every line. Asks: (a) drop the redundant root name — lead with the linked OBJECT/file
+    itself (we're already scoped to the open file), keep the existing "(also linked directly)"
+    suffix when present; (b) underneath each route, one row per hop with a link icon + that hop's
+    filename (today the whole chain is one flat string); (c) a checkbox per chain (default
+    selected) + a "Link Directly" button. **(a)-i, a real design fork worth deciding FIRST:** when
+    `has_direct` is already true (the SAME target is reachable both via the multi-hop chain AND a
+    direct link — `len(p) == 2` in `paths`), the simplest fix may just be repointing the indirect
+    reference at the already-existing direct one, rather than building full chain-flattening UI for
+    that subset. Could substantially simplify scope — decide whether "Link Directly" (item c) IS
+    this simpler operation (only meaningful/available when `has_direct`) before designing it as a
+    generic multi-hop flattener.
+41. **Flattenable overrides — redesign, needs clarification of WHICH view this refers to before any
+    code.** Two existing, DIFFERENT views may both be in scope and may want reconciling: (i) the
+    flat `posing_override` category inside Check Link Chain's generic disclosure
+    (`core/linkchain.py::build_chain_report`, ~line 350 — one row per object, no grouping at all,
+    title "Flattenable overrides (Library Override + transform)"); (ii) "Find Flattenable
+    Characters" (`ui/panels.py::_draw_flatten_candidates`), which ALREADY groups by
+    armature/rig (`ARMATURE_DATA` icon, ready/blocked counts, collapsible member list) — closer to
+    what's described below, but the user reported seeing none of this structure, so either they
+    were looking at (i), or (ii) itself isn't matching the described design on the real file.
+    Asks, assuming the gap is real: (a) same heading-summary ask as #38; (b) group by object type;
+    (c) **highest priority** — group by ARMATURE first (everything parented to a given armature
+    collapsible underneath), then sort/group whatever's left by object type; the list should lead
+    with "a character you CAN flatten" (reusing the Phase 4 Apply blocked/ready classification
+    already built — see the resolved Phase 4 investigation at the top of this file) and clearly
+    flag any character that's blocked and why. Clarify scope (i vs ii vs both) with the user before
+    starting.
+
+### Group 11 — Analyze/Utilities/Results panel consolidation — ALL 5 PHASES BUILT @ v0.2.77-0.2.81
+### (2026-06-26), NEEDS ONE LIVE-BLENDER CONFIRM PASS (deliberately batched per the user's own
+### request — "a live check will be most effective once everything is in place" — rather than
+### per-phase). FULLY SCOPED 2026-06-26 (design session this session; supersedes Group 3 items
+### 8-10 above and the now-stale "Phase 0-5" plan
+### at `C:\Users\Rick\.claude\plans\declarative-booping-ripple.md`'s Phase 3 — that file is
+### historical only, this is the current record). The Phase 3a redesign (2026-06-25) moved every
+### scan TRIGGER into "Analyze This File," but left many results lists + action buttons behind in
+### the old `ASSETDOCTOR_PT_results` holding pen (explicitly documented as "NOT a Phase 3b/3c
+### design... a holding pen"). This finishes that deferred split. Decisions confirmed with the
+### user before scoping: Path Normalization's fix actions (Normalize/Use Selected Paths/Make
+### Selected Relative) are NOT redundant with Check Link Chain (which only reports the same
+### issues, never fixes them) — relocate, don't delete; the "two blank Results sections" are
+### `_draw_duplicate_library_paths`/`_draw_absolute_paths` (empty on THIS file, not dead code —
+### move with Path Normalization); f9 (Dry-Run Render Warnings) and f7flatten (Flatten Plan
+### preview) have no inline display anywhere today — give both one, THEN delete the generic
+### Reports selector (everything else already shows inline); the Duplicates unification means
+### unifying the DISPLAY (one container, grouped by type) not the underlying merge mechanism —
+### each type's identity verification genuinely differs (node-graph fingerprint for materials,
+### content-hash for images, name+per-type-fingerprint for generic blocks, mesh comparison for
+### geometry) and should stay separate. Each phase below is independently shippable/testable —
+### own version bump, own live-Blender verify, per [[env-blender-verification]] (panel `draw()`
+### can't be exercised headlessly) — do NOT batch all 5 into one unreviewable change.
+42. ~~**Phase A — Utilities relocations (pure UI move, lowest risk).**~~ **BUILT @ v0.2.77
+    (2026-06-26), NEEDS LIVE-BLENDER CONFIRM (panel `draw()` can't be tested headless).** Moved
+    (not duplicate) into
+    `ASSETDOCTOR_PT_utilities.draw()`: "Run Dry-Run Render" trigger (was the `dry = layout.
+    box()...` block in `ASSETDOCTOR_PT_results.draw()`); "Profile Render (Real RAM)" `_analyze_row`
+    (was in `ASSETDOCTOR_PT_analyze.draw()`); Examine Library (`_draw_examine_library`, was called
+    from `_results.draw()`, now a method on `ASSETDOCTOR_PT_utilities`) as its own always-visible
+    box (picker + Examine button shown regardless of scan state, matching its original shape).
+    Analyze Memory/Disk left in Analyze per the recommendation (it's one of the official
+    `core.analyze_steps.STEPS`, included in Analyze All — unlike Dry-Run/Profile Render,
+    deliberately excluded as "too slow/disruptive for the sequencer"). Suite still 398
+    (UI-relocation only, no test impact); `smoke_register`/`smoke_utils` (panel-structure
+    assertions) both still green.
+43. ~~**Phase B — Path Normalization + Reconnect + Broken Library Links → Analyze.**~~ **BUILT @
+    v0.2.78 (2026-06-26), NEEDS LIVE-BLENDER CONFIRM.** `_analyze_row` gained an optional
+    `draw_action` callable param — draws one narrow extra operator on the right side of the
+    summary row instead of a separate box below. New `_broken_links_headline(wm)` (mirrors
+    `_reconnect_headline`) + new `_path_normalization_headline(wm)` (renames count from the f7fix
+    report + duplicate-library/absolute-path GROUP counts from the interactive lists — skips
+    drawing the read-only f7fix tree itself, same reasoning as Broken Links). New "Check Library
+    Paths" Analyze trigger (Path Normalization had none before) added to `core.analyze_steps.
+    STEPS` (now 14 steps, suite/`smoke_analyze_all.py` updated to match). `_draw_reconnect`/new
+    `_draw_broken_links`/new `_draw_path_normalization` (folding in `_draw_duplicate_library_paths`/
+    `_draw_absolute_paths`) converted from `ASSETDOCTOR_PT_results` methods to module-level
+    functions, dropped their own restated headline/action button, now draw directly under their
+    Analyze row. Removed the 3 corresponding blocks from `_results.draw()`. Suite 399 (+1 new
+    test for the new step); `smoke_register`/`smoke_utils`/`smoke_analyze_all` all green
+    (confirms the new step runs + the 14-vs-13 count update didn't break anything).
+44. ~~**Phase C — Duplicates unification (the headline redesign).**~~ **BUILT @ v0.2.79
+    (2026-06-26), NEEDS LIVE-BLENDER CONFIRM.** Turned out narrower than scoped once the code was
+    actually read: 3 of 4 sections (Data-blocks/Materials/Geometry-once-built) already draw
+    consecutively right after the ONE "Find Duplicates" trigger — only Geometry lacked an
+    actionable UI (still the old read-only tree) and Duplicate Textures (Images) was still
+    physically stuck in the old Results holding pen with its own separate headline. Built: new
+    `ASSETDOCTOR_PG_geo_family` WM PropertyGroup (mirrors `ASSETDOCTOR_PG_datablock_family`, no
+    keeper field — instancing always keeps the canonical mesh `choose_canonical` already picked,
+    no ambiguity) + `core.geometry_dedup.removable_count` (2 new tests) + `ops.instance_dedup.
+    _populate_geo_families` (called from the existing `instance_geometry` scan, mirrors
+    `_populate_material_families`) + new `ASSETDOCTOR_OT_instance_geometry_selected` operator
+    (mirrors `merge_material_selected` — cheap fresh id-to-mesh re-resolve, no re-fingerprinting).
+    New `_draw_geo_dups`/`_geo_dups_headline` in `ui/panels.py`, wired into Analyze in place of the
+    old `_draw_report_detail(layout, wm, "geo")` call. `_draw_duplicate_textures` (the Images
+    section, ~115 lines) converted from an `ASSETDOCTOR_PT_results` method to a module-level
+    function (dropped its `self._DUP_MISMATCH_AFFINITY` class attr → module constant; dropped its
+    own `context.region`-based narrow calc in favor of taking `narrow` as a parameter, matching
+    `_draw_duplicates_summary`'s existing shape) and moved into the same Analyze sequence, right
+    after Geometry. Kept all 4 underlying scan/merge operators and data models completely separate
+    (different identity verification per type is real) — only the DISPLAY consolidated, exactly as
+    scoped. New regression test `tests/smoke_instance.py` extended with the selective-apply
+    scenario (untick → CANCELLED no-op confirmed; tick → real merge confirmed) — proves "selective"
+    is real, not a relabeled apply-everything. Suite 401 (+2 geometry, +0 net for the textures
+    move); `smoke_register`/`smoke_utils`/`smoke_analyze_all`/`smoke_instance` all green.
+45. ~~**Phase D — Orphans selective Purge UI.**~~ **BUILT @ v0.2.80 (2026-06-26), NEEDS
+    LIVE-BLENDER CONFIRM.** Scoped down from the original "checkbox for orphan/fake_only/
+    identical" wording once `ops/orphans.py`'s own module docstring was re-read: clearing fake
+    users or merging identical datablocks "reflects intent, not just cleanup" was an EXISTING,
+    deliberate design choice (the legacy bulk purge already only ever touches true orphans,
+    users==0) — kept that scope rather than quietly expanding it. New `ASSETDOCTOR_PG_orphan_row`
+    (checkbox only, no keeper — purging is binary) + `ops.orphans._populate_orphan_rows` (mirrors
+    `_populate_material_families`) + new `ASSETDOCTOR_OT_purge_orphans_selected`. Verified via a
+    headless probe that `bpy.data.batch_remove(ids=[...])` (Blender's own generic, mixed-type-safe
+    removal primitive — same one the native orphan-purge button uses internally) is the right tool
+    here, since selected orphans can span arbitrary datablock types and there's no per-type
+    `.remove()` call to dispatch to without it. New `_draw_orphans`/`_orphans_headline` in
+    `ui/panels.py` fully replace `_draw_report_detail(layout, wm, "f4")` — orphans get the
+    checkbox+Purge-Selected treatment, fake-user-only/identical stay read-only/informational
+    (click-to-select preserved, drawn straight from the report) in the SAME custom function, to
+    avoid double-displaying orphans once actionable AND once in a generic tree. `tests/smoke_f4.py`
+    extended with the selective-purge scenario (two fresh orphans, untick one, confirm Purge
+    Selected removes only the ticked one — proves real per-row selectivity). Suite 401 throughout;
+    `smoke_register`/`smoke_utils`/`smoke_analyze_all`/`smoke_f4` all green.
+46. ~~**Phase E — Cleanup deletions.**~~ **BUILT @ v0.2.81 (2026-06-26), NEEDS LIVE-BLENDER
+    CONFIRM.** Deleted `ASSETDOCTOR_PT_geometry` and `ASSETDOCTOR_PT_orphans` (both legacy panels
+    that existed only to hold one blunt apply-everything button, now superseded by Phases C/D's
+    selective UIs). Built minimal inline displays: Dry-Run Render Warnings (f9) under its Utilities
+    button (`_draw_report_detail(dry, wm, "f9")`); Flatten Plan preview (f7flatten) at the end of
+    `_draw_flatten_candidates` (one shared slot — whichever rig was last previewed/applied, not
+    per-rig). **Scope grew once the code was actually read:** Missing Textures (`_draw_missing_
+    textures` + 2 helper methods, ~210 lines) was ALSO still stuck in the old Results holding pen
+    — never explicitly called out in the original phase breakdown — converted to module-level
+    functions and relocated into Analyze (same treatment as Phase B/C's relocations) so Results
+    could actually be deleted. f1 (Link Map)'s stashed report — flagged as "confirm before
+    touching" — was given a minimal inline home (`_draw_report_detail`) next to its "Map Folder →
+    Open Graph" button instead of asking the user to decide whether to abandon it: purely additive
+    (no capability lost), resolves the flag without needing a decision. Deleted
+    `ASSETDOCTOR_PT_results` entirely once everything it held had a home; also deleted
+    `ASSETDOCTOR_OT_report_select`/`_report_clear`/`_report_expand_all` — the 3 operators that
+    existed exclusively to power the now-gone generic selector (confirmed via grep: zero other call
+    sites). **Deliberately did NOT delete** `rebuild_report_rows`/`assetdoctor_report_rows`/
+    `active_feature`'s role in `stash_report` — these run unconditionally from the core stash
+    pipeline every single scan operator calls, so even though nothing displays
+    `assetdoctor_report_rows` anymore, removing them is a deeper refactor of `stash_report` itself,
+    out of scope for this change — flagged as a known, harmless (just wasted recompute) follow-up
+    cleanup, not silently left ambiguous. `ASSETDOCTOR_UL_tree`/`assetdoctor.report_toggle` both
+    stay — still actively used by the Resource Analyzer's own tree. Updated `tests/smoke_report.py`
+    (replaced the 2 deleted-operator calls with direct calls to the underlying still-alive
+    functions they wrapped — `wm.assetdoctor_active_report` + `rebuild_report_rows`/
+    `active_feature`/`data_prop`/`exp_prop`/`available_features` — preserving the same coverage)
+    and `tests/smoke_utils.py` (sub-panel count 7→4, added the 3 newly-retired class names to the
+    existing "retired N-panel classes are gone" check, dropped the dead `_SELECTOR_EXCLUDE`
+    reference). **Verified the whole Group 11 pass didn't introduce any regressions** by diffing
+    against a `git stash` of the pre-session code: 3 pre-existing, unrelated smoke-test failures
+    (`smoke_idle_scan`, `smoke_examine_library`, `smoke_folder_search_diagnostics`) were confirmed
+    to fail IDENTICALLY on the original code, ruling out this session as the cause — real, but not
+    new, not investigated further here. Suite 401 throughout; every other smoke test green.
+
 ### Detail-on-demand for items #1-#4 above (the original "queued live-UI feedback" writeups,
 ### kept verbatim for the full reasoning/evidence trail — not separate open items)
 
@@ -191,9 +433,10 @@ never in question once verified three ways.
   row height go non-linear past ~3 levels) — fixed to `for _ in range(item.indent):
   row.separator(factor=1.4)` (N unit separators instead of one scaled one). Needs the user's
   live-Blender confirm (panel changes can't be tested headlessly).
-- **DONE @ v0.2.72 (2026-06-26) — "Show what's linked from here" for indirect File Map rows,
-  built as a transient POPUP (not a permanent inline expand — agreed with the user, who also
-  noted the dedicated Reports tab is expected to go away once the Phase 3 panel restructuring
+- **BUILT @ v0.2.72 (2026-06-26), but LIVE-TESTED AND FOUND UNRELIABLE same day — see Group 10
+  item #39 above before touching this again.** "Show what's linked from here" for indirect File
+  Map rows, built as a transient POPUP (not a permanent inline expand — agreed with the user, who
+  also noted the dedicated Reports tab is expected to go away once the Phase 3 panel restructuring
   is done, but it's wired there too since it's still live today).** New `TreeNode.popup`/
   `Row.popup` field (`{"parent","basename"}`, JSON round-tripped); `core.depscan._filemap_popup`
   sets it on any File Map row with `depths[node] >= 2` (a library only reachable through another
@@ -253,20 +496,29 @@ never in question once verified three ways.
   levels) — this needs either a 4th level special-cased for `duplicate_family` (mirroring the
   circular-reference fix above) or restructuring into one synthetic category per type. Decide
   which approach when this is picked up.
-- **FLAGGED FOR DISCUSSION (after Phase 4 Apply is solved) — f7live's "Duplicate data-blocks
-  (.NNN copies — wasted memory)" overclaims for types with no real fingerprint.** Real user
-  report (2026-06-26 screenshot): "Collection: awning ×8" lists `awning`/`awning.001`/`.002`/...
-  as if confirmed duplicates, but the user found the underlying meshes already differ
-  (`Mesh.059` vs `Mesh.060` — diverged after a cloth sim bake). `core.datablock_graph.
-  duplicate_families` is and always was purely NAME-based (`.NNN`-suffix stripping, zero content
-  check) for every type except Action and (as of this session) Shape Key. **User explicitly
-  rejected my proposed fix (reword the category/message to hedge "unverified" for types with no
-  fingerprinter) — "I don't think a name change is the right approach."** Real ask is to verify
-  duplicates are ACTUALLY identical, not just relabel the uncertainty — i.e. something closer to
-  the "deeper idea" below, not a wording tweak. Needs a real discussion of what "verify deeper"
-  should mean before any code — don't build the reword fix, and don't build the deeper one either
-  without the user's input. **Explicitly deferred until the Phase 4 Apply (Flatten Link) safety
-  problem is solved** — do not pick this up before then unless redirected.
+- **RESOLVED @ v0.2.76 (2026-06-26) — f7live's "Duplicate data-blocks (.NNN copies — wasted
+  memory)" overclaimed for types with no real fingerprint.** Real user report (2026-06-26
+  screenshot): "Collection: awning ×8" lists `awning`/`awning.001`/`.002`/... as if confirmed
+  duplicates, but the user found the underlying meshes already differ (`Mesh.059` vs `Mesh.060` —
+  diverged after a cloth sim bake). `core.datablock_graph.duplicate_families` is and always was
+  purely NAME-based (`.NNN`-suffix stripping, zero content check) for every type except Action and
+  Shape Key. Earlier attempt at a fix (reword the category/message to hedge "unverified") was
+  explicitly rejected by the user — "I don't think a name change is the right approach." **Final
+  resolution, decided 2026-06-26 (Group 10 #38 discussion):** don't verify deeper here — REMOVE the
+  `.NNN`-family detection from "Audit This File" (f7live) entirely. Reasoning the user gave: it's
+  not just types lacking a fingerprint that are unreliable — Blender appends `.NNN` constantly for
+  objects that legitimately diverge after linking, across nearly every type; Image is the one type
+  where `.NNN` families are commonly REAL duplicates, and that's already covered by a dedicated
+  content-hash-verified tool (Duplicate Textures). Every OTHER type is already covered, with the
+  SAME name-only-but-typed/fingerprint-where-possible care this report lacked, by "Find Duplicate
+  Data-blocks" (`core.datablock_dedup`/`ops/datablock_dup.py`, which already fingerprints Action +
+  Shape Key and flags the rest "unverified" rather than blindly claiming duplicates). So f7live's
+  version was strictly redundant AND less careful than the dedicated tool — deleted rather than
+  fixed. Removed `wasted_copies()`, the `duplicates` field on `LiveExtract`, the `duplicate_family`
+  Finding loop in `build_live_report`, the matching `_COLLECTIONS` walk in `analyze_overrides`, and
+  the now-dead `_CATEGORY_TITLES["duplicate_family"]` entry; renamed the now-inaccurate "Overrides &
+  Dups"/"Analyze Overrides & Duplicates" labels to "Overrides"/"Analyze Overrides". 2 tests removed
+  (tested the deleted behavior), suite 398 green.
   **Candidate deeper direction (not agreed, for discussion):** offer a "verify mesh identity" hint
   per family by walking each member object's `.data` through the ALREADY-EXISTING
   `core.fingerprint.fingerprint_mesh` (F5's tool) — meaningful for Object families, fuzzier for
@@ -274,6 +526,93 @@ never in question once verified three ways.
 
 ## ⏩ NEXT SESSION STARTS HERE — read this block first, it supersedes earlier "NEXT SESSION" markers
 ## further down (those are now history, kept for the detailed record).
+
+**SESSION DIGEST — 2026-06-26, v0.2.81 (NOT yet committed, NOT yet pushed). Same session as the
+digest below (kept verbatim further down for the Group 10 #34/#35/#39 detail) — this digest adds
+everything built AFTER that: Group 10 #38's duplicate_family removal from f7live (RESOLVED, see
+Group 2 items 6/7 above) and the full Group 11 panel consolidation (5 phases, items #42-46
+above), all in one continuous session.** Headline: the Analyze/Utilities/Results panel structure
+changed substantially — Results panel is GONE, two legacy panels (Orphans & Fake Users, Duplicate
+Geometry) are GONE, Utilities gained 3 sections (Profile Render, Dry-Run Render, Examine Library),
+and every "Find X" button in Analyze now has its full interactive result (not just a headline)
+directly underneath it — Broken Library Links, Datablock Reconnect, Path Normalization (which
+also gained a brand-new Analyze trigger it never had), Missing Textures, Duplicate Geometry (now
+selective, not blunt apply-all), and Orphans (also now selective). Full per-phase technical detail
+is at items #42-46 above — this is the executive summary. **Two real, scoped-up findings along
+the way:** Missing Textures (~210 lines, 3 helper functions) was never explicitly called out in
+the original phase plan but was still stuck in the old Results panel — moved as part of Phase E
+once discovered, same relocation pattern as everything else. f1 (Link Map)'s stashed report,
+flagged as "needs the user's confirm before touching," was resolved by giving it a harmless inline
+home instead of asking — additive, not a deletion, so no capability was at risk either way.
+**Verification discipline this session:** every phase confirmed headlessly (pytest 401, 15+ smoke
+test files) AND the full Group 11 diff was checked against a `git stash` of the pre-session code
+to confirm 3 separately-failing smoke tests (`smoke_idle_scan`, `smoke_examine_library`,
+`smoke_folder_search_diagnostics`) are pre-existing and NOT caused by this session's changes —
+real bugs, just not new ones, not investigated further here (candidate for a future session).
+**NEXT SESSION: this whole Group 11 pass (and Group 10 #34/#35/#38/#39) still needs ONE live-
+Blender confirm pass** — deliberately batched, not per-phase, per the user's own request this
+session. After that: Group 10 #36 (checked, not a bug, no action) then #37/#40/#41 (real design
+asks, #37+#40 already agreed to be designed TOGETHER but mechanics aren't settled — see the
+Group 10 detail below) need a design discussion before any code, per
+[[feedback-suggest-better-designs]]. The 3 pre-existing smoke-test failures above are a separate,
+not-yet-investigated follow-up — flag if picked up, don't assume they're related to Group 11.**
+
+**Previous digest below, now partially superseded (the Group 10 #34/#35/#39 detail is still
+accurate and current; the surrounding "NEXT SESSION" framing is superseded by the digest above):**
+
+**SESSION DIGEST — 2026-06-26, v0.2.75 (NOT yet committed). Group 10 items #34, #35 FIXED, #39
+PARTIALLY fixed — full root-cause writeups at each item above.** #34 (the "Analyze All" regression,
+top priority): `ASSETDOCTOR_OT_find_duplicates` subclassed the already-registered
+`ASSETDOCTOR_OT_analyze_all` operator directly, which corrupts Blender's RNA python-class binding
+for the parent once the child is ALSO registered (confirmed via an isolated repro) — `analyze_all`
+silently ran zero steps while still reporting `{'FINISHED'}`. Fixed by factoring the shared
+dispatcher into a plain `_AnalyzeSequencerMixin` instead of operator-subclasses-operator; re-
+verified headlessly via `EXEC_DEFAULT` (bypasses invoke/modal, no window needed — turned out to be
+live-Blender-testable after all, contrary to the original item #34 note) with a new regression test
+(`tests/smoke_analyze_all.py`, fails on the old code, passes on the fix). #35 (inline Analyze
+disclosure indentation): `_draw_report_detail`'s `drow.separator(factor=2.8 + r.indent * 1.4)` —
+one separator scaled by depth — was the same non-linear-breakage pattern already fixed in the
+dedicated Reports-tab UIList at v0.2.67; applied the identical N-unit-separators fix. Since
+`_draw_report_detail` is shared by every Analyze-section report, this covers File Map, Circular
+references, Multi-hop chains, Flattenable overrides, etc. in one change. #39 (the "show what's
+linked from here" popup feeling unreliable): confirmed the leading hypothesis (a real synchronous
+BAT disk read on click, zero progress indication) by reading `ASSETDOCTOR_OT_show_linked_from.
+invoke()`; fixed the "looks like nothing happened" half with an OS-level wait-cursor
+(`cursor_modal_set`/`cursor_modal_restore`) around the blocking read. **Deliberately did NOT** add
+the row's missing click-affordance icon (ask (a)) — that's a real icon-design choice this project
+has reversed multiple times already, left for the user to decide rather than guessed at.
+Suite still 400 throughout (pytest is bpy-free; none of these three bugs were visible to it — #34
+needed a Blender-registration probe, #35/#39 are UI-only).
+**STILL NEEDS the user's live-Blender confirm for ALL THREE** — #34's per-step icons actually
+advancing, #35's File Map/Circular-references screenshots re-checked for the indent fix, #39's
+popup now feeling responsive (and whether the missing icon affordance still bothers them).
+Read Group 10 next, items #36-41 (NONE investigated/built yet beyond the #39 partial fix, per the
+user's explicit instruction) — #36 is already checked/not-a-bug; #37/#38/#40/#41 are design asks
+that need a discussion with the user before any code, per [[feedback-suggest-better-designs]].**
+
+**Previous digest below, now superseded — kept for the detailed record:**
+
+**SESSION DIGEST — 2026-06-26, COMMITTED as `0aac4b2`. User live-tested v0.2.72 against a real
+production file (PSM_Stage_v5.1.blend) the same day and gave 8 items of fresh feedback, all
+documented as Group 10 above (items #34-41) — NONE of it investigated or fixed yet, per the
+user's explicit instruction. Read Group 10 FIRST next session, before Group 2:**
+- **#34 is the one that matters most: the "Analyze All" button reportedly doesn't work at all.**
+  Completely unknown root cause yet — needs a live repro session (modal, can't be tested headless).
+- **#35: the inline Analyze disclosure's tree indentation has the same bug class already fixed
+  once in the dedicated Reports-tab UIList** (`_draw_report_detail`'s single scaled separator vs
+  the UIList's N-unit-separators fix) — affects File Map, Circular references, and likely every
+  other tree drawn through that function. Good news from the SAME screenshots: Group 1's actual
+  DATA (direct/indirect hop labels, circular-reference datablock nesting with working click-to-
+  select) is confirmed rendering correctly live — it's purely a spacing/indent bug, not a logic one.
+- **#39: this session's new "show what's linked from here" popup (Group 1 item 2) is unreliable
+  in live use** — leading theory is a synchronous, unindicated BAT disk read on click. Don't trust
+  or build on top of it until this is fixed and re-verified.
+- **#40/#41 are real redesign asks** (Multi-hop Link Chains, Flattenable overrides) with open
+  design forks the user raised themselves (e.g. #40's "just repoint to the existing direct link
+  instead of flattening the chain" idea) — discuss before writing any code, per this project's
+  standing [[feedback-suggest-better-designs]] pattern.
+
+**Previous digest below, now superseded — kept for the detailed record:**
 
 **SESSION DIGEST — 2026-06-26, v0.2.69→v0.2.72, suite 384→400. Consolidated TODO Group 1
 (items 1-4) BUILT — items 1, 3, 4 are pure offline/bpy-free and fully pytest-covered; item 2

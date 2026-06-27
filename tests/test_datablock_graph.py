@@ -52,16 +52,9 @@ def test_find_datablock_loops_excludes_shape_key_reciprocal_pair():
     assert dg.find_datablock_loops(edges) == []
 
 
-def test_wasted_copies():
-    dups = {"Material": {"Body": ["Body", "Body.001", "Body.002"]},
-            "Mesh": {"Rock": ["Rock", "Rock.001"]}}
-    assert dg.wasted_copies(dups) == 3  # (3-1) + (2-1)
-
-
 def test_build_live_report():
     extract = LiveExtract(
         totals={"Material": 10},
-        duplicates={"Material": {"Body": ["Body", "Body.001", "Body.002"]}},
         library_counts=[("human_bundle.blend", 42)],
         override_count=5,
         loops=[["Object/Body", "Mesh/Body", "Object/Body"]],
@@ -69,29 +62,13 @@ def test_build_live_report():
     report = dg.build_live_report(extract, "test.blend")
     assert report.feature == "f7live"
     cats = {f.category for f in report.findings}
-    assert {"overview", "override_loop", "duplicate_family", "library_block"} <= cats
+    assert {"overview", "override_loop", "library_block"} <= cats
     assert "summary" not in cats  # redundant with "overview" — dropped (user, 2026-06-23)
+    assert "duplicate_family" not in cats  # removed 2026-06-26 — see Find Duplicate Data-blocks
     overview = [f for f in report.findings if f.category == "overview"][0]
     assert "1 override loop(s)" in overview.message
-    assert "2 duplicate data-block(s)" in overview.message
     assert "1 library" in overview.message
     assert "5 override(s)" in overview.message
-    dup = [f for f in report.findings if f.category == "duplicate_family"][0]
-    assert dup.detail == "3"
-    assert dup.items == ["Body", "Body.001", "Body.002"]
-
-
-def test_build_live_report_strips_type_prefix_for_display():
-    # The ops layer feeds "Type/Name"-prefixed members (click-to-select ref);
-    # the message/base should read clean while items keep the full ref string.
-    extract = LiveExtract(
-        duplicates={"Mesh": {"Mesh/Cube": ["Mesh/Cube", "Mesh/Cube.001"]}},
-    )
-    report = dg.build_live_report(extract, "test.blend")
-    dup = [f for f in report.findings if f.category == "duplicate_family"][0]
-    assert dup.message == "Mesh: Cube ×2"
-    assert dup.items == ["Mesh/Cube", "Mesh/Cube.001"]
-    assert dup.data["base"] == "Cube"
 
 
 def test_build_live_report_shape_key_risks():

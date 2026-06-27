@@ -73,6 +73,31 @@ def _gather(context):
         return done.value
 
 
+def _populate_geo_families(context, plan: list[dict]) -> None:
+    """Refill ``assetdoctor_geo_families`` (one row per instancing group) from
+    :func:`build_instance_plan`'s ``plan`` (Group 11 #44, 2026-06-26) — the
+    actionable checkbox shape every other dedup section already has. No
+    keeper dropdown: unlike Materials/Data-blocks/Images, instancing always
+    keeps the canonical ``build_instance_plan`` already picked
+    (``choose_canonical`` — most-shared local mesh), no ambiguity to
+    override."""
+    wm = context.window_manager
+    coll = wm.assetdoctor_geo_families
+    coll.clear()
+    for group in plan:
+        row = coll.add()
+        row.name = group["canonical"]
+        row.kind = group["kind"]
+        row.victims = "\n".join(group["victims"])
+        row.selected = True
+        row.removable = len(group["victims"])
+    wm.assetdoctor_geo_index = 0
+    from ..core.geometry_dedup import removable_count
+
+    wm.assetdoctor_geo_removable = removable_count(plan)
+    wm.assetdoctor_geo_scanned = True
+
+
 class ASSETDOCTOR_OT_instance_geometry(ModalProgressMixin, bpy.types.Operator):
     bl_idname = "assetdoctor.instance_geometry"
     bl_label = "Instance Duplicate Geometry"
@@ -106,6 +131,7 @@ class ASSETDOCTOR_OT_instance_geometry(ModalProgressMixin, bpy.types.Operator):
         yield (0.85, "Building report…")
         report, plan = build_instance_plan(items)
         stash_report(context, report, "geo")
+        _populate_geo_families(context, plan)
         for f in report.findings:
             log.info("GEO [%s] %s: %s", f.severity, f.category, f.message)
         summary = next((f for f in report.findings if f.category == "summary"), None)
@@ -140,3 +166,62 @@ class ASSETDOCTOR_OT_instance_geometry(ModalProgressMixin, bpy.types.Operator):
         tail = f"Instanced {remapped}, removed {removed} duplicate mesh(es)."
         tail += f" Backup: {backup}" if backup else " (no backup written)"
         self.report({"INFO"}, f"{msg}. {tail}")
+
+
+class ASSETDOCTOR_OT_instance_geometry_selected(bpy.types.Operator):
+    """Instance only the ticked groups from ``assetdoctor_geo_families`` (Group
+    11 #44, 2026-06-26) — mirrors ``merge_material_selected``/
+    ``merge_datablock_selected``'s shape. Re-resolves mesh ids fresh (cheap —
+    no re-fingerprinting needed, identity was already verified by the scan
+    that built these rows), same pattern as the other "_selected" operators."""
+
+    bl_idname = "assetdoctor.instance_geometry_selected"
+    bl_label = "Instance Selected"
+    bl_description = ("Instance each ticked group onto its canonical mesh and remove the "
+                      "local duplicates. Takes a backup first")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        wm = context.window_manager
+        chosen = [row for row in wm.assetdoctor_geo_families if row.selected]
+        if not chosen:
+            self.report({"WARNING"}, "Tick at least one group to instance")
+            return {"CANCELLED"}
+
+        from .safety import auto_backup
+
+        id_to_db = {_mesh_id(me): me for me in bpy.data.meshes}
+
+        backup = auto_backup(context)
+        remapped = removed = 0
+        for row in chosen:
+            canonical = id_to_db.get(row.name)
+            if canonical is None:
+                continue
+            for vid in (v for v in row.victims.split("\n") if v):
+                victim = id_to_db.get(vid)
+                if victim is None or victim == canonical:
+                    continue
+                victim.user_remap(canonical)
+                remapped += 1
+                if victim.library is None and victim.users == 0:
+                    bpy.data.meshes.remove(victim)
+                    removed += 1
+
+        try:
+            context.view_layer.update()
+        except Exception:
+            pass
+
+        # Re-fingerprinting all meshes is too heavy to auto-run synchronously
+        # here (same call as every other "_selected" operator) — clear +
+        # prompt re-scan.
+        wm.assetdoctor_geo_families.clear()
+        wm.assetdoctor_geo_removable = 0
+        wm.assetdoctor_geo_scanned = False
+        if context.area:
+            context.area.tag_redraw()
+        tail = f" Backup: {backup}" if backup else " (no backup written)"
+        self.report({"INFO"}, f"Instanced {remapped}, removed {removed} duplicate mesh(es). "
+                    f"Save to persist.{tail} Re-run Find to see any remaining.")
+        return {"FINISHED"}

@@ -34,9 +34,9 @@ def main():
     try:
         bpy.ops.wm.read_factory_settings(use_empty=True)
 
-        def obj_with_own_mesh(name):
+        def obj_with_own_mesh(name, shape=TRI):
             me = bpy.data.meshes.new(name + "_mesh")
-            me.from_pydata(*TRI)
+            me.from_pydata(*shape)
             me.update()
             o = bpy.data.objects.new(name, me)
             bpy.context.scene.collection.objects.link(o)
@@ -64,6 +64,36 @@ def main():
         checks.append(("A and B now share one mesh", a.data == b.data))
         checks.append(("duplicate mesh removed", len(bpy.data.meshes) == 2))  # shared + sphere
         checks.append(("sphere untouched", c.data.name == "Sphere"))
+
+        # Group 11 #44, 2026-06-26: the new SELECTIVE apply path
+        # (assetdoctor.instance_geometry_selected) — a fresh duplicate pair (a
+        # DIFFERENT shape than A/B's, so this group is isolated from the
+        # already-merged shared mesh above), scan via the report-only path
+        # (populates assetdoctor_geo_families), untick the row, confirm
+        # Instance Selected does NOTHING (proves "selective" is real, not just
+        # a relabeled apply-everything), then re-tick and confirm it DOES.
+        quad = ([(0, 0, 0), (3, 0, 0), (3, 3, 0), (0, 3, 0)], [], [(0, 1, 2, 3)])
+        d = obj_with_own_mesh("D", quad)
+        e = obj_with_own_mesh("E", quad)
+        res2 = bpy.ops.assetdoctor.instance_geometry("EXEC_DEFAULT", apply=False)
+        wm = bpy.context.window_manager
+        checks.append(("scan FINISHED", res2 == {"FINISHED"}))
+        checks.append(("one geo family populated", len(wm.assetdoctor_geo_families) == 1))
+        checks.append(("group covers only D and E", set(wm.assetdoctor_geo_families[0].victims.split("\n"))
+                       | {wm.assetdoctor_geo_families[0].name} == {d.data.name, e.data.name}))
+
+        wm.assetdoctor_geo_families[0].selected = False
+        res3 = bpy.ops.assetdoctor.instance_geometry_selected("EXEC_DEFAULT")
+        checks.append(("unselected: CANCELLED (nothing ticked)", res3 == {"CANCELLED"}))
+        checks.append(("unselected: D and E still distinct", d.data != e.data))
+        checks.append(("unselected: row NOT cleared (CANCELLED is a no-op)",
+                       len(wm.assetdoctor_geo_families) == 1))
+
+        wm.assetdoctor_geo_families[0].selected = True
+        res4 = bpy.ops.assetdoctor.instance_geometry_selected("EXEC_DEFAULT")
+        checks.append(("selected: FINISHED", res4 == {"FINISHED"}))
+        checks.append(("selected: D and E now share one mesh", d.data == e.data))
+        checks.append(("selected: rows cleared after apply", len(wm.assetdoctor_geo_families) == 0))
 
         ok = all(p for _, p in checks)
         for label, p in checks:

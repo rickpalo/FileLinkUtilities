@@ -2,9 +2,14 @@
 
     blender --background --factory-startup --python tests/smoke_report.py
 
-Covers persistence (two scans both kept), the selector, expand toggle on the
-active feature, select-the-datablock, export to a file, and clear (removes the
-active report, keeps the other).
+Covers persistence (two scans both kept), switching/clearing the "active"
+feature (the underlying `report_store` mechanism `stash_report` and every
+scan operator still relies on internally, even though the generic Reports
+selector UI that used to expose it directly was deleted — Group 11 #46,
+2026-06-26 — so this calls `active_feature`/`rebuild_report_rows` etc.
+directly instead of through the now-removed `report_select`/`report_clear`
+operators), expand toggle on the active feature, select-the-datablock, and
+export to a file.
 """
 
 import glob
@@ -59,8 +64,9 @@ def main():
         checks.append(("rows materialised for active (f3)",
                        len(wm.assetdoctor_report_rows) == expected_rows("f3") > 0))
 
-        bpy.ops.assetdoctor.report_select(feature="f4")
-        checks.append(("selector switches active", store.active_feature(wm) == "f4"))
+        wm.assetdoctor_active_report = "f4"
+        store.rebuild_report_rows(wm)
+        checks.append(("switching active feature rebuilds rows", store.active_feature(wm) == "f4"))
         checks.append(("rows rebuilt on selector switch",
                        len(wm.assetdoctor_report_rows) == expected_rows("f4")))
 
@@ -82,7 +88,13 @@ def main():
         r = bpy.ops.assetdoctor.select_datablock(type="Material", name="WoodA")
         checks.append(("select material picks object", r == {"FINISHED"} and obj.select_get()))
 
-        bpy.ops.assetdoctor.report_clear()  # clears active (f4)
+        # Clears active (f4) -- the same logic the deleted report_clear operator had.
+        active = store.active_feature(wm)
+        setattr(wm, store.data_prop(active), "")
+        setattr(wm, store.exp_prop(active), "")
+        remaining = store.available_features(wm)
+        wm.assetdoctor_active_report = remaining[0][0] if remaining else ""
+        store.rebuild_report_rows(wm)
         checks.append(("clear removes active but keeps the other",
                        not getattr(wm, "assetdoctor_rep_f4") and bool(getattr(wm, "assetdoctor_rep_f3"))))
         checks.append(("rows rebuilt to remaining report after clear",

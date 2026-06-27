@@ -1,15 +1,17 @@
 """Batch C #3 — generic "Duplicate Data-blocks" merge tool.
 
-The Overrides & Dups (f7live) report already finds ``.NNN`` name-families across
-EVERY audited datablock type (``ops.datablock_inspect._COLLECTIONS``) but is
-read-only — on a real file, most of those families turn out to be `Action`
-datablocks from undisciplined animating (Blender auto-names a new pose action
-``ObjectName.PoseName``, then ``.001``, ``.002``, … on every re-take), and there
-was no way to act on any of it. This mirrors the F6 image-dedup keeper-dropdown
-UI (find families → pick a keeper → Merge Selected) but generalizes it to ANY
-datablock type via ``ID.user_remap()`` (which is generic, not image-specific) and
-``core.datablock_dedup`` (the same merge-planning algorithm imagededup already
-uses, extracted so it isn't reimplemented per type).
+Finds ``.NNN`` name-families across every audited datablock type (mirroring
+what the Overrides report (f7live) used to also report, read-only, until that
+was removed 2026-06-26 as redundant with this tool — see
+``core.datablock_graph.build_live_report``'s docstring). On a real file, most
+of those families turn out to be `Action` datablocks from undisciplined
+animating (Blender auto-names a new pose action ``ObjectName.PoseName``, then
+``.001``, ``.002``, … on every re-take). This mirrors the F6 image-dedup
+keeper-dropdown UI (find families → pick a keeper → Merge Selected) but
+generalizes it to ANY datablock type via ``ID.user_remap()`` (which is generic,
+not image-specific) and ``core.datablock_dedup`` (the same merge-planning
+algorithm imagededup already uses, extracted so it isn't reimplemented per
+type).
 
 Materials, Meshes and Images are deliberately OUT of scope here — they already
 have dedicated, more mature tools (F3 material dedup, F5 geometry instancing, F6

@@ -89,6 +89,24 @@ def _gather(context):
         return done.value
 
 
+def _populate_orphan_rows(context, report) -> None:
+    """Refill ``assetdoctor_orphan_rows`` (one row per TRUE orphan, Group 11
+    #45, 2026-06-26) from the report's ``orphan`` Finding — the actionable
+    checkbox shape every other dedup/cleanup section already has. Fake-only
+    and identical findings are deliberately NOT mirrored into a WM collection
+    here; they stay read-only, drawn straight from the report (see this
+    module's own docstring)."""
+    wm = context.window_manager
+    coll = wm.assetdoctor_orphan_rows
+    coll.clear()
+    orphan_finding = next((f for f in report.findings if f.category == "orphan"), None)
+    for label in (orphan_finding.items if orphan_finding else []):
+        row = coll.add()
+        row.name = label
+        row.selected = True
+    wm.assetdoctor_orphan_index = 0
+
+
 class ASSETDOCTOR_OT_scan_orphans(ModalProgressMixin, bpy.types.Operator):
     bl_idname = "assetdoctor.scan_orphans"
     bl_label = "Scan Orphans & Fake Users"
@@ -122,6 +140,7 @@ class ASSETDOCTOR_OT_scan_orphans(ModalProgressMixin, bpy.types.Operator):
         yield (0.9, "Building report…")
         report = build_orphan_report(items)
         stash_report(context, report, "f4")
+        _populate_orphan_rows(context, report)
         for f in report.findings:
             log.info("F4 [%s] %s: %s", f.severity, f.category, f.message)
         summary = next((f for f in report.findings if f.category == "summary"), None)
@@ -138,6 +157,52 @@ class ASSETDOCTOR_OT_scan_orphans(ModalProgressMixin, bpy.types.Operator):
         backup = auto_backup(context)
         purged = bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=False,
                                         do_recursive=True)
+        context.window_manager.assetdoctor_orphan_rows.clear()
         tail = f"Purged {purged} orphan(s)."
         tail += f" Backup: {backup}" if backup else " (no backup written)"
         self.report({"INFO"}, f"{msg}. {tail}")
+
+
+class ASSETDOCTOR_OT_purge_orphans_selected(bpy.types.Operator):
+    """Purge only the ticked orphans from ``assetdoctor_orphan_rows`` (Group
+    11 #45, 2026-06-26) — mirrors ``merge_material_selected``'s shape, except
+    removal itself uses ``bpy.data.batch_remove`` (the same generic, mixed-
+    type-safe primitive Blender's own native orphan purge uses internally),
+    since the resolved datablocks span arbitrary types."""
+
+    bl_idname = "assetdoctor.purge_orphans_selected"
+    bl_label = "Purge Selected"
+    bl_description = "Delete each ticked orphan datablock. Takes a backup first"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        from .report_store import resolve_datablock
+
+        wm = context.window_manager
+        chosen = [row.name for row in wm.assetdoctor_orphan_rows if row.selected]
+        if not chosen:
+            self.report({"WARNING"}, "Tick at least one orphan to purge")
+            return {"CANCELLED"}
+
+        ids = []
+        for label in chosen:
+            type_name, _, name = label.partition("/")
+            block = resolve_datablock(type_name, name)
+            if block is not None:
+                ids.append(block)
+        if not ids:
+            self.report({"WARNING"}, "None of the ticked orphans could be resolved")
+            return {"CANCELLED"}
+
+        from .safety import auto_backup
+
+        backup = auto_backup(context)
+        bpy.data.batch_remove(ids=ids)
+
+        wm.assetdoctor_orphan_rows.clear()
+        if context.area:
+            context.area.tag_redraw()
+        tail = f" Backup: {backup}" if backup else " (no backup written)"
+        self.report({"INFO"}, f"Purged {len(ids)} orphan(s). Save to persist.{tail} "
+                    f"Re-run Find to see any remaining.")
+        return {"FINISHED"}
