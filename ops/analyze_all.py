@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import bpy
 
-from ..core.analyze_steps import DUPLICATE_STEPS, STEPS
+from ..core.analyze_steps import DUPLICATE_STEPS, FLATTEN_STEPS, STEPS
 from .progress import ModalProgressMixin, set_result
 
 
@@ -112,3 +112,26 @@ class ASSETDOCTOR_OT_find_duplicates(_AnalyzeSequencerMixin, ModalProgressMixin,
 
     _steps = DUPLICATE_STEPS
     _run_label = "Find Duplicates"
+
+
+class ASSETDOCTOR_OT_find_flattenable_links(_AnalyzeSequencerMixin, ModalProgressMixin,
+                                             bpy.types.Operator):
+    """2026-06-26 (user request, docs/TODO.md #41): "Find Flattenable Link
+    Chains" and "Find Flattenable Characters" merged into one trigger — the
+    second step always needed the first step's f7chain data already stashed,
+    so they were really one workflow wearing two buttons. Same dispatcher
+    pattern as Find Duplicates; each step's own report/list is filled in
+    exactly as if you'd clicked it yourself."""
+
+    bl_idname = "assetdoctor.find_flattenable_links"
+    bl_label = "Find Flattenable Links"
+    bl_description = (
+        "Find multi-hop link chains and group every flattenable Library "
+        "Override by character in one click (was two separate buttons). "
+        "Read-only — reopens each file via BAT, same cost as Find "
+        "Flattenable Link Chains alone"
+    )
+    bl_options = {"REGISTER"}
+
+    _steps = FLATTEN_STEPS
+    _run_label = "Find Flattenable Links"

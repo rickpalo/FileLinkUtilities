@@ -21,11 +21,15 @@ Library's user_remap pattern)."""
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import subprocess
+import tempfile
+import time
 
 import bpy
 
-from ..core import blendscan, depscan, linkchain
+from ..core import blendscan, collection_mirror, depscan, linkchain, remote_harvest
 from ..core.report import Report
 from .progress import ModalProgressMixin
 from .report_store import data_prop, resolve_datablock, stash_report
@@ -40,7 +44,8 @@ class ASSETDOCTOR_OT_scan_link_chains(ModalProgressMixin, bpy.types.Operator):
         "in EVERY file the scan visits (not just this one) that could be "
         "flattened once their source chain is confirmed. Read-only — does "
         "not mutate anything; reopens each file a second time, so this is "
-        "slower than Check Link Chain alone"
+        "slower than Check Link Chain alone. Usually run via 'Find "
+        "Flattenable Links', which also groups the result by character"
     )
 
     _PROGRESS_BUDGET = 0.0  # same reasoning as Check Link Chain: repaint every file
@@ -138,6 +143,15 @@ def read_live_override_properties(obj) -> list[linkchain.OverrideProperty]:
     return out
 
 
+def _display_file_name(path: str) -> str:
+    """Filename without extension, robust to Blender's "//"-relative prefix
+    (ntpath/pathlib can misread it as a UNC root) -- same caveat as
+    core.linkchain._display_name/core.datablock_links, duplicated here since
+    those are private to their own modules."""
+    name = path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    return name[:-6] if name.lower().endswith(".blend") else name
+
+
 def _resolve_rig(obj) -> str:
     """Walk from a posed part to the ARMATURE that drives it, so the picker
     can roll up body/eyes/clothes/etc. under one character (user feedback,
@@ -190,8 +204,9 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
     bl_label = "Find Flattenable Characters"
     bl_description = (
         "List every Library Override in this file with an adjusted transform "
-        "so you can pick ONE to build a flatten plan for (run Find Flattenable "
-        "Link Chains first). Read-only"
+        "so you can pick ONE to build a flatten plan for (needs Find "
+        "Flattenable Link Chains' data already stashed — usually run "
+        "together via 'Find Flattenable Links'). Read-only"
     )
 
     def execute(self, context):
@@ -206,6 +221,7 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
         coll = wm.assetdoctor_flatten_candidates
         coll.clear()
         cached = {}
+        local_names: set[str] = set()
         for obj in bpy.data.objects:
             if not _is_override_with_transform(obj):
                 continue
@@ -220,35 +236,76 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
             plan = linkchain.build_flatten_plan(obj.name, reference, properties, routes)
             cached[obj.name] = linkchain.flatten_plan_to_dict(plan)
 
+            resolved_rig = _resolve_rig(obj)
             row = coll.add()
             row.name = obj.name
-            row.rig = _resolve_rig(obj) or obj.name
+            # 2026-06-27 (docs/TODO.md Group 11 #47): a standalone override
+            # (no rig found) groups by object TYPE instead of becoming its
+            # own 1-member group named after itself.
+            row.rig = resolved_rig or f"{obj.type.title()} (standalone)"
+            row.is_rig = bool(resolved_rig)
+            row.is_remote = False
             row.ready = bool(plan.route and plan.properties)
             status = linkchain.summarize_properties(plan.properties)
             if plan.route:
                 status += f" (via {len(plan.route) - 1} hop(s))"
             row.status = "; ".join(plan.warnings) if plan.warnings else status
+            local_names.add(obj.name)
 
         wm.assetdoctor_flatten_plans_json = json.dumps(cached)
         wm.assetdoctor_flatten_index = 0
 
-        # This picker only sees overrides LOCAL to the currently open file —
-        # a character several hops deep (e.g. People1.blend, linked under a
-        # Stage file that itself holds zero local overrides) is invisible to
-        # it even though Find Flattenable Link Chains already found it. Say
-        # so explicitly instead of reporting a flat "nothing found" that
-        # looks like there's nothing to flatten anywhere (user, 2026-06-25).
-        remote = [] if len(coll) else linkchain.remote_posing_files(chain_report, bpy.data.filepath)
-        wm.assetdoctor_flatten_remote_note = (
-            f"Found in {', '.join(remote)} — open that file directly and re-run "
-            "Find Flattenable Characters there (this only sees overrides local "
-            "to the currently open file)") if remote else ""
+        # 2026-06-27 (docs/TODO.md Group 11 #47): the picker now ALSO surfaces
+        # REMOTE candidates (an override several hops deep, in a file this
+        # session never opened) instead of only ever showing local ones —
+        # the real motivating case (PSM_Stage_v5.1: 929 flattenable, 0 local)
+        # had nothing actionable here before this. `drop_local_posing_
+        # findings` already isolates exactly the remote half of the census;
+        # `ready`/`status` are placeholders until Flatten Selected actually
+        # harvests each one (core.remote_harvest), since that requires
+        # opening the donor file in a subprocess, too slow to do here just to
+        # populate a list.
+        remote_report = linkchain.drop_local_posing_findings(chain_report, bpy.data.filepath)
+        remote_count = 0
+        for f in remote_report.findings:
+            if f.category != "posing_override" or not f.items:
+                continue
+            name = f.items[0].split("/", 1)[-1]
+            if name in local_names:
+                continue
+            source_file = f.data.get("source_file", "")
+            row = coll.add()
+            row.name = name
+            row.rig = f"Remote: {_display_file_name(source_file)}" if source_file else "Remote: unknown file"
+            row.is_rig = False
+            row.is_remote = True
+            row.source_file = source_file
+            row.ready = False
+            row.status = "remote — not yet checked (run Flatten Selected to find out)"
+            local_names.add(name)
+            remote_count += 1
 
-        if remote:
-            self.report({"WARNING"}, f"No local candidates — found in {', '.join(remote)} instead")
+        # This picker used to see ONLY overrides LOCAL to the currently open
+        # file — a character several hops deep (e.g. People1.blend, linked
+        # under a Stage file that itself holds zero local overrides) was
+        # invisible to it even though Find Flattenable Link Chains already
+        # found it. Remote rows above close that gap directly now; this note
+        # stays as a fallback for the (now rarer) case where there's truly
+        # NOTHING in the census at all to show, local or remote.
+        remote_files = [] if len(coll) else linkchain.remote_posing_files(chain_report, bpy.data.filepath)
+        wm.assetdoctor_flatten_remote_note = (
+            f"Found in {', '.join(remote_files)} but nothing could be listed — "
+            "re-run Find Flattenable Links") if remote_files else ""
+
+        if not len(coll):
+            if remote_files:
+                self.report({"WARNING"}, f"No candidates — found in {', '.join(remote_files)} but nothing listed")
+            else:
+                self.report({"INFO"}, "No flattenable overrides found")
         else:
             rigs = len({r.rig for r in coll})
-            self.report({"INFO"}, f"Found {len(coll)} override part(s) across {rigs} rig(s)/character(s)")
+            self.report({"INFO"}, f"Found {len(coll)} override part(s) across {rigs} group(s) "
+                                   f"({remote_count} remote)")
         return {"FINISHED"}
 
 
@@ -452,6 +509,350 @@ def _flatten_rig(context, rig_plan, members: list) -> list:
     return results
 
 
+# --- Flatten v2 (docs/TODO.md Group 11 #47, 2026-06-27) ---------------------
+#
+# The shared "Flatten Selected" action: an arbitrary cross-group batch (any
+# mix of rig groups, standalone-by-type groups, and remote-sourced groups),
+# not one rig at a time like _flatten_rig above. Deliberately a SEPARATE
+# function rather than a refactor of _flatten_rig — that one is validated
+# against real production data ("Flattened 8/9 part(s)" on People1_v5.1.blend)
+# and is left untouched; _flatten_member below duplicates its per-member body
+# but uses each plan's OWN ultimate_library (not one shared across a rig) and
+# adds the two genuinely new branches _flatten_rig never needed: a remote-
+# sourced member (no local old_obj to remap from) and Make Copy placement
+# (a mirrored collection instead of the old object's own collection
+# membership) + the Make Local finishing step.
+
+def _harvest_remote(blend_path: str, names: list[str]):
+    """Open ``blend_path`` in a disposable background Blender process and
+    read every named object's override reference + properties there — never
+    touches the live session (confirmed via probe, 2026-06-27,
+    ``tests/probe_remote_override_link.py``: there is no live-bpy way to do
+    this, ``bpy.data.libraries.load`` never exposes an override object at
+    all). Mirrors ``ops/dryrun_render.py``'s subprocess lifecycle exactly.
+    Yields ``(fraction, message)`` progress tuples; the final yielded value
+    via StopIteration.value is ``dict[str, HarvestResult]``."""
+    script_path = out_path = None
+    try:
+        fd, script_path = tempfile.mkstemp(suffix=".py", prefix="assetdoctor_harvest_")
+        fd_out, out_path = tempfile.mkstemp(suffix=".json", prefix="assetdoctor_harvest_out_")
+        os.close(fd_out)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(remote_harvest.build_harvest_script(names, out_path))
+
+        cmd = remote_harvest.build_harvest_command(bpy.app.binary_path, blend_path, script_path)
+        popen_kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+                                **popen_kwargs)
+        start = time.monotonic()
+        timeout = 1800  # matches Dry-Run Render's own bound — same multi-GB-file reality
+        while proc.poll() is None:
+            elapsed = time.monotonic() - start
+            if elapsed > timeout:
+                proc.kill()
+                return {n: remote_harvest.HarvestResult(n, False) for n in names}
+            time.sleep(0.2)
+            yield (min(0.9, elapsed / timeout), f"Reading {pathlib.Path(blend_path).name}…")
+
+        if proc.returncode != 0:
+            return {n: remote_harvest.HarvestResult(n, False) for n in names}
+        with open(out_path, "r", encoding="utf-8") as fh:
+            return remote_harvest.parse_harvest_output(fh.read())
+    finally:
+        for p in (script_path, out_path):
+            if p:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+
+
+def _find_collection_path(root, target_colls: set) -> tuple[str, ...] | None:
+    """Names from ``root`` down to (and including) whichever of
+    ``target_colls`` is reachable first, or ``None``."""
+    def walk(coll, ancestors):
+        here = ancestors + (coll.name,)
+        if coll in target_colls:
+            return here
+        for child in coll.children:
+            found = walk(child, here)
+            if found is not None:
+                return found
+        return None
+    return walk(root, ())
+
+
+def _object_location_path(scene, obj) -> tuple[str, ...]:
+    """This object's collection path from the scene's master collection down
+    to its immediate parent collection — the anchor :func:`_realize_mirror_
+    plan` mirrors. A remote-sourced member (no real local object at all) has
+    no caller for this at all; it gets ``(scene.collection.name,)`` directly
+    instead (the deliberate "no anchor found" scope decision, docs/TODO.md
+    Group 11 #47 — composes for free with the lowest-common-ancestor math,
+    since the LCA of a real path and the bare root is just the root)."""
+    target_colls = set(obj.users_collection)
+    if target_colls:
+        found = _find_collection_path(scene.collection, target_colls)
+        if found is not None:
+            return found
+    return (scene.collection.name,)
+
+
+def _resolve_real_collection(scene, path: tuple[str, ...]):
+    """The REAL ``bpy.types.Collection`` at ``path`` (names from the scene's
+    root collection down), or the scene root itself for an empty path.
+    ``mirror_collection_paths``'s FIRST entry is always the lowest common
+    ANCESTOR -- with a single object, that ancestor can be arbitrarily deep
+    (its own immediate parent collection), not necessarily the scene root
+    (confirmed by hand, 2026-06-27: a naive "len(prefix)==1 -> scene root"
+    check is wrong whenever there's only one object in the batch and its
+    parent isn't the root) -- so the first entry's OWN parent always needs
+    a real lookup, never an assumption."""
+    coll = scene.collection
+    for name in path[1:]:  # path[0] is always the scene root's own name
+        found = coll.children.get(name)
+        if found is None:
+            break  # shouldn't happen; fail safe to whatever was resolved so far
+        coll = found
+    return coll
+
+
+def _realize_mirror_plan(scene, paths: dict[str, tuple[str, ...]]) -> dict[str, "bpy.types.Collection"]:
+    """Create (or reuse, across repeated Flatten Selected runs) the real
+    Collections for the Make-Copy mirror tree, per ``core.collection_mirror``,
+    and return ``{object_name: leaf Collection}`` for every entry in
+    ``paths``. Only the FIRST entry's parent needs a real lookup (see
+    :func:`_resolve_real_collection`) -- every later entry's parent was
+    necessarily created earlier in this same loop (``mirror_collection_
+    paths`` sorts parents before children)."""
+    ordered = collection_mirror.mirror_collection_paths(list(paths.values()))
+    created: dict[tuple[str, ...], "bpy.types.Collection"] = {}
+    for i, prefix in enumerate(ordered):
+        mirror_nm = collection_mirror.mirror_name(prefix[-1])
+        parent = (_resolve_real_collection(scene, prefix[:-1]) if i == 0
+                  else created[prefix[:-1]])
+        coll = parent.children.get(mirror_nm)
+        if coll is None:
+            coll = bpy.data.collections.new(mirror_nm)
+            parent.children.link(coll)
+        created[prefix] = coll
+    return {name: created[path] for name, path in paths.items()}
+
+
+def _flatten_member(context, plan, mirror_collections: dict, make_local: bool):
+    """One member's real flatten, for the cross-group "Flatten Selected"
+    batch — see the module comment above for why this duplicates rather than
+    reuses ``_flatten_rig``'s body. ``mirror_collections`` (always populated
+    — Make Copy is the only path built so far, docs/TODO.md Group 11 #47)
+    maps this member's name to its already-realized leaf mirror Collection."""
+    from ..log import get_logger
+    log = get_logger()
+
+    if plan.reference is None:
+        return linkchain.FlattenApplyResult(plan.object_name, False,
+                                            "no reference recorded — skipped")
+
+    direct = _link_direct(plan.ultimate_library, plan.reference.kind, plan.reference.name)
+    if direct is None:
+        msg = (f"'{plan.reference.name}' not found directly in "
+               f"{pathlib.Path(plan.ultimate_library).name} — skipped")
+        return linkchain.FlattenApplyResult(plan.object_name, False, msg)
+
+    attr = _KIND_TO_COLLECTION.get(plan.reference.kind, "objects")
+    before_names = set(o.name for o in getattr(bpy.data, attr))
+    try:
+        new_obj = direct.override_create(remap_local_usages=False)
+    except RuntimeError as exc:
+        log.warning("Flatten Selected: override_create failed for %s: %s", plan.object_name, exc)
+        new_obj = None
+    if new_obj is None:
+        return linkchain.FlattenApplyResult(plan.object_name, False,
+            "Blender declined to override this part — see debug log")
+    after_names = set(o.name for o in getattr(bpy.data, attr))
+    if new_obj.name not in (after_names - before_names):
+        return linkchain.FlattenApplyResult(plan.object_name, False,
+            "override_create() did not produce a fresh object for this part — "
+            "skipped to avoid corrupting whatever it actually is")
+
+    old_obj = bpy.data.objects.get(plan.object_name)
+    is_local = old_obj is not None and old_obj.override_library is not None
+
+    if isinstance(new_obj, bpy.types.Object):
+        target_coll = mirror_collections.get(plan.object_name)
+        if target_coll is not None:
+            try:
+                target_coll.objects.link(new_obj)
+            except RuntimeError:
+                pass
+        new_obj.name = collection_mirror.mirror_name(plan.object_name)
+
+    applied = failed = 0
+    for prop in plan.properties:
+        try:
+            new_obj.override_library.properties.add(prop.rna_path)
+            _set_override_value(new_obj, prop.rna_path, prop.value)
+            applied += 1
+        except Exception as exc:
+            failed += 1
+            log.warning("Flatten Selected: %s on %s failed: %s",
+                       prop.rna_path, plan.object_name, exc)
+
+    if is_local:
+        old_obj.user_remap(new_obj)
+        old_obj.hide_viewport = True
+        old_obj.hide_render = True
+
+    if make_local:
+        try:
+            new_obj.make_local()
+        except Exception as exc:
+            log.warning("Flatten Selected: make_local failed for %s: %s", plan.object_name, exc)
+
+    lib_name = pathlib.Path(plan.ultimate_library).name
+    msg = f"flattened via direct link to {lib_name} — {applied} propert{'y' if applied == 1 else 'ies'} replayed"
+    if failed:
+        msg += f", {failed} failed (see debug log)"
+    return linkchain.FlattenApplyResult(
+        plan.object_name, True, msg, properties_applied=applied, properties_failed=failed)
+
+
+class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
+    """The single shared action for every CHECKED group in the picker (any
+    mix of rig/standalone-type/remote groups), using the one shared Make
+    Local / Make Copy setting on the "Flattenable overrides" subgroup's own
+    title line — not a per-character button. Remote-sourced members are
+    harvested via a disposable background Blender process first (one open
+    per donor file, batched); local members reuse today's live read."""
+
+    bl_idname = "assetdoctor.flatten_selected"
+    bl_label = "Flatten Selected"
+    bl_description = (
+        "Flatten every CHECKED character/group: link directly from the "
+        "ultimate library, replay its recorded changes, and mirror it into a "
+        "new collection structure with the original hidden (Make Copy). "
+        "Remote-sourced characters are harvested via a disposable background "
+        "Blender process first — can take a while for large donor files. "
+        "Takes a backup first"
+    )
+    bl_options = {"REGISTER"}
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        if not len(wm.assetdoctor_flatten_candidates):
+            self.report({"ERROR"}, "Run Find Flattenable Links first")
+            return {"CANCELLED"}
+        return super().invoke(context, event)
+
+    def run_steps(self, context):
+        wm = context.window_manager
+        rows = wm.assetdoctor_flatten_candidates
+        deselected = set(filter(None, wm.assetdoctor_flatten_deselected.split("\n")))
+
+        groups: dict[str, list] = {}
+        for row in rows:
+            groups.setdefault(row.rig, []).append(row)
+        members = [m for rig, ms in groups.items() if rig not in deselected for m in ms]
+        if not members:
+            self.report({"WARNING"}, "Nothing selected")
+            return
+
+        if not wm.assetdoctor_flatten_make_copy:
+            self.report({"INFO"},
+                       "In-place (Make Copy off) isn't built yet — running as a copy instead")
+        make_local = wm.assetdoctor_flatten_make_local
+
+        yield (0.02, "Backing up…")
+        from .safety import auto_backup
+        auto_backup(context)
+
+        chain_raw = getattr(wm, data_prop("f7chain"), "")
+        chain_report = Report.from_json(chain_raw) if chain_raw else Report(title="", feature="f7chain")
+        routes = linkchain.routes_from_report(chain_report)
+        cached = json.loads(wm.assetdoctor_flatten_plans_json or "{}")
+
+        # --- Harvest every remote member first, one subprocess open per ----
+        # --- donor file, regardless of which group(s) it came from ---------
+        remote_members = [m for m in members if m.is_remote]
+        harvested: dict[str, remote_harvest.HarvestResult] = {}
+        if remote_members:
+            by_file = remote_harvest.group_by_source_file(
+                [(m.name, m.source_file) for m in remote_members])
+            for i, (source_file, names) in enumerate(by_file.items()):
+                base = 0.05 + 0.45 * i / len(by_file)
+                gen = _harvest_remote(source_file, names)
+                result = None
+                try:
+                    while True:
+                        frac, msg = next(gen)
+                        yield (base + 0.45 * frac / len(by_file), msg)
+                except StopIteration as stop:
+                    result = stop.value
+                harvested.update(result or {})
+
+        # --- Build a FlattenPlan for every selected member ------------------
+        plans: dict[str, object] = {}
+        results = []
+        for m in members:
+            if m.is_remote:
+                hr = harvested.get(m.name)
+                if hr is None or not hr.found:
+                    results.append(linkchain.FlattenApplyResult(
+                        m.name, False, "not found in donor file (renamed/deleted since the scan?)"))
+                    continue
+                plan = linkchain.build_flatten_plan(m.name, hr.reference, list(hr.properties), routes)
+            else:
+                if m.name not in cached:
+                    results.append(linkchain.FlattenApplyResult(
+                        m.name, False, "no cached plan — re-run Find Flattenable Links"))
+                    continue
+                plan = linkchain.flatten_plan_from_dict(cached[m.name])
+            if not (plan.route and plan.properties):
+                results.append(linkchain.FlattenApplyResult(
+                    m.name, False, "; ".join(plan.warnings) or "not ready — skipped"))
+                continue
+            plans[m.name] = plan
+
+        # --- Make Copy: mirror placement for every flattenable member ------
+        yield (0.55, "Planning collection placement…")
+        scene = context.scene
+        paths = {}
+        for name, plan in plans.items():
+            obj = bpy.data.objects.get(name)
+            paths[name] = (_object_location_path(scene, obj) if obj is not None
+                           else (scene.collection.name,))
+        mirror_collections = _realize_mirror_plan(scene, paths) if paths else {}
+
+        # --- Apply -----------------------------------------------------------
+        total = len(plans) or 1
+        for i, (name, plan) in enumerate(plans.items()):
+            yield (0.6 + 0.4 * i / total, f"Flattening {name}…")
+            try:
+                result = _flatten_member(context, plan, mirror_collections, make_local)
+            except Exception as exc:
+                from ..log import get_logger
+                get_logger().warning("Flatten Selected: %s crashed: %s", name, exc)
+                result = linkchain.FlattenApplyResult(name, False, f"unexpected error: {exc}")
+            results.append(result)
+
+        context.view_layer.update()
+
+        ok = sum(1 for r in results if r.ok)
+        wm.assetdoctor_flatten_done += ok
+        wm.assetdoctor_flatten_failed += (len(results) - ok)
+        by_name = {r.object_name: r for r in results}
+        for row in members:
+            r = by_name.get(row.name)
+            if r is not None:
+                row.ready = r.ok
+                row.status = r.message
+
+        report = linkchain.build_flatten_apply_report("Selected", results)
+        stash_report(context, report, "f7flatten")
+        yield (1.0, "Done")
+        level = "INFO" if ok == len(results) else "WARNING"
+        self.report({level}, f"Flattened {ok}/{len(results)} part(s). Save to persist.")
+
+
 class ASSETDOCTOR_OT_build_flatten_plan(bpy.types.Operator):
     bl_idname = "assetdoctor.build_flatten_plan"
     bl_label = "Build Flatten Plan (preview)"
@@ -532,20 +933,26 @@ class ASSETDOCTOR_OT_build_flatten_plan(bpy.types.Operator):
 
 
 class ASSETDOCTOR_OT_flatten_category_toggle(bpy.types.Operator):
-    """Expand/collapse one rig/character group in the Find Flattenable
-    Characters picker."""
+    """Toggle membership of ``key`` in a newline-joined WM string-set property
+    -- expand/collapse one rig/character group by default
+    (``assetdoctor_flatten_expanded``), or select/deselect one
+    (``assetdoctor_flatten_deselected``, 2026-06-27 docs/TODO.md Group 11
+    #47 -- DESELECTED, not selected, so every group starts checked without
+    needing to pre-populate the set with every group's name)."""
 
     bl_idname = "assetdoctor.flatten_category_toggle"
-    bl_label = "Expand/Collapse Rig Group"
+    bl_label = "Toggle Rig Group State"
     bl_options = {"INTERNAL"}
 
     key: bpy.props.StringProperty()  # type: ignore[valid-type]
+    prop: bpy.props.StringProperty(default="assetdoctor_flatten_expanded")  # type: ignore[valid-type]
 
     def execute(self, context):
         wm = context.window_manager
-        keys = set(filter(None, wm.assetdoctor_flatten_expanded.split("\n")))
+        raw = getattr(wm, self.prop, "")
+        keys = set(filter(None, raw.split("\n")))
         keys.discard(self.key) if self.key in keys else keys.add(self.key)
-        wm.assetdoctor_flatten_expanded = "\n".join(sorted(keys))
+        setattr(wm, self.prop, "\n".join(sorted(keys)))
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}

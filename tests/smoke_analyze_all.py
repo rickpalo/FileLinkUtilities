@@ -39,7 +39,7 @@ def main():
         res = bpy.ops.assetdoctor.analyze_all("EXEC_DEFAULT")
         rows = list(wm.assetdoctor_analyze_steps)
         checks.append(("analyze_all FINISHED", res == {"FINISHED"}))
-        checks.append(("analyze_all ran all 14 steps", len(rows) == 14))
+        checks.append(("analyze_all ran all 15 steps", len(rows) == 15))
         checks.append(("analyze_all stashed a result", bool(wm.assetdoctor_last_result)))
 
         res2 = bpy.ops.assetdoctor.find_duplicates("EXEC_DEFAULT")
@@ -47,13 +47,23 @@ def main():
         checks.append(("find_duplicates FINISHED", res2 == {"FINISHED"}))
         checks.append(("find_duplicates ran its 4 steps", len(rows2) == 4))
 
-        # Re-run analyze_all AFTER find_duplicates has also been called once —
-        # this is the exact corrupted-RNA-binding scenario: both operators
-        # registered AND both have been invoked at least once.
+        # 2026-06-26: a THIRD operator built on the same _AnalyzeSequencerMixin
+        # ("Find Flattenable Link Chains" + "Find Flattenable Characters"
+        # merged into one trigger, docs/TODO.md #41) -- same RNA-corruption
+        # regression class as analyze_all/find_duplicates, now with one more
+        # registered class sharing the mixin.
+        res2b = bpy.ops.assetdoctor.find_flattenable_links("EXEC_DEFAULT")
+        rows2b = list(wm.assetdoctor_analyze_steps)
+        checks.append(("find_flattenable_links FINISHED", res2b == {"FINISHED"}))
+        checks.append(("find_flattenable_links ran its 2 steps", len(rows2b) == 2))
+
+        # Re-run analyze_all AFTER both other sequencers have also been called
+        # once — this is the exact corrupted-RNA-binding scenario: every
+        # operator registered AND every one has been invoked at least once.
         res3 = bpy.ops.assetdoctor.analyze_all("EXEC_DEFAULT")
         rows3 = list(wm.assetdoctor_analyze_steps)
-        checks.append(("analyze_all still works after find_duplicates ran",
-                       res3 == {"FINISHED"} and len(rows3) == 14))
+        checks.append(("analyze_all still works after the others ran",
+                       res3 == {"FINISHED"} and len(rows3) == 15))
 
         ok = all(p for _, p in checks)
         for label, p in checks:

@@ -10,6 +10,7 @@ from .dep_scan import ASSETDOCTOR_OT_scan_dependencies
 from .linkchain import (
     ASSETDOCTOR_OT_build_flatten_plan,
     ASSETDOCTOR_OT_flatten_category_toggle,
+    ASSETDOCTOR_OT_flatten_selected,
     ASSETDOCTOR_OT_scan_flatten_candidates,
     ASSETDOCTOR_OT_scan_link_chains,
 )
@@ -18,7 +19,11 @@ from .datablock_inspect import (
     ASSETDOCTOR_OT_analyze_overrides,
     ASSETDOCTOR_OT_scan_all_missing,
 )
-from .analyze_all import ASSETDOCTOR_OT_analyze_all, ASSETDOCTOR_OT_find_duplicates
+from .analyze_all import (
+    ASSETDOCTOR_OT_analyze_all,
+    ASSETDOCTOR_OT_find_duplicates,
+    ASSETDOCTOR_OT_find_flattenable_links,
+)
 from .relink import (
     ASSETDOCTOR_OT_dup_lib_select,
     ASSETDOCTOR_OT_make_selected_relative,
@@ -96,10 +101,12 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_scan_flatten_candidates,
     ASSETDOCTOR_OT_build_flatten_plan,
     ASSETDOCTOR_OT_flatten_category_toggle,
+    ASSETDOCTOR_OT_flatten_selected,
     ASSETDOCTOR_OT_check_dependents,
     ASSETDOCTOR_OT_analyze_overrides,
     ASSETDOCTOR_OT_analyze_all,
     ASSETDOCTOR_OT_find_duplicates,
+    ASSETDOCTOR_OT_find_flattenable_links,
     ASSETDOCTOR_OT_scan_all_missing,
     ASSETDOCTOR_OT_scan_broken_links,
     ASSETDOCTOR_OT_relink_pick_file,

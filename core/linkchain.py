@@ -333,6 +333,11 @@ def build_chain_report(graph: DepGraph, root: str, posing: list[ObjectPosingInfo
                   f"{by_mechanism[MODIFIER_DRIVEN]} modifier-driven (not flattenable yet) · "
                   f"{by_mechanism[UNCLASSIFIED]} other local object(s)"),
         severity="info",
+        # 2026-06-27 (docs/TODO.md Group 11 #47, standing summary-propagation
+        # rule): the structured total, so the UI can turn the static
+        # "{N} flattenable" into a LIVE "{remaining} of {N} flattenable"
+        # after Flatten Selected runs, without re-parsing the message text.
+        data={"flattenable_total": by_mechanism[OVERRIDE_WITH_TRANSFORM]},
     ))
 
     for target, paths in sorted(routes.items()):
@@ -373,7 +378,8 @@ def build_chain_report(graph: DepGraph, root: str, posing: list[ObjectPosingInfo
                 message=f"Object/{info.name}{file_tag} is posed via a modifier, not an "
                          "override — not flattenable by the override mechanism (Phase C, "
                          "deferred)",
-                severity="info", items=[f"Object/{info.name}"]))
+                severity="info", items=[f"Object/{info.name}"],
+                data={"source_file": info.source_file}))
 
     if not routes and by_mechanism[OVERRIDE_WITH_TRANSFORM] == 0:
         report.add(Finding(category="clean",
@@ -493,6 +499,35 @@ def routes_from_report(report: Report) -> dict[str, list[list[str]]]:
         paths = finding.data.get("paths") or []
         routes.setdefault(target, []).extend(paths)
     return routes
+
+
+def drop_local_posing_findings(report: Report, current_file: str) -> Report:
+    """A copy of ``report`` with ``posing_override``/``posing_modifier`` findings
+    for objects LOCAL to ``current_file`` removed; findings for objects in
+    OTHER files (reached several hops deep) are kept as-is.
+
+    2026-06-26 (docs/TODO.md #41 follow-up): the live picker
+    (``ops.linkchain.scan_flatten_candidates`` / ``ui.panels._draw_flatten_
+    candidates``) already shows every LOCAL override-with-transform object
+    grouped by character, so repeating them in this report's flat per-object
+    list is pure duplication -- the UI hides those rows. But an object
+    several hops deep, in a file the live picker can never see (it only
+    reads ``bpy.data.objects`` of whichever file is currently open), has NO
+    other home -- hiding those too left a real visibility gap (929+
+    flattenable objects with nothing to inspect beyond a bare list of
+    filenames from :func:`remote_posing_files`). Keeping remote findings here
+    closes that gap without reintroducing the duplication for local ones."""
+    current = _basename(current_file) if current_file else ""
+
+    def _is_local(f: Finding) -> bool:
+        if f.category not in ("posing_override", "posing_modifier"):
+            return False
+        src = f.data.get("source_file", "")
+        return bool(src) and _basename(src) == current
+
+    kept = [f for f in report.findings if not _is_local(f)]
+    return Report(title=report.title, feature=report.feature, findings=kept,
+                  category_details=dict(report.category_details))
 
 
 def remote_posing_files(report: Report, current_file: str) -> list[str]:
@@ -690,7 +725,7 @@ __all__ = [
     "find_chains", "multihop_routes", "read_object_posing", "read_override_reference",
     "classify_objects", "classify_posing", "transform_differs_from_identity",
     "build_chain_report", "build_flatten_plan", "routes_from_report", "remote_posing_files",
-    "build_flatten_plan_report",
+    "drop_local_posing_findings", "build_flatten_plan_report",
     "flatten_plan_to_dict", "flatten_plan_from_dict", "summarize_properties", "build_rig_rollup",
     "FlattenApplyResult", "build_flatten_apply_report",
 ]

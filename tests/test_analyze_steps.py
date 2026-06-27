@@ -1,6 +1,13 @@
 """Unit tests for core.analyze_steps (the Analyze-All sequence, bpy-free)."""
 
-from core.analyze_steps import DUPLICATE_STEP_KEYS, DUPLICATE_STEPS, STEPS, step_by_key
+from core.analyze_steps import (
+    DUPLICATE_STEP_KEYS,
+    DUPLICATE_STEPS,
+    FLATTEN_STEP_KEYS,
+    FLATTEN_STEPS,
+    STEPS,
+    step_by_key,
+)
 
 
 def test_steps_have_unique_keys_and_opnames():
@@ -11,7 +18,7 @@ def test_steps_have_unique_keys_and_opnames():
 
 
 def test_steps_nonempty_and_well_formed():
-    assert len(STEPS) == 14
+    assert len(STEPS) == 15
     for step in STEPS:
         assert step.key and step.label and step.opname.startswith("assetdoctor.")
         assert isinstance(step.kwargs, dict)
@@ -50,3 +57,16 @@ def test_duplicate_steps_is_the_right_subset():
     assert "find_resolution_variants" not in DUPLICATE_STEP_KEYS
     # Every duplicate step is a real STEPS entry, same order as in STEPS.
     assert all(s in STEPS for s in DUPLICATE_STEPS)
+
+
+def test_flatten_steps_is_the_right_subset():
+    """2026-06-26 (docs/TODO.md #41): "Find Flattenable Link Chains" and
+    "Find Flattenable Characters" merged into one "Find Flattenable Links"
+    trigger -- same dispatcher pattern as Find Duplicates."""
+    assert {s.key for s in FLATTEN_STEPS} == set(FLATTEN_STEP_KEYS)
+    assert len(FLATTEN_STEPS) == 2
+    assert all(s in STEPS for s in FLATTEN_STEPS)
+    # Order matters: the grouping step needs the chain step's f7chain data
+    # already stashed, so it must run second, not just be "in the set".
+    assert [s.key for s in FLATTEN_STEPS] == [
+        "find_flattenable_chains", "find_flattenable_characters"]

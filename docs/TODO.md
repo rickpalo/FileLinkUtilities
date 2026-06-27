@@ -119,9 +119,9 @@ never in question once verified three ways.
     NOT covered by Group 11 — still open, pick up separately.
 
 ### Group 4 — Phase 4 Flatten UI polish (`ui/panels.py` + `ops/linkchain.py`)
-13. Per-character checkboxes (select which to flatten, default all checked) + a separate
-    "make local instead" checkbox (default unchecked) near the Flatten button. (Duplicated from
-    the Phase 4 section above for grouping purposes — same item, don't do twice.)
+13. ~~Per-character checkboxes... "make local instead" checkbox...~~ **SUPERSEDED by Group 11
+    item #47 "Flatten v2" (2026-06-27) — fully redesigned and scoped there, don't build from this
+    older, vaguer version.**
 
 ### Group 5 — Quick standalone fixes (different files, but each trivial/self-contained, no
 ### design ambiguity, good filler between bigger groups)
@@ -278,22 +278,261 @@ never in question once verified three ways.
     that subset. Could substantially simplify scope — decide whether "Link Directly" (item c) IS
     this simpler operation (only meaningful/available when `has_direct`) before designing it as a
     generic multi-hop flattener.
-41. **Flattenable overrides — redesign, needs clarification of WHICH view this refers to before any
-    code.** Two existing, DIFFERENT views may both be in scope and may want reconciling: (i) the
-    flat `posing_override` category inside Check Link Chain's generic disclosure
-    (`core/linkchain.py::build_chain_report`, ~line 350 — one row per object, no grouping at all,
-    title "Flattenable overrides (Library Override + transform)"); (ii) "Find Flattenable
-    Characters" (`ui/panels.py::_draw_flatten_candidates`), which ALREADY groups by
-    armature/rig (`ARMATURE_DATA` icon, ready/blocked counts, collapsible member list) — closer to
-    what's described below, but the user reported seeing none of this structure, so either they
-    were looking at (i), or (ii) itself isn't matching the described design on the real file.
-    Asks, assuming the gap is real: (a) same heading-summary ask as #38; (b) group by object type;
-    (c) **highest priority** — group by ARMATURE first (everything parented to a given armature
-    collapsible underneath), then sort/group whatever's left by object type; the list should lead
-    with "a character you CAN flatten" (reusing the Phase 4 Apply blocked/ready classification
-    already built — see the resolved Phase 4 investigation at the top of this file) and clearly
-    flag any character that's blocked and why. Clarify scope (i vs ii vs both) with the user before
-    starting.
+41. ~~**Flattenable overrides — redesign, needs clarification of WHICH view this refers to before
+    any code.**~~ **RESOLVED + BUILT @ v0.2.82 (2026-06-26).** Root cause of the original confusion:
+    two near-identically-named buttons computing the SAME `OVERRIDE_WITH_TRANSFORM` data and
+    showing it TWICE — "Find Flattenable Link Chains" (`assetdoctor.scan_link_chains`, feature
+    `f7chain`) rendered a flat, ungrouped `posing_override`/`posing_modifier` list (this is what the
+    user actually saw — exactly the "Flattenable overrides (Library Override + transform)" title
+    quoted originally), while "Find Flattenable Characters" (`assetdoctor.scan_flatten_candidates`)
+    re-read that SAME data grouped by rig — but only reachable as a SEPARATE second button that
+    hard-required the first to have run already (`scan_flatten_candidates.execute()` errored "Run
+    Find Flattenable Link Chains first" otherwise). User's call once this was traced out: merge the
+    two into one **"Find Flattenable Links"** button (mirroring "Find Duplicates"'s existing
+    multi-step-dispatcher pattern), not just fix the flat list in place.
+
+    **Built:** new `core.analyze_steps.FLATTEN_STEPS` (`find_flattenable_chains` +
+    new `find_flattenable_characters` step, in that order — the second needs the first's f7chain
+    data already stashed) + new `ASSETDOCTOR_OT_find_flattenable_links`
+    (`ops/analyze_all.py`, same `_AnalyzeSequencerMixin`/`ModalProgressMixin` shape as
+    `ASSETDOCTOR_OT_find_duplicates` — see the Group 10 #34 mixin-not-subclass rule, followed
+    correctly here, not re-violated). The new step also joined `STEPS` proper, so Analyze All now
+    groups characters too (14 → 15 steps). The two old operators (`scan_link_chains`/
+    `scan_flatten_candidates`) are UNCHANGED internally and still independently registered (Analyze
+    All's own step list calls them individually) — only their `bl_description`s got a note that
+    they're normally run together now; their old `bl_label`s ("Find Flattenable Link Chains"/
+    "Find Flattenable Characters") only surface in internal step-status lists today, not as
+    standalone buttons.
+
+    **Display dedup:** rather than deleting the per-object `posing_override`/`posing_modifier`
+    Findings from `build_chain_report` (`remote_posing_files` — the "found in another file, open it
+    there" fallback for multi-hop-deep characters — genuinely reads them back out of the stashed
+    Report, and several `test_linkchain.py` tests assert on them; deleting would have broken a
+    load-bearing fallback for zero display benefit), `ui/panels.py::_feature_tree_nodes` now drops
+    just those two category nodes from the RENDERED f7chain tree when `feature == "f7chain"` — the
+    data stays fully intact in the Report/JSON, only the redundant flat display is hidden. The
+    f7chain "overview" line (multi-hop/override+transform/modifier-driven counts) is unchanged and
+    still always visible above the (now deduped) tree.
+
+    **Grouped-picker improvements** (the 3 the user picked, out of the original #41(a)/(b)/(c)
+    asks): (1) **sort ready-first** — `ui/panels.py::_flatten_group_sort_key` (new), 3-tier
+    (fully-ready / partially-ready / fully-blocked), alphabetical only as the final tiebreak;
+    (2) **distinguish real rigs from standalone overrides** — new `is_rig` bool on
+    `ASSETDOCTOR_PG_flatten_candidate` (set in `ops/linkchain.py::scan_flatten_candidates` from
+    whether `_resolve_rig()` found a real armature, vs falling back to the object's own name), real
+    rigs sort before standalone AND draw with `ARMATURE_DATA` vs `OBJECT_DATA`; (3) **show WHY a
+    member is blocked** — this data already existed (`m.status` holds the matching `FlattenPlan`'s
+    `warnings` text whenever not ready — `read this back as already correct, not a gap`), the only
+    real fix was the icon: blocked members drew `QUESTION` (reads as "unknown"), changed to `ERROR`
+    ("blocked, here's why" — the warning text right next to it already explains it).
+
+    Group/object-type grouping (the original #41(b), "group by object type") was NOT done — once
+    rig-tier sorting + the is_rig split landed, the user's 3 picked improvements didn't include it;
+    revisit only if a future file shows a real need (lots of standalone non-rig overrides of
+    genuinely different types bunched together unhelpfully).
+
+    New `tests/smoke_flatten_links.py` (the sort key + the tree-dedup-but-data-intact behavior, both
+    pure-logic-in-a-bpy-importing-module, can't be pytest'd) + extended `tests/smoke_analyze_all.py`
+    (the new operator joins the existing 2-sequencer RNA-corruption-class regression dance, now
+    3-way) + `tests/test_analyze_steps.py` (`FLATTEN_STEPS`, `len(STEPS) == 15`). Suite 402 (+1 net
+    pytest); `smoke_flatten_links`/`smoke_analyze_all`/`smoke_register`/`smoke_utils`/`smoke_report`
+    all green. **NEEDS the user's live-Blender confirm** (panel `draw()`/real override objects can't
+    be exercised headlessly) — particularly the sort order and icon distinction on a real
+    multi-character file, and that the merged button's single status icon reads sensibly.
+
+    **Follow-up fix @ v0.2.83 (2026-06-27), found via the user's live test on `PSM_Stage_v5.1.blend`
+    (929 flattenable, 0 local).** The v0.2.82 dedup above was too broad: it hid the WHOLE
+    `posing_override`/`posing_modifier` categories from the f7chain tree, but the grouped picker
+    (`_draw_flatten_candidates`) only ever shows objects LOCAL to the open file — with zero local
+    candidates, hiding the flat list too left no way to inspect ANY of the 929/4907 beyond a bare
+    remote-filenames note. Fixed: new `core/linkchain.py::drop_local_posing_findings(report,
+    current_file)` drops only the LOCAL rows (still duplicated by the picker); REMOTE rows (object
+    several hops deep, in a file the picker can never see) are kept. Also fixed a latent bug this
+    surfaced: the `posing_modifier` Finding never recorded `source_file` in `data` at all (only
+    `posing_override` did), so a modifier-driven row could never be identified as local — added it.
+    4 new pytest tests (`test_linkchain.py`) + rewrote `smoke_flatten_links.py` to assert
+    local-hidden/remote-kept against a real saved-to-disk file (needed `bpy.data.filepath` to be a
+    real path, not the empty unsaved-file case the first version used). Suite 406.
+
+47. **Flatten v2 — design session 2026-06-27, supersedes the "Design note for the Flatten UI" at
+    the very top of this file (kept above only for historical detail). Real motivating case: on
+    `PSM_Stage_v5.1.blend` the user wants to find a character that's linked indirectly (current
+    file → some intermediate → ultimate library), with changes made to it somewhere in that chain,
+    and end up with a DIRECT link in the current file that's visually identical — without touching
+    the donor file's existing override.** That's a genuinely different operation from today's
+    "Flatten," which only ever re-routes an override that's already LOCAL to the open file — it
+    never creates one from scratch, and never reads properties from a file that isn't open. Full
+    design, decided step-by-step with the user this session:
+
+    **Presentation** (`_draw_flatten_candidates`): standalone objects (no resolvable rig) group by
+    `object.type` instead of one 1-member group per object (today: `row.rig = obj.name` fallback).
+    Each row gets a per-row checkbox (default checked). The **Make Local**/**Make Copy**/
+    **"Flatten Selected"** controls are NOT per-character — there is exactly ONE set, living on the
+    "Flattenable overrides" subgroup's own title line, acting on whichever rows are checked.
+    `Make Local` defaults OFF, `Make Copy` defaults ON.
+
+    **Flatten Selected pipeline**, per checked row:
+    1. **Harvest source properties.** If the override is already local, read it live (today's
+       existing `read_live_override_properties`, unchanged). If it's REMOTE (per the census's
+       `source_file`), the lookup is **scoped to that exact file — name + source_file, never an
+       aggregate `bpy.data` search** (this project has a documented past bug from exactly that:
+       multiple linked libraries can share a literal object name, see
+       [[env-blender-verification]]). **PROBED 2026-06-27
+       (`tests/probe_remote_override_link.py`, throwaway, not a regression test) — the
+       temporary-link idea is dead, not just limited.** Built a real override in a donor file
+       (linked object from a source file, `override_create()`'d, transform adjusted, saved), then
+       tried `bpy.data.libraries.load(donor_path, link=True)` from a fresh session. Confirmed: the
+       donor file's own `bpy.data.objects` genuinely has BOTH the override AND the original linked
+       object, but `libraries.load()`'s `data_from.objects` enumeration showed **neither** — only a
+       third, truly-plain local object (added as a sanity check) was listed. **Blender's linking
+       API only exposes truly-local, non-override IDs; an override (or anything already reached
+       through a link) is invisible to a file trying to link it a second time.** So there is no
+       live-bpy way to harvest a remote override's properties at all — only an offline DNA read of
+       the donor file could do it, and reading the FULL arbitrary `override_library.properties`
+       list that way would need a generic offline RNA-path-to-value resolver (a much bigger,
+       separate undertaking — not started, not assumed needed yet). **Scoped-down, achievable
+       plan instead: reuse data the offline census ALREADY captures.** `ObjectPosingInfo` (built by
+       the existing `read_object_posing`/BAT scan that already runs for Find Flattenable Links)
+       already carries `loc`/`rot`/`quat`/`size` for every posing-classified object, local or
+       remote, no new read needed. Remote-sourced replay is therefore **transform-only** (object
+       loc/rot/quat/scale) — a real, explicit scope difference from local-sourced flattening, which
+       still gets the full arbitrary-property replay (bones/actions/drivers/parenting/materials/
+       modifiers) via the existing live-bpy path. Document this gap in the UI rather than silently
+       under-deliver (e.g. the per-row status/outcome text should say "transform only" for a
+       remote-sourced result, not imply full parity with a local one).
+    2. **Link directly** from the resolved ultimate library; create a brand-new override (never
+       mutates the donor's own override in its own file).
+    3. **Replay** the harvested properties onto it (the "mimic").
+    4. **If Make Copy is on:** build/reuse a mirrored collection tree. Algorithm, fully pinned down
+       this session: find the lowest common collection across every object in THIS apply batch;
+       mirror it named `<original-name>_flattened`, placed as a **sibling** of the real ancestor
+       (a new child of the ancestor's own parent) — UNLESS the ancestor is the Scene Collection
+       itself, which has no parent to be a sibling under, so the mirror becomes a new child of
+       Scene Collection directly. Walk down from there mirroring ONLY branches that contain at
+       least one flattened object (skip empty/irrelevant siblings, e.g. `Collection.005`/`.006` in
+       the worked example below); a collection shared by two or more characters in the same batch
+       is mirrored ONCE and reused, not duplicated per character. New objects (and their existing
+       children — clothing, eyeballs, etc., same parenting preserved) are renamed
+       `<original-name>_flattened`; the ORIGINAL structure is hidden, never deleted. **Moot/no-op
+       for a remote-sourced character** — there's no pre-existing local object to hide in the first
+       place, so the new direct link is simply the only thing that exists. If Make Copy is off:
+       replaces in place (today's existing behavior).
+
+       Worked example (user-provided, confirms the algorithm exactly):
+       ```
+       Before:                              After (Armature1 + Armature2 flattened, Make Copy on):
+       Scene Collection                     Scene Collection
+        Collection.001                       SceneCollection_flattened   <- new, sibling-of-root
+        Collection.002                         Collection.002_flattened
+          Armature1                              Armature1_flattened
+            Clothing1                              Clothing1_flattened
+          Collection.005 (empty)                Collection.004_flattened
+          Collection.006 (empty)                  Armature2_flattened
+        Collection.003                                Clothing2_flattened
+        Collection.004                       Collection.001
+          Armature2                          Collection.002
+            Clothing2                          Armature1
+                                                  Clothing1
+                                                Collection.005
+                                                Collection.006
+                                              Collection.003
+                                              Collection.004
+                                                Armature2
+                                                  Clothing2
+       ```
+       (Root is named after the true lowest common ancestor, `SceneCollection_flattened` here
+       because Scene Collection happens to be it in this example — NOT a fixed literal name. If
+       two flattened characters shared a deeper common collection, e.g. both under
+       `Collection.002` but in different sub-collections, that shared collection is mirrored once
+       and reused, not duplicated.)
+    5. **If Make Local is on:** final step appended to the end of the pipeline (not an alternate
+       branch) — `make_local()` the result and its children, fully detaching from the library.
+    6. **Update outcome counts in every place they're shown**, per the new standing
+       [[feedback-summary-propagation]] rule: the subgroup title becomes something like
+       `"Flattenable overrides — XX original, YY flattened, ZZ failed"`; the top overview line's
+       `"YY flattenable"` becomes `"AA of YY flattenable"` (AA = remaining, i.e. not yet
+       flattened) — both read from the same persistent state, both update together after every
+       apply, not just a one-shot operator message.
+
+    **Open, deferred without guessing:** whether shape-key VALUES get captured as override
+    properties at all (depends on whether the Key/Mesh sub-data participates in the override
+    hierarchy — version/setup-dependent) — verify against a real character before trusting either
+    way; if they're driver-driven from the rig instead of manually set, they likely need no replay
+    at all since the driver lives in shared library data, not per-character.
+
+    **Anchor-finding for a remote character's placement — real screenshot-driven correction,
+    2026-06-27, then deliberately scoped down for v1.** Initial assumption was wrong: a
+    remote-sourced character usually DOES have a real local anchor in the current file (e.g. a
+    local Empty instancing a linked Collection several hops from the actual override — confirmed
+    against a real Outliner screenshot of `PSM_Stage_v5.1`'s `People > Courtyard_people_left_near_a`
+    structure) — `anchor.users_collection` gives its placement directly, no tree-walk (that part was
+    never hard). The genuinely hard part is finding WHICH local anchor corresponds to a given remote
+    character in the first place — tractable in principle (match the chain's first-hop library path
+    against local Empties'/Objects' `instance_collection.library`/`.library`, disambiguating by
+    instanced-collection name if more than one local anchor shares that library) but real new work,
+    not built yet. **Scope decision: defer it.** For v1, every remote-sourced character is treated
+    as "no anchor found," which the mirroring algorithm above ALREADY has a defined fallback for —
+    Scene Collection. This composes for free with the rest of the algorithm: a batch mixing local
+    and remote characters still works, since the lowest-common-ancestor of a real collection and
+    "Scene Collection" is just Scene Collection. **In-place (Make Copy unchecked) is also deferred
+    this round** — the checkbox stays in the UI defaulting on, but the operator runs the copy path
+    regardless of its state for now (reporting that in-place isn't built yet if someone unchecks
+    it), since the user expects the in-place case to be simpler to build once the copy path (and
+    its mirroring/renaming logic) is proven.
+
+    **BUILT @ v0.2.84 (2026-06-27), NEEDS LIVE-BLENDER CONFIRM (panel `draw()` and real override
+    objects can't be exercised headlessly — verified instead via real synthetic .blend files this
+    session, see below).** Two Blender-API facts discovered by hand while building/testing this,
+    neither obvious going in and both load-bearing for the design: **(1)** `Object.library` always
+    attributes to a datablock's TRUE owning file, even through several layers of indirection — a
+    file that only reaches an object via ANOTHER file's collection never "owns" it. **(2)**
+    `override_create()` only succeeds on an object whose `.library` is a DIRECT dependency of the
+    CURRENT file — never one only reachable through another file's collection. Together these
+    explain why the real `PSM_Stage_v5.1.blend` has 0 local candidates: it canNOT create its own
+    override on anything it only reaches indirectly, same as the synthetic test files built to
+    verify this.
+
+    What shipped: `core/remote_harvest.py` (script/command builders + output parser, bpy-free,
+    7 tests) + `core/collection_mirror.py` (the lowest-common-ancestor path math, bpy-free, 10
+    tests, includes the exact user-provided worked example). `ops/linkchain.py` gained
+    `_harvest_remote` (the disposable-subprocess lifecycle, mirrors `ops/dryrun_render.py` exactly),
+    `_realize_mirror_plan`/`_resolve_real_collection` (real Collection creation from the path math —
+    one real bug caught by the smoke test: the first mirror entry's parent isn't always the scene
+    root, it can be arbitrarily deep when there's only one object in the batch), `_flatten_member`
+    (the generalized per-member flatten — deliberately NOT a refactor of the existing
+    production-validated `_flatten_rig`, kept untouched), and the new `ASSETDOCTOR_OT_flatten_selected`
+    operator tying it together. `scan_flatten_candidates` now groups standalone (no-rig) LOCAL
+    objects by `object.type` instead of one row each, and ALSO surfaces remote candidates (status
+    "not yet checked" until harvested). `ui/panels.py`'s picker gained a per-group checkbox
+    (tracked as DESELECTED keys, default all-checked) and the single shared Make Local/Make Copy/
+    "Flatten Selected" control row living on the "Flattenable overrides" heading, per
+    [[feedback-summary-propagation]] — both that heading's own outcome line ("XX original, YY
+    flattened, ZZ failed") and the top f7chain overview line ("AA of YY flattenable", new
+    `_f7chain_headline`) read from the same persistent `wm.assetdoctor_flatten_done`/`_failed` state
+    and update together after every apply.
+
+    Deliberately scoped down for this round (recorded above, not re-litigated): in-place (Make Copy
+    unchecked) isn't built — the operator always copies regardless of the checkbox, reporting that
+    in-place isn't built yet if unchecked; a remote character's collection-mirror anchor is always
+    Scene Collection (the harder "find the real local anchor, e.g. a Collection-instance Empty"
+    lookup is deferred); shape-key replay fidelity is unverified either way.
+
+    Verified via 3 new real-Blender smoke tests (synthetic .blend files built and reopened for
+    real, not mocked) since panel/override behavior can't be pytest'd: `smoke_flatten_selected.py`
+    (a genuine local override end-to-end — ready-detection, flatten, collection mirroring, renaming,
+    hide-original, Make Local, AND the live top-line count, across two differently-typed objects so
+    group-selection logic is exercised too) and `smoke_remote_harvest.py` (the actual subprocess
+    round-trip against a real donor file). `smoke_flatten_links.py` updated for the new `is_remote`
+    field. Suite 424 pytest; all 7 relevant smoke tests green
+    (`smoke_register`/`smoke_utils`/`smoke_report`/`smoke_analyze_all`/`smoke_flatten_links`/
+    `smoke_flatten_selected`/`smoke_remote_harvest`).
+
+    **One Blender-internal console message seen during the smoke test, not yet root-caused, low
+    severity (same category as the already-documented "Smock.002" residual issue at the top of this
+    file):** `lib.override ERROR Existing isolated override 'OBChar' has a non-null hierarchy root
+    ('OBChar_flattened'), will be cleared` — appears after a successful flatten; Blender appears to
+    self-correct it (every functional check still passed). Not investigated further this session —
+    flag if it recurs or matters on a real file.
 
 ### Group 11 — Analyze/Utilities/Results panel consolidation — ALL 5 PHASES BUILT @ v0.2.77-0.2.81
 ### (2026-06-26), NEEDS ONE LIVE-BLENDER CONFIRM PASS (deliberately batched per the user's own

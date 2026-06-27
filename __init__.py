@@ -280,6 +280,21 @@ def register() -> None:
     # Chains already found some elsewhere in the chain — "" otherwise.
     bpy.types.WindowManager.assetdoctor_flatten_remote_note = bpy.props.StringProperty(default="")
 
+    # Flatten v2 (docs/TODO.md Group 11 #47). Per-group selection is tracked
+    # as DESELECTED keys (newline-joined) -- absence means selected, so every
+    # group starts checked by default without needing to pre-populate a set.
+    bpy.types.WindowManager.assetdoctor_flatten_deselected = bpy.props.StringProperty(default="")
+    # The single shared Make Local / Make Copy toggle pair on the
+    # "Flattenable overrides" subgroup's own title line (not per-character).
+    bpy.types.WindowManager.assetdoctor_flatten_make_local = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.assetdoctor_flatten_make_copy = bpy.props.BoolProperty(default=True)
+    # Persistent outcome counts so the subgroup title AND the top overview
+    # line can both show "AA of YY flattenable" after every Flatten Selected
+    # run, per the standing summary-propagation rule -- not just a one-shot
+    # operator message.
+    bpy.types.WindowManager.assetdoctor_flatten_done = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_flatten_failed = bpy.props.IntProperty(default=0)
+
     # Per-node expand state for the Analyze panel's inline report disclosure
     # (item a/c, 2026-06-25) — deliberately separate from each feature's own
     # exp_prop (the dedicated Reports tab pre-seeds THAT one expanded; this
@@ -353,7 +368,10 @@ def unregister() -> None:
                 "assetdoctor_analyze_steps", "assetdoctor_analyze_index",
                 "assetdoctor_flatten_candidates", "assetdoctor_flatten_index",
                 "assetdoctor_flatten_plans_json", "assetdoctor_flatten_expanded",
-                "assetdoctor_flatten_remote_note", "assetdoctor_detail_expanded",
+                "assetdoctor_flatten_remote_note", "assetdoctor_flatten_deselected",
+                "assetdoctor_flatten_make_local", "assetdoctor_flatten_make_copy",
+                "assetdoctor_flatten_done", "assetdoctor_flatten_failed",
+                "assetdoctor_detail_expanded",
                 "assetdoctor_idle_seconds", "assetdoctor_idle_detected"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]

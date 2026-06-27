@@ -34,6 +34,8 @@ STEPS: tuple[AnalyzeStep, ...] = (
     AnalyzeStep("audit_file", "Audit This File", "assetdoctor.analyze_overrides", {}),
     AnalyzeStep("find_flattenable_chains", "Find Flattenable Link Chains",
                 "assetdoctor.scan_link_chains", {}),
+    AnalyzeStep("find_flattenable_characters", "Group Flattenable Characters",
+                "assetdoctor.scan_flatten_candidates", {}),
     AnalyzeStep("find_duplicate_datablocks", "Find Duplicate Data-blocks",
                 "assetdoctor.scan_datablock_dups", {}),
     AnalyzeStep("find_broken_links", "Find Broken Library Links", "assetdoctor.scan_broken_links", {}),
@@ -79,4 +81,15 @@ DUPLICATE_STEPS: tuple[AnalyzeStep, ...] = tuple(
 )
 
 
-__all__ = ["AnalyzeStep", "STEPS", "step_by_key", "DUPLICATE_STEP_KEYS", "DUPLICATE_STEPS"]
+# 2026-06-26: "Find Flattenable Link Chains" and "Find Flattenable Characters"
+# merged into one "Find Flattenable Links" trigger (docs/TODO.md #41) — the
+# second step always needs the first step's f7chain data, so they always ran
+# back-to-back anyway; this just removes the manual two-click requirement.
+FLATTEN_STEP_KEYS = ("find_flattenable_chains", "find_flattenable_characters")
+FLATTEN_STEPS: tuple[AnalyzeStep, ...] = tuple(
+    s for s in STEPS if s.key in FLATTEN_STEP_KEYS
+)
+
+
+__all__ = ["AnalyzeStep", "STEPS", "step_by_key", "DUPLICATE_STEP_KEYS", "DUPLICATE_STEPS",
+           "FLATTEN_STEP_KEYS", "FLATTEN_STEPS"]

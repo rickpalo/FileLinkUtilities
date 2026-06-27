@@ -244,6 +244,58 @@ def test_remote_posing_files_dedupes_and_sorts():
         "another", "people1"]
 
 
+# --- drop_local_posing_findings -----------------------------------------------
+
+def test_drop_local_posing_findings_drops_only_the_current_files_rows():
+    """docs/TODO.md #41 follow-up: the live picker only ever sees objects
+    local to the open file, so local posing_override/posing_modifier rows are
+    pure duplication -- but a remote one (several hops deep) has no other
+    home and must survive."""
+    g = DepGraph()
+    posing = [_info(name="LocalChar", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="/proj/stage.blend"),
+              _info(name="RemoteChar", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="/proj/people1.blend")]
+    report = linkchain.build_chain_report(g, "/proj/stage.blend", posing)
+    filtered = linkchain.drop_local_posing_findings(report, "/proj/stage.blend")
+    names = [f.message for f in filtered.findings if f.category == "posing_override"]
+    assert not any("LocalChar" in m for m in names)
+    assert any("RemoteChar" in m for m in names)
+
+
+def test_drop_local_posing_findings_drops_local_modifier_rows_too():
+    g = DepGraph()
+    posing = [_info(name="LocalChar", has_modifier=True, source_file="/proj/stage.blend")]
+    report = linkchain.build_chain_report(g, "/proj/stage.blend", posing)
+    filtered = linkchain.drop_local_posing_findings(report, "/proj/stage.blend")
+    assert not any(f.category == "posing_modifier" for f in filtered.findings)
+
+
+def test_drop_local_posing_findings_keeps_everything_else_untouched():
+    """multihop_route/overview findings, and the original report object
+    itself, must be unaffected -- this only ever filters the two posing
+    categories on a COPY."""
+    g = DepGraph()
+    g.add_edge("/proj/stage.blend", "/proj/people1.blend")
+    posing = [_info(name="LocalChar", has_override=True, loc=(1.0, 0.0, 0.0),
+                    source_file="/proj/stage.blend")]
+    report = linkchain.build_chain_report(g, "/proj/stage.blend", posing)
+    before = len(report.findings)
+    filtered = linkchain.drop_local_posing_findings(report, "/proj/stage.blend")
+    assert len(report.findings) == before  # original untouched
+    assert any(f.category == "overview" for f in filtered.findings)
+
+
+def test_drop_local_posing_findings_keeps_rows_with_no_source_file():
+    """An unset source_file is ambiguous, not provably local -- fail toward
+    keeping it visible rather than silently hiding it."""
+    g = DepGraph()
+    posing = [_info(name="Char1", has_override=True, loc=(1.0, 0.0, 0.0))]  # source_file=""
+    report = linkchain.build_chain_report(g, "/proj/stage.blend", posing)
+    filtered = linkchain.drop_local_posing_findings(report, "/proj/stage.blend")
+    assert any(f.category == "posing_override" for f in filtered.findings)
+
+
 # --- read_override_reference (stubbed BAT blocks -- the real DNA paths were
 # confirmed against actual production overrides via a one-off probe script,
 # 2026-06-25, not a synthetic fixture; see docs/TODO.md and the module

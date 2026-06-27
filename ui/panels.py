@@ -150,6 +150,21 @@ class ASSETDOCTOR_PG_flatten_candidate(bpy.types.PropertyGroup):
     # The ARMATURE/rig this part rolls up under (own name when it IS the rig,
     # or when no rig could be resolved — see ops.linkchain._resolve_rig).
     rig: bpy.props.StringProperty()  # type: ignore[valid-type]
+    # True when `rig` came from a real armature relationship (self/modifier/
+    # parent chain); False when no rig could be found and `rig` fell back to
+    # the object's own name (a standalone override, not a multi-part
+    # character) — 2026-06-26, lets the picker visually tell the two apart.
+    is_rig: bpy.props.BoolProperty()  # type: ignore[valid-type]
+    # Flatten v2 (2026-06-27, docs/TODO.md Group 11 #47): True when this row
+    # came from the OFFLINE census (core.linkchain.drop_local_posing_findings'
+    # remote half), not a live bpy.data.objects read -- it has no live
+    # override to inspect yet, so `ready`/`status` are placeholders until
+    # Flatten Selected actually harvests it (core.remote_harvest).
+    is_remote: bpy.props.BoolProperty()  # type: ignore[valid-type]
+    # The .blend this override's data physically lives in -- "" for local
+    # rows (this file IS the source). Used to batch remote harvests one
+    # subprocess open per donor file, never per character.
+    source_file: bpy.props.StringProperty()  # type: ignore[valid-type]
 
 
 class ASSETDOCTOR_PG_broken_lib(bpy.types.PropertyGroup):
@@ -587,14 +602,58 @@ def _feature_tree_nodes(wm, feature: str) -> tuple[bool, list]:
     if not raw:
         return False, []
     try:
-        nodes = (nodes_from_json(raw) if feature in TREE_FEATURES
-                 else report_to_tree(Report.from_json(raw)))
+        if feature == "f7chain":
+            # The LOCAL half of posing_override/posing_modifier duplicates the
+            # grouped-by-character picker drawn right below by
+            # _draw_flatten_candidates (the two used to be separate buttons —
+            # merged into "Find Flattenable Links" 2026-06-26, docs/TODO.md
+            # #41) -- drop just those rows. REMOTE findings (an object several
+            # hops deep, in a file the live picker can never see -- it only
+            # reads bpy.data.objects of whichever file is open) have no other
+            # home and are kept; the underlying stashed Report is untouched
+            # either way (remote_posing_files still reads the full original).
+            import bpy
+
+            from ..core.linkchain import drop_local_posing_findings
+
+            report = drop_local_posing_findings(Report.from_json(raw), bpy.data.filepath)
+            nodes = report_to_tree(report)
+        else:
+            nodes = (nodes_from_json(raw) if feature in TREE_FEATURES
+                     else report_to_tree(Report.from_json(raw)))
     except Exception:
         return False, []
     return True, nodes
 
 
-def _report_headline(nodes, feature: str) -> tuple[str, object | None]:
+def _f7chain_headline(wm, nodes) -> tuple[str, object | None]:
+    """f7chain's flat overview line, with the flattenable count made LIVE
+    (docs/TODO.md Group 11 #47, the standing summary-propagation rule) —
+    "AA of YY flattenable" instead of the static YY baked in at scan time,
+    where AA is however many are still pending after any Flatten Selected
+    run. Substitutes the known exact substring `core.linkchain.
+    build_chain_report` writes rather than a generic parse -- this module
+    authors both sides of that string, so an exact match is reliable."""
+    first = nodes[0]
+    label = first.label
+    from ..core.report import Report
+    from ..ops.report_store import data_prop
+
+    try:
+        report = Report.from_json(getattr(wm, data_prop("f7chain"), ""))
+        overview = next((f for f in report.findings if f.category == "overview"), None)
+        total = overview.data.get("flattenable_total") if overview else None
+    except Exception:
+        total = None
+    if total is not None:
+        remaining = max(0, total - wm.assetdoctor_flatten_done - wm.assetdoctor_flatten_failed)
+        old = f"{total} flattenable (override+transform)"
+        new = f"{remaining} of {total} flattenable (override+transform)"
+        label = label.replace(old, new, 1)
+    return label, first
+
+
+def _report_headline(nodes, feature: str, wm) -> tuple[str, object | None]:
     """``(headline_text, node_to_skip)`` for a stashed report/tree feature's
     top-level nodes. ``node_to_skip`` is the exact node whose own ``.label``
     the headline already quotes verbatim (a flat clean/overview row) — the
@@ -610,6 +669,8 @@ def _report_headline(nodes, feature: str) -> tuple[str, object | None]:
     fake-only, 0 identical group(s)")."""
     if feature == "f7":
         return _f7_dependency_summary(nodes), None
+    if feature == "f7chain":
+        return _f7chain_headline(wm, nodes)
     # Node keys are "<report.feature>:<category>[:i]" — report.feature's own
     # casing doesn't always match the lowercase key this panel stashes/looks
     # features up under (e.g. geometry_dedup's Report uses "F5" while this is
@@ -665,7 +726,7 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
         row.label(text="✓ nothing found")
         return
 
-    headline, skip = _report_headline(nodes, feature)
+    headline, skip = _report_headline(nodes, feature, wm)
     remaining = [n for n in nodes if n is not skip]
     if not remaining:
         row.label(text=headline)
@@ -973,16 +1034,65 @@ def _analyze_row(layout, wm, step_key, opname, text, icon, summary="", has_run=N
     return op
 
 
+def _flatten_group_sort_key(rig: str, members: list) -> tuple:
+    """2026-06-26 (docs/TODO.md #41): lead with real characters you CAN
+    flatten, not an alphabetical shuffle. Primary tier: real ARMATURE-rooted
+    rigs, then standalone overrides (grouped by object type since 2026-06-27,
+    docs/TODO.md Group 11 #47), then remote-sourced groups last (their
+    readiness is unknown until Flatten Selected actually harvests them, so
+    they're the least immediately actionable). Secondary: fully-ready
+    groups, then partially-ready, then fully-blocked. Tertiary: alphabetical,
+    so the order is still stable/predictable within a tier."""
+    is_rig = members[0].is_rig if members else False
+    is_remote = members[0].is_remote if members else False
+    ready = sum(1 for m in members if m.ready)
+    if ready == len(members) and ready > 0:
+        readiness = 0
+    elif ready > 0:
+        readiness = 1
+    else:
+        readiness = 2
+    tier = 0 if is_rig else (2 if is_remote else 1)
+    return (tier, readiness, rig.lower())
+
+
+def _flattenable_overrides_summary(wm) -> str:
+    """The "Flattenable overrides" subgroup's own live outcome line —
+    docs/TODO.md Group 11 #47's standing summary-propagation rule: every
+    action that changes the count updates this AND the top overview line
+    (see _f7chain_headline) together, not just one of them."""
+    rows = wm.assetdoctor_flatten_candidates
+    total = len(rows)
+    done = wm.assetdoctor_flatten_done
+    failed = wm.assetdoctor_flatten_failed
+    return f"Flattenable overrides — {total} original, {done} flattened, {failed} failed"
+
+
 def _draw_flatten_candidates(layout, wm):
     """Phase 4-B picker, grouped by ARMATURE/rig (user feedback, 2026-06-25:
     present everything in terms of the rig, with body/eyes/clothes rolled up
     underneath). Each rig's combined replay rollup (core.linkchain.
     build_rig_rollup) shows directly below its own row — no separate report
     tab needed to judge whether flattening one is worth it; the small
-    FILE_TEXT button stashes the read-only preview (f7flatten report); the
-    "Flatten (creates backup)" button (Phase 4 Apply, 2026-06-25) only
-    appears once expanded — and only when at least one part is ready — so
-    the real mutation isn't one click away from the collapsed list."""
+    FILE_TEXT button stashes the read-only preview (f7flatten report).
+
+    Sort/icon redesign 2026-06-26 (docs/TODO.md #41): groups used to sort
+    purely alphabetically with one icon for every group regardless of shape
+    — see :func:`_flatten_group_sort_key` for the new ready-first/rig-first
+    ordering; a standalone override (no rig found) now draws with OBJECT_DATA
+    instead of ARMATURE_DATA so it doesn't read as a multi-part character.
+
+    Flatten v2 (2026-06-27, docs/TODO.md Group 11 #47): a per-character
+    "Flatten (creates backup)" button no longer exists — replaced by ONE
+    shared Make Local / Make Copy / "Flatten Selected" control row living on
+    the outer "Flattenable overrides" heading, acting on whichever GROUPS
+    have their own checkbox ticked (default all ticked — tracked as
+    DESELECTED keys, so nothing needs pre-populating). Remote-sourced groups
+    (object.type/rig unknown, only discoverable via the offline census) show
+    a QUESTION icon ("not yet checked") instead of CHECKMARK/ERROR, since
+    their readiness genuinely isn't known until Flatten Selected harvests
+    them; standalone (no-rig) LOCAL members are grouped by object type
+    instead of one row per object."""
     rows = wm.assetdoctor_flatten_candidates
     if not len(rows):
         return
@@ -992,6 +1102,7 @@ def _draw_flatten_candidates(layout, wm):
 
     cached = json.loads(wm.assetdoctor_flatten_plans_json or "{}")
     expanded = set(filter(None, wm.assetdoctor_flatten_expanded.split("\n")))
+    deselected = set(filter(None, wm.assetdoctor_flatten_deselected.split("\n")))
 
     groups: dict[str, list] = {}
     order: list[str] = []
@@ -1001,34 +1112,60 @@ def _draw_flatten_candidates(layout, wm):
             order.append(row.rig)
         groups[row.rig].append(row)
 
-    box = layout.box().column(align=True)
-    for rig in sorted(order, key=str.lower):
+    outer = layout.box().column(align=True)
+    hrow = outer.row(align=True)
+    all_key = "__flattenable_overrides__"
+    is_open = all_key in expanded
+    hop = hrow.operator("assetdoctor.flatten_category_toggle", text="",
+                        icon="TRIA_DOWN" if is_open else "TRIA_RIGHT", emboss=False)
+    hop.key = all_key
+    hrow.label(text=_flattenable_overrides_summary(wm))
+    if not is_open:
+        return
+    crow = outer.row(align=True)
+    crow.prop(wm, "assetdoctor_flatten_make_local", text="Make Local")
+    crow.prop(wm, "assetdoctor_flatten_make_copy", text="Make Copy")
+    crow.operator("assetdoctor.flatten_selected", text="Flatten Selected", icon="CHECKMARK")
+
+    box = outer.column(align=True)
+    for rig in sorted(order, key=lambda r: _flatten_group_sort_key(r, groups[r])):
         members = groups[rig]
         plans = [linkchain.flatten_plan_from_dict(cached[m.name]) for m in members if m.name in cached]
         ready = sum(1 for m in members if m.ready)
+        is_rig = members[0].is_rig
+        is_remote = members[0].is_remote
         is_exp = rig in expanded
+        is_checked = rig not in deselected
         crow = box.row(align=True)
+        cop = crow.operator("assetdoctor.flatten_category_toggle", text="",
+                            icon="CHECKBOX_HLT" if is_checked else "CHECKBOX_DEHLT", emboss=False)
+        cop.key, cop.prop = rig, "assetdoctor_flatten_deselected"
         crow.operator("assetdoctor.flatten_category_toggle", text="",
                       icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = rig
-        crow.label(text=f"{rig}  ({ready}/{len(members)} part(s) ready)", icon="ARMATURE_DATA")
+        group_icon = "ARMATURE_DATA" if is_rig else ("LINKED" if is_remote else "OBJECT_DATA")
+        if is_remote:
+            crow.label(text=f"{rig}  ({len(members)} part(s), remote)", icon=group_icon)
+        else:
+            crow.label(text=f"{rig}  ({ready}/{len(members)} part(s) ready)", icon=group_icon)
         crow.operator("assetdoctor.build_flatten_plan", text="", icon="FILE_TEXT").name = rig
         if not is_exp:
             continue
-        rollup = box.row(align=True)
-        rollup.separator(factor=2.0)
-        rollup.label(text=linkchain.build_rig_rollup(plans), icon="INFO")
-        if ready:
-            arow = box.row(align=True)
-            arow.separator(factor=2.0)
-            aop = arow.operator("assetdoctor.build_flatten_plan",
-                                text="Flatten (creates backup)", icon="CHECKMARK")
-            aop.name = rig
-            aop.apply = True
+        if plans:
+            rollup = box.row(align=True)
+            rollup.separator(factor=2.0)
+            rollup.label(text=linkchain.build_rig_rollup(plans), icon="INFO")
         for m in members:
+            # `m.status` already holds the blocking REASON (the matching
+            # FlattenPlan's warnings — "no override properties found to
+            # replay", etc.) whenever not ready, set in
+            # ops.linkchain.scan_flatten_candidates; ERROR (was QUESTION,
+            # 2026-06-26) reads as "blocked, here's why" instead of "unknown".
+            # A remote member is neither ready nor blocked yet — QUESTION,
+            # genuinely unknown until Flatten Selected harvests it.
             mrow = box.row(align=True)
             mrow.separator(factor=3.0)
-            mrow.label(text=f"{m.name}  —  {m.status}",
-                      icon="CHECKMARK" if m.ready else "QUESTION")
+            icon = "CHECKMARK" if m.ready else ("QUESTION" if m.is_remote else "ERROR")
+            mrow.label(text=f"{m.name}  —  {m.status}", icon=icon)
 
     # The detailed per-property Flatten Plan preview/apply result (Group 11
     # #46, 2026-06-26) — the FILE_TEXT button above stashes it; previously
@@ -1075,12 +1212,15 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         _analyze_row(layout, wm, "audit_file", "assetdoctor.analyze_overrides",
                      "Audit This File", "LIBRARY_DATA_OVERRIDE", has_run=_feature_has_run(wm, "f7live"))
         _draw_report_detail(layout, wm, "f7live")
-        _analyze_row(layout, wm, "find_flattenable_chains", "assetdoctor.scan_link_chains",
-                     "Find Flattenable Link Chains", "LINKED", has_run=_feature_has_run(wm, "f7chain"))
-        _draw_report_detail(layout, wm, "f7chain")
-        _analyze_row(layout, wm, "", "assetdoctor.scan_flatten_candidates",
-                     "Find Flattenable Characters", "LIBRARY_DATA_OVERRIDE",
+        # Merged 2026-06-26 (docs/TODO.md #41) -- "Find Flattenable Link
+        # Chains" and "Find Flattenable Characters" were really one workflow
+        # wearing two buttons (the second always needed the first's f7chain
+        # data already stashed); one click now runs both via
+        # assetdoctor.find_flattenable_links.
+        _analyze_row(layout, wm, "find_flattenable_chains", "assetdoctor.find_flattenable_links",
+                     "Find Flattenable Links", "LIBRARY_DATA_OVERRIDE",
                      _flatten_candidates_summary(wm))
+        _draw_report_detail(layout, wm, "f7chain")
         _draw_flatten_candidates(layout, wm)
 
         _analyze_row(layout, wm, "find_broken_links", "assetdoctor.scan_broken_links",
