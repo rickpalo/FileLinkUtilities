@@ -61,11 +61,36 @@ class ASSETDOCTOR_PG_tree_row(bpy.types.PropertyGroup):
     popup_parent: bpy.props.StringProperty()  # type: ignore[valid-type]
     popup_basename: bpy.props.StringProperty()  # type: ignore[valid-type]
     prop: bpy.props.StringProperty()  # expanded-keys WM prop this row belongs to
+    # Resource Usage's 3 real columns (docs/TODO.md #15) -- empty for every
+    # other tree, which keeps using `detail` instead (see draw_item below).
+    ram: bpy.props.StringProperty()  # type: ignore[valid-type]
+    vram: bpy.props.StringProperty()  # type: ignore[valid-type]
+    disk: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+
+# Fixed width (UI units) for each RAM/VRAM/disk column (docs/TODO.md #15,
+# 2026-06-27) -- shared by the Resource Usage header and
+# ASSETDOCTOR_UL_tree.draw_item's resource-row branch so values actually
+# line up under their header instead of drifting with content length.
+_RESOURCE_COL_WIDTH = 4.4
+
+
+def _resource_columns(row):
+    """3 fixed-width, right-aligned sub-layouts for RAM/VRAM/disk."""
+    cols = []
+    for _ in range(3):
+        col = row.row()
+        col.alignment = "RIGHT"
+        col.ui_units_x = _RESOURCE_COL_WIDTH
+        cols.append(col)
+    return cols
 
 
 class ASSETDOCTOR_UL_tree(bpy.types.UIList):
     """Virtualized, scrollable tree for the Report and Resource panels: indent +
-    expand toggle + tooltip-bearing label + right-aligned detail. Shared by both."""
+    expand toggle + tooltip-bearing label + right-aligned detail. Shared by both.
+    A row with ``ram``/``vram``/``disk`` set (only Resource rows) draws those as
+    3 real aligned columns instead of the generic single ``detail`` column."""
 
     bl_idname = "ASSETDOCTOR_UL_tree"
 
@@ -119,7 +144,10 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
         if item.popup_parent:
             op.popup_parent = item.popup_parent
             op.popup_basename = item.popup_basename
-        if item.detail:
+        if item.ram or item.vram or item.disk:
+            for col, val in zip(_resource_columns(row), (item.ram, item.vram, item.disk)):
+                col.label(text=val)
+        elif item.detail:
             sub = row.row()
             sub.alignment = "RIGHT"
             sub.label(text=item.detail)
@@ -146,6 +174,12 @@ class ASSETDOCTOR_PG_flatten_candidate(bpy.types.PropertyGroup):
 
     # `name` (built-in) holds the Object's name.
     ready: bpy.props.BoolProperty()  # type: ignore[valid-type]
+    # True once Flatten Selected has actually applied this part (not just
+    # evaluated it as ready) -- 2026-06-27 user feedback: a fully-done GROUP
+    # (every member's `done`) swaps its checkbox for a plain checkmark in
+    # the picker instead of moving to a separate "Successfully Flattened"
+    # subgroup, the lower-effort of the two options offered.
+    done: bpy.props.BoolProperty()  # type: ignore[valid-type]
     status: bpy.props.StringProperty()  # one-line summary or blocking reason  # type: ignore[valid-type]
     # The ARMATURE/rig this part rolls up under (own name when it IS the rig,
     # or when no rig could be resolved — see ops.linkchain._resolve_rig).
@@ -165,6 +199,14 @@ class ASSETDOCTOR_PG_flatten_candidate(bpy.types.PropertyGroup):
     # rows (this file IS the source). Used to batch remote harvests one
     # subprocess open per donor file, never per character.
     source_file: bpy.props.StringProperty()  # type: ignore[valid-type]
+    # Outer grouping key, ABOVE `rig` (2026-06-27, docs/TODO.md): "" for local
+    # rows (no outer level, drawn flat as before); "Remote: <file>" for
+    # remote rows, so the picker can offer one "select all in this donor
+    # file" toggle while still letting individual characters (the inner
+    # `rig` groups) be picked separately -- the old design grouped every
+    # character in one donor file under a single key, making that
+    # impossible.
+    group_parent: bpy.props.StringProperty()  # type: ignore[valid-type]
 
 
 class ASSETDOCTOR_PG_broken_lib(bpy.types.PropertyGroup):
@@ -825,13 +867,13 @@ def _duplicate_textures_headline(wm, narrow: bool) -> str:
     if not scanned:
         return ""
     if not len(families) and not conflicts:
-        return "Duplicate Materials/Textures — none found"
+        return "Image Content — ✓ none found"
     if narrow:
-        return f"Duplicates — {mats} mat / {removable} tex"
+        return f"Image Content — {mats} mat / {removable} tex"
     bits = [f"{mats} material(s)", f"{removable} texture(s) redundant"]
     if conflicts:
-        bits.append(f"{conflicts} differing")
-    return "Duplicate Materials/Textures — " + ", ".join(bits)
+        bits.append(f"{conflicts} kept separate")
+    return "Image Content — " + ", ".join(bits)
 
 
 def _duplicates_has_run(wm) -> bool:
@@ -841,21 +883,23 @@ def _duplicates_has_run(wm) -> bool:
                 or _feature_has_run(wm, "geo") or wm.assetdoctor_dup_scanned)
 
 
-def _draw_duplicates_summary(layout, wm, narrow: bool) -> None:
-    """Item 3, 2026-06-25: "Find Duplicates" replaces 4 separate buttons
-    (Data-blocks/Materials/Geometry/Content), so its result needs all 4 of
-    their headlines — none of the section boxes below show their own
-    anymore (each used to rely on its now-removed individual Analyze row).
-    Geometry joined this list @ Group 11 #44 (2026-06-26) once it got its own
-    actionable checkbox UI (``_draw_geo_dups``), replacing its old read-only
-    tree disclosure (which drew its own headline+arrow row separately)."""
-    for bit in (_datablock_dups_headline(wm), _material_dups_headline(wm),
-                _geo_dups_headline(wm), _duplicate_textures_headline(wm, narrow)):
-        if not bit:
-            continue
-        row = layout.row(align=True)
-        row.separator(factor=2.2)
-        row.label(text=bit)
+def _draw_duplicates(layout, wm, narrow: bool) -> None:
+    """Find Duplicates — ONE results area for all 4 scans this trigger runs
+    (Data-blocks/Materials/Geometry/Image Content). Restructured 2026-06-27
+    (docs/TODO.md #16): each scan keeps its own merge/instance logic — the
+    four engines verify "identical" differently (node-tree hash, mesh/cluster
+    hash, dims+pixel hash, generic content hash), so that stays separate by
+    design — but they now draw as one consistent results area (a header line
+    per type, its own actionable rows, and the same "kept separate" treatment
+    everywhere) instead of 4 separately-styled boxes plus a floating
+    duplicate headline above them."""
+    if not _duplicates_has_run(wm):
+        return
+    outer = layout.box().column(align=True)
+    _draw_datablock_dups(outer, wm)
+    _draw_material_dups(outer, wm)
+    _draw_geo_dups(outer, wm)
+    _draw_duplicate_textures(outer, wm, narrow)
 
 
 def _datablock_dups_headline(wm) -> str:
@@ -868,12 +912,12 @@ def _datablock_dups_headline(wm) -> str:
     if not scanned:
         return ""
     if not len(families) and not conflicts:
-        return "Duplicate Data-blocks — none found"
+        return "Data-blocks — ✓ none found"
     kinds = len({row.kind for row in families})
     bits = [f"{kinds} kind(s)", f"{removable} removable"]
     if conflicts:
-        bits.append(f"{conflicts} differing/unverified")
-    return "Duplicate Data-blocks — " + ", ".join(bits)
+        bits.append(f"{conflicts} kept separate")
+    return "Data-blocks — " + ", ".join(bits)
 
 
 def _reconnect_headline(wm) -> str:
@@ -980,17 +1024,32 @@ def _profile_render_summary(wm) -> str:
     return f"Real peak RAM: {ram}" if ram else ""
 
 
+_RESOURCE_COL_LABELS = {"ram": "RAM", "vram": "VRAM", "disk": "Disk"}
+
+
 def _draw_resource_breakdown(layout, wm):
     """The by-type RAM/VRAM/disk breakdown, rolled up as a child directly below
     the Analyze Memory/Disk button's inline summary (replaces the standalone
     Resource Analyzer panel — same template_list + Export, just relocated so
-    the detail lives right under the totals it explains)."""
+    the detail lives right under the totals it explains). Real aligned RAM/
+    VRAM/disk columns + a clickable column-header sort (docs/TODO.md #15,
+    2026-06-27) — each header button re-sorts the top-level type groups by
+    that metric (cheap: reuses the last scan's cached items, no re-scan)."""
     if not wm.assetdoctor_resource_tree:
         return
     col = layout.column(align=True)
     hint = col.row(align=True)
     hint.separator(factor=2.2)
     hint.label(text="RAM / VRAM estimated; disk accurate", icon="INFO")
+
+    header = col.row(align=True)
+    header.label(text="")  # flexible spacer matching each row's indent/triangle/label area
+    sort_by = wm.assetdoctor_resource_sort
+    for sort_col, key in zip(_resource_columns(header), _RESOURCE_COL_LABELS):
+        op = sort_col.operator("assetdoctor.resource_sort_by", text=_RESOURCE_COL_LABELS[key],
+                               depress=(sort_by == key))
+        op.metric = key.upper()
+
     col.template_list(
         "ASSETDOCTOR_UL_tree", "resource",
         wm, "assetdoctor_resource_rows",
@@ -1068,13 +1127,73 @@ def _flattenable_overrides_summary(wm) -> str:
     return f"Flattenable overrides — {total} original, {done} flattened, {failed} failed"
 
 
+def _draw_rig_group(box, linkchain, cached, expanded, deselected, rig: str, members: list,
+                    indent: int = 0) -> None:
+    """One rig/character/standalone-type group's row + (if expanded) its
+    rollup and per-member rows. Factored out of :func:`_draw_flatten_candidates`
+    2026-06-27 so the SAME drawing logic serves both the flat local groups and
+    the nested per-character groups under a remote donor-file header
+    (``indent=1``). ``rig``'s display label strips a remote row's
+    ``"<file> :: <character>"`` uniqueness prefix — the donor file is already
+    named on the outer header it's nested under."""
+    plans = [linkchain.flatten_plan_from_dict(cached[m.name]) for m in members if m.name in cached]
+    ready = sum(1 for m in members if m.ready)
+    is_rig = members[0].is_rig
+    is_remote = members[0].is_remote
+    is_exp = rig in expanded
+    is_checked = rig not in deselected
+    is_done = all(m.done for m in members)  # fully flattened already this session
+    label = rig.split(" :: ", 1)[-1] if " :: " in rig else rig
+
+    crow = box.row(align=True)
+    if indent:
+        crow.separator(factor=1.0 * indent)
+    if is_done:
+        # 2026-06-27 user feedback: once every part of a group is actually
+        # flattened (not just evaluated-ready), it's no longer a selectable
+        # candidate -- leave it in place (simpler than moving it to a new
+        # "Successfully Flattened" subgroup) but swap its checkbox for a
+        # plain checkmark so it reads as done, not actionable.
+        crow.label(text="", icon="CHECKMARK")
+    else:
+        cop = crow.operator("assetdoctor.flatten_category_toggle", text="",
+                            icon="CHECKBOX_HLT" if is_checked else "CHECKBOX_DEHLT", emboss=False)
+        cop.key, cop.prop = rig, "assetdoctor_flatten_deselected"
+    crow.operator("assetdoctor.flatten_category_toggle", text="",
+                  icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = rig
+    group_icon = "ARMATURE_DATA" if is_rig else ("LINKED" if is_remote else "OBJECT_DATA")
+    if is_done:
+        crow.label(text=f"{label}  ({len(members)} part(s) flattened)", icon=group_icon)
+    elif is_remote:
+        crow.label(text=f"{label}  ({len(members)} part(s), remote)", icon=group_icon)
+    else:
+        crow.label(text=f"{label}  ({ready}/{len(members)} part(s) ready)", icon=group_icon)
+    if not is_exp:
+        return
+    if plans:
+        rollup = box.row(align=True)
+        rollup.separator(factor=2.0 + indent * 1.0)
+        rollup.label(text=linkchain.build_rig_rollup(plans), icon="INFO")
+    for m in members:
+        # `m.status` already holds the blocking REASON (the matching
+        # FlattenPlan's warnings — "no override properties found to
+        # replay", etc.) whenever not ready, set in
+        # ops.linkchain.scan_flatten_candidates; ERROR (was QUESTION,
+        # 2026-06-26) reads as "blocked, here's why" instead of "unknown".
+        # A remote member is neither ready nor blocked yet — QUESTION,
+        # genuinely unknown until Evaluate/Flatten Selected harvests it.
+        mrow = box.row(align=True)
+        mrow.separator(factor=3.0 + indent * 1.0)
+        icon = "CHECKMARK" if m.ready else ("QUESTION" if m.is_remote else "ERROR")
+        mrow.label(text=f"{m.name}  —  {m.status}", icon=icon)
+
+
 def _draw_flatten_candidates(layout, wm):
     """Phase 4-B picker, grouped by ARMATURE/rig (user feedback, 2026-06-25:
     present everything in terms of the rig, with body/eyes/clothes rolled up
     underneath). Each rig's combined replay rollup (core.linkchain.
     build_rig_rollup) shows directly below its own row — no separate report
-    tab needed to judge whether flattening one is worth it; the small
-    FILE_TEXT button stashes the read-only preview (f7flatten report).
+    tab needed to judge whether flattening one is worth it.
 
     Sort/icon redesign 2026-06-26 (docs/TODO.md #41): groups used to sort
     purely alphabetically with one icon for every group regardless of shape
@@ -1084,15 +1203,21 @@ def _draw_flatten_candidates(layout, wm):
 
     Flatten v2 (2026-06-27, docs/TODO.md Group 11 #47): a per-character
     "Flatten (creates backup)" button no longer exists — replaced by ONE
-    shared Make Local / Make Copy / "Flatten Selected" control row living on
-    the outer "Flattenable overrides" heading, acting on whichever GROUPS
-    have their own checkbox ticked (default all ticked — tracked as
-    DESELECTED keys, so nothing needs pre-populating). Remote-sourced groups
-    (object.type/rig unknown, only discoverable via the offline census) show
-    a QUESTION icon ("not yet checked") instead of CHECKMARK/ERROR, since
-    their readiness genuinely isn't known until Flatten Selected harvests
-    them; standalone (no-rig) LOCAL members are grouped by object type
-    instead of one row per object."""
+    shared Make Local / Make Copy / "Evaluate Selected" / "Flatten Selected"
+    control row living on the outer "Flattenable overrides" heading, acting
+    on whichever GROUPS have their own checkbox ticked (default all ticked —
+    tracked as DESELECTED keys, so nothing needs pre-populating).
+
+    Two-level grouping (2026-06-27, user feedback this session): remote rows
+    now nest under an outer "Remote: <donor file>" header (``row.
+    group_parent``) ABOVE their per-character ``row.rig`` group, with its own
+    "select all in this donor file" toggle (``assetdoctor.
+    flatten_group_select_all``) — the old design grouped every character
+    from one donor file under a single key, making it impossible to select
+    Character A without Character B. The old per-row FILE_TEXT preview
+    button is gone (it only ever had cached data for LOCAL rows, a dead end
+    for the common all-remote case) — "Evaluate Selected" now builds/previews
+    a real plan for whatever's checked, local or remote, without applying."""
     rows = wm.assetdoctor_flatten_candidates
     if not len(rows):
         return
@@ -1106,10 +1231,18 @@ def _draw_flatten_candidates(layout, wm):
 
     groups: dict[str, list] = {}
     order: list[str] = []
+    outer_order: list[str] = []
+    outer_children: dict[str, list[str]] = {}
     for row in rows:
         if row.rig not in groups:
             groups[row.rig] = []
-            order.append(row.rig)
+            if row.group_parent:
+                if row.group_parent not in outer_children:
+                    outer_children[row.group_parent] = []
+                    outer_order.append(row.group_parent)
+                outer_children[row.group_parent].append(row.rig)
+            else:
+                order.append(row.rig)
         groups[row.rig].append(row)
 
     outer = layout.box().column(align=True)
@@ -1125,55 +1258,37 @@ def _draw_flatten_candidates(layout, wm):
     crow = outer.row(align=True)
     crow.prop(wm, "assetdoctor_flatten_make_local", text="Make Local")
     crow.prop(wm, "assetdoctor_flatten_make_copy", text="Make Copy")
+    crow.operator("assetdoctor.evaluate_selected", text="Evaluate Selected", icon="VIEWZOOM")
     crow.operator("assetdoctor.flatten_selected", text="Flatten Selected", icon="CHECKMARK")
 
     box = outer.column(align=True)
     for rig in sorted(order, key=lambda r: _flatten_group_sort_key(r, groups[r])):
-        members = groups[rig]
-        plans = [linkchain.flatten_plan_from_dict(cached[m.name]) for m in members if m.name in cached]
-        ready = sum(1 for m in members if m.ready)
-        is_rig = members[0].is_rig
-        is_remote = members[0].is_remote
-        is_exp = rig in expanded
-        is_checked = rig not in deselected
-        crow = box.row(align=True)
-        cop = crow.operator("assetdoctor.flatten_category_toggle", text="",
+        _draw_rig_group(box, linkchain, cached, expanded, deselected, rig, groups[rig])
+
+    for group_parent in sorted(outer_order):
+        children = outer_children[group_parent]
+        total_members = sum(len(groups[rig]) for rig in children)
+        is_exp = group_parent in expanded
+        is_checked = all(rig not in deselected for rig in children)
+        grow = box.row(align=True)
+        gop = grow.operator("assetdoctor.flatten_group_select_all", text="",
                             icon="CHECKBOX_HLT" if is_checked else "CHECKBOX_DEHLT", emboss=False)
-        cop.key, cop.prop = rig, "assetdoctor_flatten_deselected"
-        crow.operator("assetdoctor.flatten_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = rig
-        group_icon = "ARMATURE_DATA" if is_rig else ("LINKED" if is_remote else "OBJECT_DATA")
-        if is_remote:
-            crow.label(text=f"{rig}  ({len(members)} part(s), remote)", icon=group_icon)
-        else:
-            crow.label(text=f"{rig}  ({ready}/{len(members)} part(s) ready)", icon=group_icon)
-        crow.operator("assetdoctor.build_flatten_plan", text="", icon="FILE_TEXT").name = rig
+        gop.keys = "\n".join(children)
+        grow.operator("assetdoctor.flatten_category_toggle", text="",
+                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = group_parent
+        grow.label(text=f"{group_parent}  ({total_members} part(s) across {len(children)} "
+                        "character(s))", icon="LIBRARY_DATA_OVERRIDE")
         if not is_exp:
             continue
-        if plans:
-            rollup = box.row(align=True)
-            rollup.separator(factor=2.0)
-            rollup.label(text=linkchain.build_rig_rollup(plans), icon="INFO")
-        for m in members:
-            # `m.status` already holds the blocking REASON (the matching
-            # FlattenPlan's warnings — "no override properties found to
-            # replay", etc.) whenever not ready, set in
-            # ops.linkchain.scan_flatten_candidates; ERROR (was QUESTION,
-            # 2026-06-26) reads as "blocked, here's why" instead of "unknown".
-            # A remote member is neither ready nor blocked yet — QUESTION,
-            # genuinely unknown until Flatten Selected harvests it.
-            mrow = box.row(align=True)
-            mrow.separator(factor=3.0)
-            icon = "CHECKMARK" if m.ready else ("QUESTION" if m.is_remote else "ERROR")
-            mrow.label(text=f"{m.name}  —  {m.status}", icon=icon)
+        for rig in sorted(children, key=lambda r: _flatten_group_sort_key(r, groups[r])):
+            _draw_rig_group(box, linkchain, cached, expanded, deselected, rig, groups[rig], indent=1)
 
     # The detailed per-property Flatten Plan preview/apply result (Group 11
-    # #46, 2026-06-26) — the FILE_TEXT button above stashes it; previously
-    # only reachable via the now-deleted generic Reports selector. One shared
-    # slot (whichever rig was last previewed/applied), so it draws once here
-    # rather than per-rig — the rollup INFO line above is the per-rig summary,
-    # this is the deeper "every recorded property" dump for whichever rig you
-    # most recently clicked the preview button for.
+    # #46, 2026-06-26) — "Evaluate Selected" stashes it now (the FILE_TEXT
+    # button that used to is gone). One shared slot (whichever run was last
+    # evaluated/applied), so it draws once here rather than per-rig — the
+    # rollup INFO line above is the per-rig summary, this is the deeper
+    # "every recorded property" dump for the most recent run.
     _draw_report_detail(layout, wm, "f7flatten")
 
 
@@ -1240,11 +1355,7 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         _analyze_row(layout, wm, "find_duplicate_datablocks", "assetdoctor.find_duplicates",
                      "Find Duplicates", "LIBRARY_DATA_OVERRIDE",
                      has_run=_duplicates_has_run(wm))
-        _draw_duplicates_summary(layout, wm, narrow)
-        _draw_datablock_dups(layout, wm)
-        _draw_material_dups(layout, wm)
-        _draw_geo_dups(layout, wm)
-        _draw_duplicate_textures(layout, wm, narrow)
+        _draw_duplicates(layout, wm, narrow)
 
         _analyze_row(layout, wm, "find_reconnectable", "assetdoctor.scan_reconnect_targets",
                      "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
@@ -1458,6 +1569,8 @@ class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
                 frow.prop(item, "make_local", text="", icon="FILE_TICK")
                 frow.operator("assetdoctor.examine_pick_source", text="",
                               icon="FILEBROWSER").index = idx
+                frow.operator("assetdoctor.examine_search_folder", text="",
+                              icon="VIEWZOOM").index = idx
 
 
 def _libraries_at_a_glance():
@@ -1557,27 +1670,48 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
                       icon="CHECKMARK" if wm.assetdoctor_last_result_ok else "ERROR")
 
 
+def _draw_kept_separate(layout, wm, key: str, conflict_lines: list[str]) -> None:
+    """Collapsible "kept separate" sub-list, shared by every Find Duplicates
+    type section (docs/TODO.md #16, 2026-06-27): a name-family matched on
+    naming but not content, so it was never merged/instanced/remapped —
+    content identity alone still gates every actual apply, unchanged. Uses
+    the one shared inline-detail toggle (``assetdoctor.toggle_inline_detail``
+    / ``assetdoctor_detail_expanded``) like every other inline disclosure in
+    this panel; ``key`` already embeds its own section tag so it can't
+    collide with another section's."""
+    if not conflict_lines:
+        return
+    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    is_exp = key in expanded
+    crow = layout.row(align=True)
+    crow.operator("assetdoctor.toggle_inline_detail", text="",
+                  icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = key
+    crow.label(text=f"Kept separate — name matches, content differs ({len(conflict_lines)})",
+              icon="QUESTION")
+    if is_exp:
+        for ln in conflict_lines:
+            r = layout.row(align=True)
+            r.separator(factor=2.0)
+            r.label(text=ln, icon="DOT")
+
+
 def _draw_datablock_dups(layout, wm) -> None:
     """Batch C #3 — generic Duplicate Data-blocks: find .NNN families across
     Objects/Actions/Node Groups/etc. (Materials/Meshes/Images keep their own
-    dedicated tools), group by KIND, pick a keeper per family, Merge Selected.
-    Relocated directly under its Analyze button (user feedback, 2026-06-25:
-    "fairly good, could go as-is under the button summary") — no longer drawn
-    in the Results holding pen, and its own headline label is dropped since
-    the Analyze row right above already shows it."""
+    dedicated tools, each its own section alongside this one), group by KIND,
+    pick a keeper per family, Merge Selected. One section of the shared "Find
+    Duplicates" results area (docs/TODO.md #16, 2026-06-27) — no longer its
+    own standalone box, so every type reads the same way."""
     families = wm.assetdoctor_datablock_families
-    scanned = wm.assetdoctor_datablock_scanned
-    conflicts = wm.assetdoctor_datablock_conflicts
-
-    box = layout.box().column(align=True)
-    box.label(text="Objects, Actions, Node Groups, etc. — Materials/Meshes/Images "
-              "have their own dedup tools.", icon="INFO")
-
-    if scanned and len(families):
-        box.operator("assetdoctor.merge_datablock_selected",
-                     text="Merge Selected (Backup)", icon="AREA_JOIN")
-    if not (scanned and (len(families) or conflicts)):
+    if not wm.assetdoctor_datablock_scanned:
         return
+    conflicts = wm.assetdoctor_datablock_conflicts
+    layout.label(text=_datablock_dups_headline(wm), icon="LIBRARY_DATA_OVERRIDE")
+    if not (len(families) or conflicts):
+        return
+    if len(families):
+        layout.operator("assetdoctor.merge_datablock_selected",
+                        text="Merge Selected (Backup)", icon="AREA_JOIN")
 
     expanded = set(filter(None, wm.assetdoctor_datablock_expanded.split("\n")))
     groups: dict[str, list] = {}
@@ -1588,7 +1722,7 @@ def _draw_datablock_dups(layout, wm) -> None:
         members = groups[kind]
         removable_here = sum(r.removable for r in members)
         is_exp = kind in expanded
-        crow = box.row(align=True)
+        crow = layout.row(align=True)
         crow.operator("assetdoctor.datablock_category_toggle", text="",
                       icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = kind
         crow.label(text=f"{kind}  ({len(members)} family, −{removable_here})",
@@ -1596,7 +1730,7 @@ def _draw_datablock_dups(layout, wm) -> None:
         if not is_exp:
             continue
         for row in members:
-            frow = box.row(align=True)
+            frow = layout.row(align=True)
             frow.separator(factor=2.0)
             frow.prop(row, "selected", text="")
             base = row.name.split(":", 1)[-1]
@@ -1607,19 +1741,7 @@ def _draw_datablock_dups(layout, wm) -> None:
             keep.prop(row, "keeper", text="")
 
     conflict_lines = [ln for ln in wm.assetdoctor_datablock_conflicts_text.split("\n") if ln]
-    if conflict_lines:
-        ckey = "\x03conflicts"
-        is_exp = ckey in expanded
-        crow = box.row(align=True)
-        crow.operator("assetdoctor.datablock_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
-        crow.label(text=f"Different content / unverified — kept separate ({len(conflict_lines)})",
-                  icon="QUESTION")
-        if is_exp:
-            for ln in conflict_lines:
-                r = box.row(align=True)
-                r.separator(factor=2.0)
-                r.label(text=ln, icon="DOT")
+    _draw_kept_separate(layout, wm, "dupdb:conflicts", conflict_lines)
 
 
 def _res_variants_headline(wm) -> str:
@@ -1698,14 +1820,19 @@ def _material_dups_headline(wm) -> str:
     if not wm.assetdoctor_mat_scanned:
         return ""
     groups = wm.assetdoctor_mat_families
-    if not len(groups):
-        return "✓ no duplicate materials found"
-    removable = wm.assetdoctor_mat_removable
-    linked = wm.assetdoctor_mat_linked
-    bits = [f"{len(groups)} group(s)", f"{removable} material(s) remappable"]
-    if linked:
-        bits.append(f"{linked} linked (stay in library)")
-    return ", ".join(bits)
+    conflicts = wm.assetdoctor_mat_conflicts
+    if not len(groups) and not conflicts:
+        return "Materials — ✓ none found"
+    bits = []
+    if len(groups):
+        removable = wm.assetdoctor_mat_removable
+        linked = wm.assetdoctor_mat_linked
+        bits += [f"{len(groups)} group(s)", f"{removable} material(s) remappable"]
+        if linked:
+            bits.append(f"{linked} linked (stay in library)")
+    if conflicts:
+        bits.append(f"{conflicts} kept separate")
+    return "Materials — " + ", ".join(bits)
 
 
 def _draw_material_dups(layout, wm) -> None:
@@ -1713,22 +1840,30 @@ def _draw_material_dups(layout, wm) -> None:
     the same actionable shape as Duplicate Data-blocks/Textures (user
     feedback, 2026-06-25: "does not allow me to do anything with the
     information"). Flat list, no kind-grouping needed (every row is already
-    one fingerprint-identical material group)."""
+    one fingerprint-identical material group). One section of the shared
+    "Find Duplicates" results area (docs/TODO.md #16, 2026-06-27)."""
     groups = wm.assetdoctor_mat_families
-    if not (wm.assetdoctor_mat_scanned and len(groups)):
+    if not wm.assetdoctor_mat_scanned:
         return
-    box = layout.box().column(align=True)
-    box.operator("assetdoctor.merge_material_selected",
-                 text="Merge Selected (Backup)", icon="AREA_JOIN")
-    for row in groups:
-        frow = box.row(align=True)
-        frow.prop(row, "selected", text="")
-        label = row.name.split(" [", 1)[0]  # drop the "[library]" qualifier for display
-        frow.label(text=f"{label}  (−{row.removable})", icon="MATERIAL")
-        keep = frow.row()
-        keep.alignment = "RIGHT"
-        keep.label(text="keep", icon="PINNED")
-        keep.prop(row, "keeper", text="")
+    conflicts = wm.assetdoctor_mat_conflicts
+    layout.label(text=_material_dups_headline(wm), icon="MATERIAL")
+    if not (len(groups) or conflicts):
+        return
+    if len(groups):
+        layout.operator("assetdoctor.merge_material_selected",
+                        text="Merge Selected (Backup)", icon="AREA_JOIN")
+        for row in groups:
+            frow = layout.row(align=True)
+            frow.prop(row, "selected", text="")
+            label = row.name.split(" [", 1)[0]  # drop the "[library]" qualifier for display
+            frow.label(text=f"{label}  (−{row.removable})", icon="MATERIAL")
+            keep = frow.row()
+            keep.alignment = "RIGHT"
+            keep.label(text="keep", icon="PINNED")
+            keep.prop(row, "keeper", text="")
+
+    conflict_lines = [ln for ln in wm.assetdoctor_mat_conflicts_text.split("\n") if ln]
+    _draw_kept_separate(layout, wm, "dupmat:conflicts", conflict_lines)
 
 
 def _geo_dups_headline(wm) -> str:
@@ -1739,10 +1874,17 @@ def _geo_dups_headline(wm) -> str:
     if not wm.assetdoctor_geo_scanned:
         return ""
     groups = wm.assetdoctor_geo_families
-    if not len(groups):
-        return "✓ no duplicate geometry found"
-    removable = wm.assetdoctor_geo_removable
-    return f"{len(groups)} group(s), {removable} mesh(es) instanceable"
+    conflicts = wm.assetdoctor_geo_conflicts
+    if not len(groups) and not conflicts:
+        return "Geometry — ✓ none found"
+    bits = []
+    if len(groups):
+        bits += [f"{len(groups)} group(s)", f"{wm.assetdoctor_geo_removable} mesh(es) instanceable"]
+        if wm.assetdoctor_geo_linked:
+            bits.append(f"{wm.assetdoctor_geo_linked} linked (stay in library)")
+    if conflicts:
+        bits.append(f"{conflicts} kept separate")
+    return "Geometry — " + ", ".join(bits)
 
 
 def _draw_geo_dups(layout, wm) -> None:
@@ -1752,17 +1894,25 @@ def _draw_geo_dups(layout, wm) -> None:
     the canonical mesh ``core.geometry_dedup.choose_canonical`` already
     picked, no ambiguity to override. Flat list — every row is already one
     identical-mesh group (all "Mesh" today; ``kind`` is kept for future
-    geometry types, same shape as Materials' flat list)."""
+    geometry types, same shape as Materials' flat list). One section of the
+    shared "Find Duplicates" results area (docs/TODO.md #16, 2026-06-27)."""
     groups = wm.assetdoctor_geo_families
-    if not (wm.assetdoctor_geo_scanned and len(groups)):
+    if not wm.assetdoctor_geo_scanned:
         return
-    box = layout.box().column(align=True)
-    box.operator("assetdoctor.instance_geometry_selected",
-                 text="Instance Selected (Backup)", icon="AREA_JOIN")
-    for row in groups:
-        frow = box.row(align=True)
-        frow.prop(row, "selected", text="")
-        frow.label(text=f"{row.name}  (−{row.removable})", icon="MESH_DATA")
+    conflicts = wm.assetdoctor_geo_conflicts
+    layout.label(text=_geo_dups_headline(wm), icon="MESH_DATA")
+    if not (len(groups) or conflicts):
+        return
+    if len(groups):
+        layout.operator("assetdoctor.instance_geometry_selected",
+                        text="Instance Selected (Backup)", icon="AREA_JOIN")
+        for row in groups:
+            frow = layout.row(align=True)
+            frow.prop(row, "selected", text="")
+            frow.label(text=f"{row.name}  (−{row.removable})", icon="MESH_DATA")
+
+    conflict_lines = [ln for ln in wm.assetdoctor_geo_conflicts_text.split("\n") if ln]
+    _draw_kept_separate(layout, wm, "dupgeo:conflicts", conflict_lines)
 
 
 # Below this name-token overlap, a duplicate family's material looks mis-attributed
@@ -1771,109 +1921,90 @@ _DUP_MISMATCH_AFFINITY = 0.5
 
 
 def _draw_duplicate_textures(layout, wm, narrow: bool) -> None:
-    """F6 Layer 2/3 — the redesigned Duplicate Materials/Textures section: an
-    inline summary header, top Find/Merge/Export, then collapsible material
-    groups whose rows are content-identical merge families, each with an
-    include checkbox + a keeper dropdown (pick which datablock survives).
-    Mirrors the Missing section; no separate report (it's still stashed for
-    the Export button). Relocated into the unified Find Duplicates sequence
-    in Analyze (Group 11 #44, 2026-06-26) — was the one of the 4 duplicate-
-    finding sections still stuck in the old Results holding pen. (History: a
-    separate fast/name-only "Find .NNN" scan was removed 2026-06-24 —
-    confirmed redundant with Find Content Dups, which uses the identical
-    fingerprint over a strict superset of images.)"""
-    scanned = wm.assetdoctor_dup_scanned
+    """F6 Layer 2/3 — the redesigned Image Content section: an inline summary
+    header, top Find/Merge/Export, then collapsible material groups whose
+    rows are content-identical merge families, each with an include checkbox
+    + a keeper dropdown (pick which datablock survives). Mirrors the Missing
+    section; no separate report (it's still stashed for the Export button).
+    One section of the shared "Find Duplicates" results area (docs/TODO.md
+    #16, 2026-06-27) — no longer its own standalone box. (History: a separate
+    fast/name-only "Find .NNN" scan was removed 2026-06-24 — confirmed
+    redundant with Find Content Dups, which uses the identical fingerprint
+    over a strict superset of images.)"""
     families = wm.assetdoctor_dup_families
-
-    dup = layout.box().column(align=True)
+    if not wm.assetdoctor_dup_scanned:
+        return
     conflicts = wm.assetdoctor_dup_conflicts
-    # Summary header (the visible result); the Analyze panel's "Find
-    # Duplicates" button shows the same line inline (Phase 3c).
-    headline = _duplicate_textures_headline(wm, narrow)
-    if headline:
-        dup.label(text=headline, icon="IMAGE_DATA")
+    layout.label(text=_duplicate_textures_headline(wm, narrow), icon="IMAGE_DATA")
+    if not (len(families) or conflicts):
+        return
 
-    if scanned and len(families):
-        brow = dup.row(align=True)
+    if len(families):
+        brow = layout.row(align=True)
         brow.operator("assetdoctor.merge_dup_selected",
                       text="Merge Selected (Backup)", icon="AREA_JOIN")
         brow.operator("assetdoctor.export_report", text="",
                       icon="EXPORT").feature = "f6dup"
-    if not (scanned and (len(families) or conflicts)):
-        return
 
-    from ..core.imagematch import name_affinity
+        from ..core.imagematch import name_affinity
 
-    def _eff_mat(row):
-        return (row.material_override.name if row.material_override
-                else (row.material or "(no material)"))
+        def _eff_mat(row):
+            return (row.material_override.name if row.material_override
+                    else (row.material or "(no material)"))
 
-    def _mismatch(row):
-        # An "apparent mismatch" = the (effective) material's name barely overlaps
-        # the texture's name, e.g. a lightBlue texture under a brown material.
-        eff = _eff_mat(row)
-        return eff != "(no material)" and name_affinity(row.name, eff) < _DUP_MISMATCH_AFFINITY
+        def _mismatch(row):
+            # An "apparent mismatch" = the (effective) material's name barely overlaps
+            # the texture's name, e.g. a lightBlue texture under a brown material.
+            eff = _eff_mat(row)
+            return eff != "(no material)" and name_affinity(row.name, eff) < _DUP_MISMATCH_AFFINITY
 
-    expanded = set(filter(None, wm.assetdoctor_dup_expanded.split("\n")))
-    groups: dict[str, list] = {}
-    for row in families:
-        groups.setdefault(_eff_mat(row), []).append(row)
+        expanded = set(filter(None, wm.assetdoctor_dup_expanded.split("\n")))
+        groups: dict[str, list] = {}
+        for row in families:
+            groups.setdefault(_eff_mat(row), []).append(row)
 
-    for key in sorted(groups, key=str.lower):
-        members = groups[key]
-        removable_here = sum(r.removable for r in members)
-        mism = [r for r in members if _mismatch(r)]
-        is_exp = key in expanded
-        crow = dup.row(align=True)
-        crow.operator("assetdoctor.dup_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = key
-        # Alert only the label (not the whole row) when some textures here don't
-        # look like they belong to this material.
-        lab = crow.row()
-        lab.alert = bool(mism)
-        suffix = f", ⚠{len(mism)} mismatch" if mism else ""
-        lab.label(text=f"{key}  ({len(members)} family, −{removable_here}{suffix})",
-                  icon="ERROR" if mism else "MATERIAL")
-        # Master keeper for the whole material (sets every family's keeper by a
-        # policy) — the material-level counterpart to the per-family dropdowns.
-        crow.operator("assetdoctor.dup_material_keeper", text="",
-                      icon="DOWNARROW_HLT").material = key
-        if not is_exp:
-            continue
-        for row in members:
-            bad = _mismatch(row)
-            frow = dup.row(align=True)
-            frow.separator(factor=2.0)
-            frow.prop(row, "selected", text="")
-            name = frow.row()
-            name.alert = bad
-            name.label(text=f"{row.name}  (−{row.removable})",
-                       icon="ERROR" if bad else "IMAGE_DATA")
-            # Alternate material picker (eyedropper): re-home a mis-attributed
-            # family under the correct material. Shown when it looks wrong (or was
-            # already overridden). Organizational only — doesn't rewire nodes.
-            if bad or row.material_override:
-                frow.prop(row, "material_override", text="")
-            keep = frow.row()
-            keep.alignment = "RIGHT"
-            keep.label(text="keep", icon="PINNED")
-            keep.prop(row, "keeper", text="")
+        for key in sorted(groups, key=str.lower):
+            members = groups[key]
+            removable_here = sum(r.removable for r in members)
+            mism = [r for r in members if _mismatch(r)]
+            is_exp = key in expanded
+            crow = layout.row(align=True)
+            crow.operator("assetdoctor.dup_category_toggle", text="",
+                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = key
+            # Alert only the label (not the whole row) when some textures here don't
+            # look like they belong to this material.
+            lab = crow.row()
+            lab.alert = bool(mism)
+            suffix = f", ⚠{len(mism)} mismatch" if mism else ""
+            lab.label(text=f"{key}  ({len(members)} family, −{removable_here}{suffix})",
+                      icon="ERROR" if mism else "MATERIAL")
+            # Master keeper for the whole material (sets every family's keeper by a
+            # policy) — the material-level counterpart to the per-family dropdowns.
+            crow.operator("assetdoctor.dup_material_keeper", text="",
+                          icon="DOWNARROW_HLT").material = key
+            if not is_exp:
+                continue
+            for row in members:
+                bad = _mismatch(row)
+                frow = layout.row(align=True)
+                frow.separator(factor=2.0)
+                frow.prop(row, "selected", text="")
+                name = frow.row()
+                name.alert = bad
+                name.label(text=f"{row.name}  (−{row.removable})",
+                           icon="ERROR" if bad else "IMAGE_DATA")
+                # Alternate material picker (eyedropper): re-home a mis-attributed
+                # family under the correct material. Shown when it looks wrong (or was
+                # already overridden). Organizational only — doesn't rewire nodes.
+                if bad or row.material_override:
+                    frow.prop(row, "material_override", text="")
+                keep = frow.row()
+                keep.alignment = "RIGHT"
+                keep.label(text="keep", icon="PINNED")
+                keep.prop(row, "keeper", text="")
 
-    # Families with differing content — shown (collapsible) but never merged.
     conflict_lines = [ln for ln in wm.assetdoctor_dup_conflicts_text.split("\n") if ln]
-    if conflict_lines:
-        ckey = "\x02conflicts"
-        is_exp = ckey in expanded
-        crow = dup.row(align=True)
-        crow.operator("assetdoctor.dup_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
-        crow.label(text=f"Different content — kept separate ({len(conflict_lines)})",
-                   icon="QUESTION")
-        if is_exp:
-            for ln in conflict_lines:
-                r = dup.row(align=True)
-                r.separator(factor=2.0)
-                r.label(text=ln, icon="DOT")
+    _draw_kept_separate(layout, wm, "dupimg:conflicts", conflict_lines)
 
 
 def _orphans_headline(wm) -> str:

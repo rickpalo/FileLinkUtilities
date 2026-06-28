@@ -8,6 +8,18 @@ backups on).
 
 import bpy
 
+# Shared by Material/Geometry dedup (docs/TODO.md #21, 2026-06-27): which side
+# of a local+linked duplicate cluster to keep as canonical. Materials already
+# mix local/linked in one cluster; Geometry now does too (previously local-
+# only) -- "Prefer Linked" repoints local users onto the shared library
+# datablock instead, reducing local footprint. A linked datablock is never
+# removed either way -- only local IDs can be.
+_KEEP_PREF_ITEMS = [
+    ("LOCAL", "Prefer Local", "Keep the LOCAL copy as canonical (today's default)"),
+    ("LINKED", "Prefer Linked", "Keep the LINKED copy as canonical instead, repointing "
+     "local users onto it"),
+]
+
 
 class AssetDoctorPreferences(bpy.types.AddonPreferences):
     # Must match the extension id / package name.
@@ -49,6 +61,20 @@ class AssetDoctorPreferences(bpy.types.AddonPreferences):
         default="",
     )  # type: ignore[valid-type]
 
+    material_keep_preference: bpy.props.EnumProperty(
+        name="Materials: Keep",
+        description="When a duplicate spans both a local and a linked material, which one "
+        "to keep as canonical (the whitelist/blacklist above still take precedence)",
+        items=_KEEP_PREF_ITEMS, default="LOCAL",
+    )  # type: ignore[valid-type]
+
+    geometry_keep_preference: bpy.props.EnumProperty(
+        name="Geometry: Keep",
+        description="When a duplicate spans both a local and a linked mesh, which one to "
+        "keep as canonical",
+        items=_KEEP_PREF_ITEMS, default="LOCAL",
+    )  # type: ignore[valid-type]
+
     # Batch E feasibility prototype — see core.idle / ops.idle_scan. Off by
     # default: it only proves the OS-idle poll works from inside Blender, it
     # does NOT trigger any scan yet.
@@ -76,6 +102,10 @@ class AssetDoctorPreferences(bpy.types.AddonPreferences):
         col.label(text="Material dedup (F3):")
         col.prop(self, "material_whitelist")
         col.prop(self, "material_blacklist")
+        col.prop(self, "material_keep_preference")
+        col.separator()
+        col.label(text="Geometry dedup (F5):")
+        col.prop(self, "geometry_keep_preference")
         col.separator()
         col.label(text="Idle-scan (experimental prototype, Windows only):")
         col.prop(self, "idle_scan_enabled")

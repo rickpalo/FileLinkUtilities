@@ -95,6 +95,20 @@ def main():
         checks.append(("selected: D and E now share one mesh", d.data == e.data))
         checks.append(("selected: rows cleared after apply", len(wm.assetdoctor_geo_families) == 0))
 
+        # docs/TODO.md #16 (2026-06-27): a .NNN-name-family pair with genuinely
+        # DIFFERENT geometry should be reported "kept separate," not silently
+        # dropped. Mesh.new() auto-suffixes the second "Block" -> "Block.001".
+        f_obj = obj_with_own_mesh("Block", TRI)
+        g_obj = obj_with_own_mesh("Block", quad)  # different shape -> different fingerprint
+        f_obj.data.name = "Block"
+        g_obj.data.name = "Block.001"
+
+        res5 = bpy.ops.assetdoctor.instance_geometry("EXEC_DEFAULT", apply=False)
+        checks.append(("conflict scan FINISHED", res5 == {"FINISHED"}))
+        checks.append(("differing-content name-family flagged as kept separate",
+                       wm.assetdoctor_geo_conflicts >= 1 and "Block" in wm.assetdoctor_geo_conflicts_text
+                       and "differing content" in wm.assetdoctor_geo_conflicts_text))
+
         ok = all(p for _, p in checks)
         for label, p in checks:
             print(f"  [{'OK' if p else 'FAIL'}] {label}")

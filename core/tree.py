@@ -21,6 +21,7 @@ _CATEGORY_TITLES = {
     "circular_link": "Circular references",
     "unreadable_file": "Unreadable files",
     "linked_library": "Linked libraries",
+    "rename_risk": "Will be renamed (name collision — could break another file's link)",
     "orphan": "Orphans",
     "fake_only": "Fake-user only",
     "identical": "Identical datablocks",
@@ -72,6 +73,13 @@ class TreeNode:
     # indirect File Map row, which isn't a real bpy.data.libraries entry on
     # the open file so there's nothing for `ref` to select).
     popup: dict | None = None
+    # Optional per-row RAM/VRAM/disk text (docs/TODO.md #15, 2026-06-27) --
+    # used only by the Resource Usage tree so its UIList can draw real
+    # aligned columns instead of folding everything into one `detail` string;
+    # every other tree leaves these empty and keeps using `detail`.
+    ram: str = ""
+    vram: str = ""
+    disk: str = ""
 
 
 @dataclass
@@ -86,12 +94,16 @@ class Row:
     detail: str = ""
     icon: str = ""
     popup: dict | None = None
+    ram: str = ""
+    vram: str = ""
+    disk: str = ""
 
 
 def node_to_dict(n: TreeNode) -> dict:
     return {
         "key": n.key, "label": n.label, "severity": n.severity, "detail": n.detail,
         "ref": n.ref, "icon": n.icon, "popup": n.popup,
+        "ram": n.ram, "vram": n.vram, "disk": n.disk,
         "children": [node_to_dict(c) for c in n.children],
     }
 
@@ -101,6 +113,7 @@ def node_from_dict(d: dict) -> TreeNode:
         key=d["key"], label=d["label"], severity=d.get("severity", "info"),
         detail=d.get("detail", ""), ref=d.get("ref"), icon=d.get("icon", ""),
         popup=d.get("popup"),
+        ram=d.get("ram", ""), vram=d.get("vram", ""), disk=d.get("disk", ""),
         children=[node_from_dict(c) for c in d.get("children", [])],
     )
 
@@ -201,7 +214,8 @@ def flatten_visible(nodes: list[TreeNode], expanded: set[str]) -> list[Row]:
         has = bool(node.children)
         is_exp = node.key in expanded
         rows.append(Row(depth, node.key, node.label, node.severity, has, is_exp,
-                        node.ref, node.detail, node.icon, node.popup))
+                        node.ref, node.detail, node.icon, node.popup,
+                        node.ram, node.vram, node.disk))
         if has and is_exp:
             for child in node.children:
                 walk(child, depth + 1)

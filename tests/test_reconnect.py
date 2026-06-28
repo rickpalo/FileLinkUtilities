@@ -105,3 +105,37 @@ def test_find_sibling_library_ambiguous_never_guesses():
 def test_find_sibling_library_empty_inputs():
     assert reconnect.find_sibling_library("", ["E:/lib/x.blend"]) == ""
     assert reconnect.find_sibling_library("//x.blend", []) == ""
+
+
+def test_find_best_file_match_exact_beats_fuzzy_in_another_file():
+    names_by_file = {
+        "a.blend": ["old_wood_floor"],  # fuzzy match only
+        "b.blend": ["Body", "Body.001"],  # exact match
+    }
+    best_file, sugg = reconnect.find_best_file_match("Body", names_by_file)
+    assert best_file == "b.blend"
+    assert sugg.target == "Body" and sugg.confidence == "exact"
+
+
+def test_find_best_file_match_first_file_wins_on_tie():
+    names_by_file = {"a.blend": ["Body"], "b.blend": ["Body"]}
+    best_file, sugg = reconnect.find_best_file_match("Body", names_by_file)
+    assert best_file == "a.blend"
+    assert sugg.confidence == "exact"
+
+
+def test_find_best_file_match_falls_back_to_fuzzy_when_nothing_better():
+    names_by_file = {"a.blend": ["Unrelated"], "b.blend": ["new_wood_floor"]}
+    best_file, sugg = reconnect.find_best_file_match("old_wood_floor", names_by_file)
+    assert best_file == "b.blend"
+    assert sugg.confidence == "fuzzy"
+
+
+def test_find_best_file_match_nothing_qualifies():
+    best_file, sugg = reconnect.find_best_file_match("Body", {"a.blend": ["Unrelated"]})
+    assert best_file == ""
+    assert sugg == reconnect.Suggestion("", "none")
+
+
+def test_find_best_file_match_empty_input():
+    assert reconnect.find_best_file_match("Body", {}) == ("", reconnect.Suggestion("", "none"))

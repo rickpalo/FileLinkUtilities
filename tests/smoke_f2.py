@@ -79,6 +79,22 @@ def main():
         checks.append(("session has no linked datablocks", _count_linked(bpy) == 0))
         checks.append(("no libraries remain", len(bpy.data.libraries) == 0))
 
+        # docs/TODO.md Group 6 #19 (2026-06-27): a LOCAL object sharing a name
+        # with a linked one is a real rename-collision risk -- the dry-run
+        # report must call it out by name, not just "this file is linked."
+        bpy.ops.wm.open_mainfile(filepath=str(scene))
+        make_local_mod = __import__(f"{PKG}.ops.make_local", fromlist=["_gather_linked"])
+        linked_items = make_local_mod._gather_linked()
+        collide_with = next(it for it in linked_items if it["type"] == "Object")
+        bpy.data.objects.new(collide_with["name"], None)  # local, same type+name
+
+        res3 = bpy.ops.assetdoctor.make_local("EXEC_DEFAULT", mode="IN_PLACE", apply=False)
+        wm = bpy.context.window_manager
+        checks.append(("dry-run FINISHED", res3 == {"FINISHED"}))
+        f2_report = wm.assetdoctor_rep_f2
+        checks.append(("rename collision reported", f"Object/{collide_with['name']}" in f2_report
+                       and "rename_risk" in f2_report))
+
         ok = all(p for _, p in checks)
         for label, p in checks:
             print(f"  [{'OK' if p else 'FAIL'}] {label}")

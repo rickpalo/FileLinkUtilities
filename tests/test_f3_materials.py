@@ -27,6 +27,23 @@ def test_canonical_local_over_linked_at_equal_res():
     assert best["id"] == "WoodLocal"
 
 
+def test_canonical_prefers_linked_when_requested():
+    # docs/TODO.md #21, 2026-06-27: an explicit preference can flip the tie-break.
+    members = [_m("WoodLib", "Wood", linked=True, max_res=2048),
+               _m("WoodLocal", "Wood", linked=False, max_res=2048)]
+    best, _ = choose_canonical(members, [], [], prefer_linked=True)
+    assert best["id"] == "WoodLib"
+
+
+def test_prefer_linked_loses_to_whitelist():
+    # whitelist/blacklist still take precedence over the local/linked preference.
+    members = [_m("WoodLib", "WoodLib", linked=True, max_res=2048),
+               _m("WoodLocal", "WoodLocal", linked=False, max_res=2048)]
+    best, reason = choose_canonical(members, ["WoodLocal"], [], prefer_linked=True)
+    assert best["id"] == "WoodLocal"
+    assert reason == "whitelisted"
+
+
 def test_whitelist_wins_over_resolution():
     members = [_m("WoodHi", "WoodHi", max_res=4096), _m("WoodMaster", "WoodMaster", max_res=512)]
     best, reason = choose_canonical(members, ["WoodMaster"], [])

@@ -47,6 +47,21 @@ def _populate_material_families(context, plan: list[dict]) -> None:
     wm.assetdoctor_mat_scanned = True
 
 
+def _populate_material_conflicts(context, items: list[dict]) -> None:
+    """Same-``.NNN``-name-family materials that didn't end up in one content-
+    merge group — informational only (content fingerprint still gates every
+    actual merge, unchanged). Reuses the generic name-family + fingerprint
+    conflict algorithm every other dedup section already relies on, fed with
+    this scan's own material fingerprints."""
+    wm = context.window_manager
+    members = [dd.MemberInfo(name=it["name"], fingerprint=it["fingerprint"] or "")
+              for it in items]
+    conflicts = dd.plan_merges(members)[1]
+    wm.assetdoctor_mat_conflicts = len(conflicts)
+    wm.assetdoctor_mat_conflicts_text = "\n".join(
+        f"{c.base} — {c.reason} ({', '.join(c.members)})" for c in conflicts)
+
+
 def _material_id(mat) -> str:
     """Unique, human-readable key (handles a local + linked same-named pair)."""
     if mat.library is not None:
@@ -147,13 +162,15 @@ class ASSETDOCTOR_OT_material_dedup(ModalProgressMixin, bpy.types.Operator):
         prefs = get_prefs(context)
         whitelist = parse_name_list(prefs.material_whitelist if prefs else "")
         blacklist = parse_name_list(prefs.material_blacklist if prefs else "")
+        prefer_linked = bool(prefs and prefs.material_keep_preference == "LINKED")
 
         items, id_to_mat = yield from _gather_steps(context)
 
         yield (0.85, "Building report…")
-        report, plan = build_dedup_plan(items, whitelist, blacklist)
+        report, plan = build_dedup_plan(items, whitelist, blacklist, prefer_linked)
         stash_report(context, report, "f3")
         _populate_material_families(context, plan)
+        _populate_material_conflicts(context, items)
         for f in report.findings:
             log.info("F3 [%s] %s: %s", f.severity, f.category, f.message)
         n_victims = sum(len(g["victims"]) for g in plan)
@@ -250,6 +267,8 @@ class ASSETDOCTOR_OT_merge_material_selected(bpy.types.Operator):
         wm.assetdoctor_mat_removable = 0
         wm.assetdoctor_mat_linked = 0
         wm.assetdoctor_mat_scanned = False
+        wm.assetdoctor_mat_conflicts = 0
+        wm.assetdoctor_mat_conflicts_text = ""
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

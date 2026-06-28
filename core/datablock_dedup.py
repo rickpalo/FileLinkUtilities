@@ -77,11 +77,14 @@ def plan_merges(members: list[MemberInfo]) -> tuple[list[MergePlan], list[Family
                 plans.append(MergePlan(base=base, canonical=canonical,
                                        redundant=redundant, fingerprint=fp))
         if len(groups) > 1 or unverified:
-            reason = ("differing content — identical copies merged, variants kept"
-                      if len(groups) > 1
-                      else "unverified copies (no fingerprint available) — not merged")
+            bits = []
+            if len(groups) > 1:
+                bits.append("differing content — identical copies merged, variants kept")
+            if unverified:
+                bits.append(f"{len(unverified)} unverified (no fingerprint available) — not merged")
             conflicts.append(FamilyConflict(
-                base=base, members=sorted(m.name for m in group_members), reason=reason))
+                base=base, members=sorted(m.name for m in group_members),
+                reason="; ".join(bits)))
     return plans, conflicts
 
 

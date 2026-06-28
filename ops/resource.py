@@ -5,6 +5,7 @@ Read-only. Estimates are labeled as such in the UI; the Profile Render button
 (separate, M7 step 4) captures real engine peak memory.
 """
 
+import json
 import os
 
 import bpy
@@ -15,13 +16,14 @@ from ..core.resource import (
     mesh_estimate,
     peak_process_ram_bytes,
 )
-from ..core.resource_tree import build_resource_tree
+from ..core.resource_tree import SORT_KEYS, build_resource_tree
 from ..core.tree import nodes_to_json, top_level_keys
 from .progress import ModalProgressMixin
 
 RESOURCE_PROP = "assetdoctor_resource_tree"
 RESOURCE_EXPANDED = "assetdoctor_resource_expanded"
 RESOURCE_TOTALS = "assetdoctor_resource_totals"
+RESOURCE_ITEMS = "assetdoctor_resource_items_json"
 
 _EST_CHUNK = 64  # datablocks estimated between progress yields
 
@@ -100,8 +102,9 @@ class ASSETDOCTOR_OT_analyze_resources(ModalProgressMixin, bpy.types.Operator):
         items = yield from _gather_steps(context)
 
         yield (0.9, "Building resource tree…")
-        nodes, totals = build_resource_tree(items)
         wm = context.window_manager
+        setattr(wm, RESOURCE_ITEMS, json.dumps(items))
+        nodes, totals = build_resource_tree(items, sort_by=wm.assetdoctor_resource_sort)
         setattr(wm, RESOURCE_PROP, nodes_to_json(nodes))
         setattr(wm, RESOURCE_EXPANDED, "\n".join(top_level_keys(nodes)))
         from .report_store import rebuild_resource_rows
@@ -115,6 +118,36 @@ class ASSETDOCTOR_OT_analyze_resources(ModalProgressMixin, bpy.types.Operator):
         setattr(wm, RESOURCE_TOTALS, msg)
         log.info("F5 %s", msg)
         self.report({"INFO"}, msg + " (estimates; see Resource panel)")
+
+
+class ASSETDOCTOR_OT_resource_sort_by(bpy.types.Operator):
+    """Re-sort the Resource Usage type groups by a column header click
+    (docs/TODO.md #15, 2026-06-27). Cheap: re-groups the already-gathered
+    ``items`` cached by the last scan — never re-walks bpy.data."""
+
+    bl_idname = "assetdoctor.resource_sort_by"
+    bl_label = "Sort Resource Usage"
+    bl_description = "Re-sort the type groups by this column (RAM/VRAM/disk)"
+    bl_options = {"INTERNAL"}
+
+    metric: bpy.props.EnumProperty(
+        items=[(k.upper(), k.upper(), "") for k in SORT_KEYS], default="RAM")  # type: ignore[valid-type]
+
+    def execute(self, context):
+        wm = context.window_manager
+        raw = getattr(wm, RESOURCE_ITEMS, "")
+        if not raw:
+            return {"CANCELLED"}
+        wm.assetdoctor_resource_sort = self.metric.lower()
+        items = json.loads(raw)
+        nodes, _totals = build_resource_tree(items, sort_by=wm.assetdoctor_resource_sort)
+        setattr(wm, RESOURCE_PROP, nodes_to_json(nodes))
+        setattr(wm, RESOURCE_EXPANDED, "\n".join(top_level_keys(nodes)))
+        from .report_store import rebuild_resource_rows
+        rebuild_resource_rows(wm)
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}
 
 
 class ASSETDOCTOR_OT_profile_render(bpy.types.Operator):

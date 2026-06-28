@@ -48,11 +48,21 @@ def main():
 
         image_node = next(n for n in nodes if n.label.startswith("Image"))
         wood = next((c for c in image_node.children if c.label == "wood"), None)
-        checks.append(("image datablock listed with ref + detail",
+        checks.append(("image datablock listed with ref + real RAM column",
                        wood is not None and wood.ref == {"type": "Image", "name": "wood"}
-                       and "RAM" in wood.detail))
+                       and wood.ram))
         checks.append(("auto-expanded type keys",
                        set(wm.assetdoctor_resource_expanded.split("\n")) >= {n.key for n in nodes}))
+
+        # docs/TODO.md #15 (2026-06-27): clicking a column header re-sorts the
+        # type groups cheaply (cached items, no re-scan) instead of always RAM.
+        checks.append(("items cached for cheap re-sort", bool(wm.assetdoctor_resource_items_json)))
+        res_sort = bpy.ops.assetdoctor.resource_sort_by("EXEC_DEFAULT", metric="VRAM")
+        checks.append(("sort-by-VRAM FINISHED", res_sort == {"FINISHED"}))
+        checks.append(("sort preference persisted", wm.assetdoctor_resource_sort == "vram"))
+        nodes_after = nodes_from_json(wm.assetdoctor_resource_tree)
+        checks.append(("re-sorted without losing type nodes",
+                       {n.label for n in nodes_after} == set(labels)))
 
         ok = all(p for _, p in checks)
         for label, p in checks:

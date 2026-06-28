@@ -13,17 +13,19 @@ from .resource import human_bytes
 from .tree import TreeNode
 
 
-def _detail(ram: int, vram: int, disk: int, users: int | None = None) -> str:
-    parts = [f"{human_bytes(ram)} RAM", f"{human_bytes(vram)} VRAM"]
-    if disk:
-        parts.append(f"{human_bytes(disk)} disk")
-    if users is not None:
-        parts.append(f"{users}u")
-    return "  ·  ".join(parts)
+SORT_KEYS = ("ram", "vram", "disk")
 
 
-def build_resource_tree(items: list[dict]) -> tuple[list[TreeNode], dict]:
-    """Return (type nodes sorted by total RAM desc, grand totals dict)."""
+def build_resource_tree(items: list[dict], sort_by: str = "ram") -> tuple[list[TreeNode], dict]:
+    """Return (type nodes sorted by total ``sort_by`` desc, grand totals dict).
+
+    RAM/VRAM/disk are kept as separate ``TreeNode.ram``/``vram``/``disk``
+    text columns (docs/TODO.md #15, 2026-06-27 — real aligned columns
+    instead of one combined ``detail`` string). ``sort_by`` only reorders
+    the top-level type groups (the rows actually visible before anything is
+    expanded) — each group's own children stay RAM-sorted, unchanged."""
+    if sort_by not in SORT_KEYS:
+        sort_by = "ram"
     by_type: dict[str, list[dict]] = {}
     for it in items:
         by_type.setdefault(it["type"], []).append(it)
@@ -37,23 +39,27 @@ def build_resource_tree(items: list[dict]) -> tuple[list[TreeNode], dict]:
         g_ram += t_ram
         g_vram += t_vram
         g_disk += t_disk
+        totals_by_key = {"ram": t_ram, "vram": t_vram, "disk": t_disk}
 
         type_node = TreeNode(
             key=f"type:{type_name}",
             label=f"{type_name} ({len(members)})",
-            detail=_detail(t_ram, t_vram, t_disk),
+            ram=human_bytes(t_ram), vram=human_bytes(t_vram),
+            disk=human_bytes(t_disk) if t_disk else "",
         )
         for m in sorted(members, key=lambda d: d.get("ram", 0), reverse=True):
+            users = m.get("users", 0)
+            disk = m.get("disk", 0)
             type_node.children.append(TreeNode(
                 key=f"type:{type_name}:{m['name']}",
-                label=m["name"],
-                detail=_detail(m.get("ram", 0), m.get("vram", 0), m.get("disk", 0),
-                               m.get("users", 0)),
+                label=f"{m['name']}  ({users}u)" if users else m["name"],
+                ram=human_bytes(m.get("ram", 0)), vram=human_bytes(m.get("vram", 0)),
+                disk=human_bytes(disk) if disk else "",
                 ref={"type": type_name, "name": m["name"]},
             ))
-        typed_nodes.append((t_ram, type_node))
+        typed_nodes.append((totals_by_key[sort_by], type_node))
 
     typed_nodes.sort(key=lambda pair: pair[0], reverse=True)
-    nodes = [node for _ram, node in typed_nodes]
+    nodes = [node for _key, node in typed_nodes]
     totals = {"ram": g_ram, "vram": g_vram, "disk": g_disk}
     return nodes, totals

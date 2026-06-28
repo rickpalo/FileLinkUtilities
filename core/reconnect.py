@@ -89,6 +89,25 @@ def ranked_candidates(wanted: str, candidates: list[str]) -> list[str]:
     return [suggestion.target, *rest]
 
 
+def find_best_file_match(wanted: str, names_by_file: dict[str, list[str]]) -> tuple[str, Suggestion]:
+    """Best ``(file, suggestion)`` across several already-peeked files' candidate
+    name lists — Examine Library's folder-wide search (docs/TODO.md #20,
+    2026-06-27): a convenience layer over the existing per-row manual file pick,
+    so the user doesn't have to already know which file in a folder holds a
+    replacement. An exact/numbered match in ANY file wins outright over a fuzzy
+    one in another — never settle for a guess when a clean match exists
+    elsewhere in the same folder. Ties (same confidence tier) keep whichever
+    file was checked FIRST, so the caller's iteration order is the deterministic
+    tiebreak. Returns ``("", Suggestion("", "none"))`` if nothing qualifies."""
+    tier = {"exact": 2, "numbered": 1, "fuzzy": 0, "none": -1}
+    best_file, best_sugg = "", Suggestion("", "none")
+    for path, names in names_by_file.items():
+        sugg = suggest_reconnect(wanted, names)
+        if tier[sugg.confidence] > tier[best_sugg.confidence]:
+            best_file, best_sugg = path, sugg
+    return best_file, best_sugg
+
+
 def find_sibling_library(missing_path: str, resolving_paths: list[str]) -> str:
     """``missing_path`` is a library's stored path that doesn't resolve on this
     machine. If exactly one path in ``resolving_paths`` (other libraries
@@ -132,6 +151,6 @@ def plan_reconnects(
 
 
 __all__ = [
-    "Suggestion", "suggest_reconnect", "ranked_candidates", "find_sibling_library",
-    "ReconnectPlan", "plan_reconnects", "FUZZY_FLOOR",
+    "Suggestion", "suggest_reconnect", "ranked_candidates", "find_best_file_match",
+    "find_sibling_library", "ReconnectPlan", "plan_reconnects", "FUZZY_FLOOR",
 ]

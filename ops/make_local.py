@@ -51,6 +51,17 @@ def _gather_linked():
     return items
 
 
+def _gather_all_names():
+    """Every EXISTING datablock (local + linked), for
+    core.f2_makelocal.find_rename_collisions — local items pass
+    ``library=""`` so they group correctly against linked same-named ones."""
+    return [
+        {"type": type(db).__name__, "name": db.name,
+         "library": db.library.filepath if db.library else ""}
+        for coll in _id_collections() for db in coll
+    ]
+
+
 def _remaining_linked():
     """Every datablock still linked or carrying a library override."""
     return [
@@ -178,6 +189,8 @@ class ASSETDOCTOR_OT_make_local(bpy.types.Operator):
     _out = ""
     _backup = None
     _n_items = 0
+    _n_collisions = 0  # name collisions found pre-mutation, surfaced again in the final message
+    _aborted = ""  # set by _apply_steps when it gives up early (no work / setup error)
 
     @classmethod
     def description(cls, context, properties):
@@ -194,13 +207,14 @@ class ASSETDOCTOR_OT_make_local(bpy.types.Operator):
     def _prepare(self, context, log):
         """Build + stash the F2 report; return (items, summary message)."""
         items = _gather_linked()
-        report = build_makelocal_report(items)
+        report = build_makelocal_report(items, _gather_all_names())
         from .report_store import stash_report
 
         stash_report(context, report, "f2")
         for f in report.findings:
             log.info("F2 [%s] %s: %s", f.severity, f.category, f.message)
         summary = next((f for f in report.findings if f.category == "summary"), None)
+        self._n_collisions = summary.data.get("collisions", 0) if summary else 0
         return items, (summary.message if summary else "scan complete")
 
     def _setup_apply(self, context, items):
@@ -222,14 +236,21 @@ class ASSETDOCTOR_OT_make_local(bpy.types.Operator):
 
     def _finalize_apply(self, context):
         """Save the copy + revert (New File) or report the flattened result."""
+        # docs/TODO.md Group 6 #19, 2026-06-27: name collisions found pre-mutation
+        # (core.f2_makelocal.find_rename_collisions) mean SOMETHING just got
+        # auto-renamed -- flagged again here, not just in the pre-apply report,
+        # since this is the moment a file that links one of those names by
+        # name would actually break.
+        collide = (f" {self._n_collisions} name collision(s) were renamed — re-check any "
+                   f"other file linking this one by name." if self._n_collisions else "")
         if self.mode == "NEW_FILE":
             self._log.debug("F2 NEW_FILE: writing %s", self._out)
             bpy.ops.wm.save_as_mainfile(filepath=self._out, copy=True)
             bpy.ops.wm.revert_mainfile()  # restore the original linked session
             self.report(
-                {"INFO"},
+                {"WARNING" if self._n_collisions else "INFO"},
                 f"Wrote fully-local copy: {self._out} ({self._n_items} datablock(s) localized). "
-                "This file left unchanged.",
+                f"This file left unchanged.{collide}",
             )
         else:  # IN_PLACE
             tail = (f"Backup: {self._backup}" if self._backup
@@ -237,7 +258,7 @@ class ASSETDOCTOR_OT_make_local(bpy.types.Operator):
             self.report(
                 {"WARNING"},
                 f"Localized {self._n_items} datablock(s); {len(bpy.data.libraries)} librar(ies) "
-                f"remain. {tail}",
+                f"remain. {tail}{collide}",
             )
         return {"FINISHED"}
 
@@ -267,27 +288,42 @@ class ASSETDOCTOR_OT_make_local(bpy.types.Operator):
 
     # ---- modal path (interactive, with progress + ESC) ----
 
+    def _apply_steps(self, context, log):
+        """The WHOLE apply path as one generator (docs/TODO.md Group 6 #18,
+        2026-06-27): gathering every linked datablock + (for IN_PLACE) writing
+        the pre-mutation backup used to run synchronously in invoke(), BEFORE
+        the modal/progress bar existed — on a huge file that gather + backup
+        write (can be minutes) showed nothing at all. Now the modal/timer
+        starts FIRST and these heavy phases are simply the early steps of the
+        same generator, so status text is live throughout. Sets
+        ``self._aborted`` instead of returning early so ``modal()`` can report
+        the right message/result once the generator actually stops."""
+        yield (0.0, "Scanning linked data…")
+        items, _msg = self._prepare(context, log)
+        if not items:
+            self._aborted = "Nothing linked — already fully local"
+            return
+        yield (0.01, "Backing up…" if self.mode == "IN_PLACE" else "Preparing…")
+        err = self._setup_apply(context, items)
+        if err:
+            self._aborted = err
+            return
+        yield from localize_steps(log)
+
     def invoke(self, context, event):
         from ..log import get_logger
 
         self._log = log = get_logger()
-        items, msg = self._prepare(context, log)
+        self._aborted = ""
 
         if not self.apply:  # report-only is cheap — no modal needed
+            items, msg = self._prepare(context, log)
             self.report({"INFO"}, msg + " (dry run)")
             return {"FINISHED"}
-        if not items:
-            self.report({"INFO"}, "Nothing linked — already fully local")
-            return {"FINISHED"}
-
-        err = self._setup_apply(context, items)
-        if err:
-            self.report({"ERROR"}, err)
-            return {"CANCELLED"}
 
         from .progress import set_progress
 
-        self._gen = localize_steps(log)
+        self._gen = self._apply_steps(context, log)
         wm = context.window_manager
         wm.progress_begin(0, 100)
         set_progress(context, 0.0, "Starting make-local…")
@@ -310,6 +346,10 @@ class ASSETDOCTOR_OT_make_local(bpy.types.Operator):
             fraction, status = next(self._gen)
         except StopIteration:
             self._teardown(context)
+            if self._aborted:
+                ok = self._aborted.startswith("Nothing linked")
+                self.report({"INFO"} if ok else {"ERROR"}, self._aborted)
+                return {"FINISHED"} if ok else {"CANCELLED"}
             return self._finalize_apply(context)
 
         context.window_manager.progress_update(int(fraction * 100))

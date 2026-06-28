@@ -160,6 +160,18 @@ class ASSETDOCTOR_OT_examine_library(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _peek_names(path: str, attr: str) -> list[str] | None:
+    """Peek ``attr``'s names in ``path`` without loading anything (``link=True``,
+    ``data_to`` never assigned). ``None`` on read failure, distinct from an
+    empty list (file read fine, just has none of this type) — callers decide
+    whether/how to report each case."""
+    try:
+        with bpy.data.libraries.load(path, link=True) as (data_from, _data_to):
+            return list(getattr(data_from, attr, []))
+    except Exception:
+        return None
+
+
 class ASSETDOCTOR_OT_examine_pick_source(FilePickerMixin, bpy.types.Operator):
     bl_idname = "assetdoctor.examine_pick_source"
     bl_label = "Pick a Specific Item"
@@ -183,11 +195,9 @@ class ASSETDOCTOR_OT_examine_pick_source(FilePickerMixin, bpy.types.Operator):
         if not path:
             self.report({"ERROR"}, "Choose a .blend file")
             return {"CANCELLED"}
-        try:
-            with bpy.data.libraries.load(path, link=True) as (data_from, _data_to):
-                names = list(getattr(data_from, row.collection, []))
-        except Exception as exc:
-            self.report({"ERROR"}, f"Could not read {os.path.basename(path)}: {exc}")
+        names = _peek_names(path, row.collection)
+        if names is None:
+            self.report({"ERROR"}, f"Could not read {os.path.basename(path)}")
             return {"CANCELLED"}
 
         row.source_blend = path
@@ -199,6 +209,79 @@ class ASSETDOCTOR_OT_examine_pick_source(FilePickerMixin, bpy.types.Operator):
             context.area.tag_redraw()
         if not names:
             self.report({"WARNING"}, f"{os.path.basename(path)} has no {row.kind} datablocks")
+        return {"FINISHED"}
+
+
+class ASSETDOCTOR_OT_examine_search_folder(FilePickerMixin, bpy.types.Operator):
+    """Folder-wide convenience layer over Pick a Specific Item (docs/TODO.md
+    #20, 2026-06-27): walk every .blend under a chosen folder and peek each
+    for a name match, instead of requiring the user to already know which
+    file holds a replacement. Skips any file matching an ALREADY-LOADED
+    library's resolved path — re-peeking a library this session has just
+    really linked from is a documented, uncatchable native crash risk (see
+    ops.datablock_reconnect._populate_missing_blocks's docstring); such a
+    file is also pointless to search anyway, since its names are already in
+    the in-memory pools _populate_examine_rows checked first."""
+
+    bl_idname = "assetdoctor.examine_search_folder"
+    bl_label = "Search a Folder"
+    bl_description = (
+        "Walk every .blend in a chosen folder looking for a name match for this "
+        "row, instead of already knowing which file to pick. Skips files "
+        "already linked into this session"
+    )
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    index: bpy.props.IntProperty()  # type: ignore[valid-type]
+    directory: bpy.props.StringProperty(subtype="DIR_PATH")  # type: ignore[valid-type]
+    filter_folder: bpy.props.BoolProperty(default=True, options={"HIDDEN"})  # type: ignore[valid-type]
+
+    def execute(self, context):
+        import pathlib
+
+        from ..core.blendscan import iter_blend_files
+        from ..core.reconnect import find_best_file_match
+
+        coll = context.window_manager.assetdoctor_examine_rows
+        if not (0 <= self.index < len(coll)):
+            return {"CANCELLED"}
+        row = coll[self.index]
+        if not (self.directory and os.path.isdir(self.directory)):
+            self.report({"ERROR"}, "Choose a folder")
+            return {"CANCELLED"}
+
+        already_loaded = {
+            os.path.normpath(bpy.path.abspath(lib.filepath))
+            for lib in bpy.data.libraries if lib.filepath
+        }
+        names_by_file: dict[str, list[str]] = {}
+        unreadable = 0
+        for blend in iter_blend_files(pathlib.Path(self.directory)):
+            path = os.path.normpath(str(blend))
+            if path in already_loaded:
+                continue
+            names = _peek_names(path, row.collection)
+            if names is None:
+                unreadable += 1
+            elif names:
+                names_by_file[path] = names
+
+        best_file, suggestion = find_best_file_match(row.name, names_by_file)
+        if not best_file:
+            tail = f"; {unreadable} unreadable" if unreadable else ""
+            self.report({"WARNING"}, f"No {row.kind} matching '{row.name}' found in "
+                        f"{len(names_by_file)} file(s) searched{tail}")
+            return {"CANCELLED"}
+
+        row.source_blend = best_file
+        row.candidates = "\n".join(rc.ranked_candidates(row.name, names_by_file[best_file]))
+        row.use_suggested = False
+        row.make_local = False
+        row.selected = True
+        if context.area:
+            context.area.tag_redraw()
+        self.report({"INFO"}, f"Found '{suggestion.target}' ({suggestion.confidence}) in "
+                    f"{os.path.basename(best_file)} — searched {len(names_by_file)} file(s)")
         return {"FINISHED"}
 
 

@@ -13,6 +13,7 @@ for tests/scripting.
 
 import bpy
 
+from ..core import datablock_dedup as dd
 from ..core.geometry_dedup import build_instance_plan
 from .progress import ModalProgressMixin
 
@@ -84,18 +85,36 @@ def _populate_geo_families(context, plan: list[dict]) -> None:
     wm = context.window_manager
     coll = wm.assetdoctor_geo_families
     coll.clear()
+    linked_total = 0
     for group in plan:
+        linked_victims = group.get("linked_victims", [])
         row = coll.add()
         row.name = group["canonical"]
         row.kind = group["kind"]
         row.victims = "\n".join(group["victims"])
         row.selected = True
-        row.removable = len(group["victims"])
+        row.removable = len(group["victims"]) - len(linked_victims)
+        linked_total += len(linked_victims)
     wm.assetdoctor_geo_index = 0
     from ..core.geometry_dedup import removable_count
 
     wm.assetdoctor_geo_removable = removable_count(plan)
+    wm.assetdoctor_geo_linked = linked_total
     wm.assetdoctor_geo_scanned = True
+
+
+def _populate_geo_conflicts(context, items: list[dict]) -> None:
+    """Same-``.NNN``-name-family meshes that didn't end up in one content-merge
+    group — informational only (content fingerprint still gates every actual
+    instancing, unchanged). Reuses the generic name-family + fingerprint
+    conflict algorithm every other dedup section already relies on."""
+    wm = context.window_manager
+    members = [dd.MemberInfo(name=it["name"], fingerprint=it["fingerprint"] or "")
+              for it in items]
+    conflicts = dd.plan_merges(members)[1]
+    wm.assetdoctor_geo_conflicts = len(conflicts)
+    wm.assetdoctor_geo_conflicts_text = "\n".join(
+        f"{c.base} — {c.reason} ({', '.join(c.members)})" for c in conflicts)
 
 
 class ASSETDOCTOR_OT_instance_geometry(ModalProgressMixin, bpy.types.Operator):
@@ -124,14 +143,18 @@ class ASSETDOCTOR_OT_instance_geometry(ModalProgressMixin, bpy.types.Operator):
     def run_steps(self, context):
         from ..log import get_logger
         from .report_store import stash_report
+        from ..prefs import get_prefs
 
         log = get_logger()
+        prefs = get_prefs(context)
+        prefer_linked = bool(prefs and prefs.geometry_keep_preference == "LINKED")
         items, id_to_db = yield from _gather_steps(context)
 
         yield (0.85, "Building report…")
-        report, plan = build_instance_plan(items)
+        report, plan = build_instance_plan(items, prefer_linked)
         stash_report(context, report, "geo")
         _populate_geo_families(context, plan)
+        _populate_geo_conflicts(context, items)
         for f in report.findings:
             log.info("GEO [%s] %s: %s", f.severity, f.category, f.message)
         summary = next((f for f in report.findings if f.category == "summary"), None)
@@ -219,6 +242,8 @@ class ASSETDOCTOR_OT_instance_geometry_selected(bpy.types.Operator):
         wm.assetdoctor_geo_families.clear()
         wm.assetdoctor_geo_removable = 0
         wm.assetdoctor_geo_scanned = False
+        wm.assetdoctor_geo_conflicts = 0
+        wm.assetdoctor_geo_conflicts_text = ""
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

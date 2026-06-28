@@ -11,7 +11,7 @@ import os
 
 import bpy
 
-from ..core.report import Report
+from ..core.report import Report, default_export_filename
 from ..core.tree import (
     all_keys,
     flatten_visible,
@@ -129,6 +129,9 @@ def _fill_rows(coll, rows, prop: str) -> None:
         item.detail = r.detail
         item.icon = r.icon
         item.prop = prop
+        item.ram = r.ram
+        item.vram = r.vram
+        item.disk = r.disk
         if r.ref:
             item.ref_type = r.ref.get("type", "")
             item.ref_name = r.ref.get("name", "")
@@ -531,7 +534,16 @@ class ASSETDOCTOR_OT_export_report(FilePickerMixin, bpy.types.Operator):
     # section Export button targets its own report regardless of the selector).
     feature: bpy.props.StringProperty(default="")  # type: ignore[valid-type]
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore[valid-type]
-    filename: bpy.props.StringProperty(default="AssetDoctorReport.txt")  # type: ignore[valid-type]
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        if self.source == "resource":
+            label = "Resource Usage"
+        else:
+            feature = self.feature or active_feature(wm)
+            label = dict(FEATURES).get(feature, feature)
+        self.filepath = default_export_filename(label)
+        return super().invoke(context, event)
 
     def execute(self, context):
         wm = context.window_manager

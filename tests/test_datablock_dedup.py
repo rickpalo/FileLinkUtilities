@@ -46,6 +46,19 @@ def test_unverified_fingerprint_not_merged():
     assert conflicts and "unverified" in conflicts[0].reason
 
 
+def test_differing_content_and_unverified_both_reported():
+    # A family that's BOTH split across 2 real content groups AND has a member
+    # with no fingerprint at all -- the reason must say both, not just the
+    # first one checked (regression: used to silently drop the unverified half).
+    members = [MemberInfo("Pose", "fpX", users=1), MemberInfo("Pose.001", "fpY", users=1),
+               MemberInfo("Pose.002", "", users=1)]
+    plans, conflicts = dd.plan_merges(members)
+    assert plans == []
+    assert len(conflicts) == 1
+    assert "differing content" in conflicts[0].reason
+    assert "unverified" in conflicts[0].reason
+
+
 def test_lone_numbered_copy_is_not_a_family():
     members = [MemberInfo("Solo.001", "fp", users=1)]
     plans, conflicts = dd.plan_merges(members)

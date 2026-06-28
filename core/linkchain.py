@@ -139,6 +139,103 @@ def read_override_reference(ov_block) -> OverrideReference | None:
     return OverrideReference(name=name, kind=kind, library=lib_path)
 
 
+# Modifier/constraint DNA "type" enum ints, confirmed 2026-06-27 against a
+# synthetic-fixture probe cross-checked with live bpy.types.Modifier/Constraint
+# .bl_rna.properties["type"].enum_items[...].value (Blender 5.1) -- see
+# docs/TODO.md. Hardcoded rather than derived from bpy since this module stays
+# bpy-free/offline-testable; re-derive the same way (don't guess) if a future
+# Blender version ever needs re-confirming.
+_MOD_TYPE_ARMATURE = 8
+_MOD_TYPE_HOOK = 9
+_CONSTRAINT_TYPE_CHILD_OF = 1
+_MAX_LINKED_LIST_STEPS = 200  # fail-safe cap, not a real limit (no object has this many)
+
+
+def _block_raw_name(block) -> str:
+    """Raw 2-char-prefixed name (e.g. ``"ARRig"``) off an already-dereferenced
+    block — works for BOTH a real local typed block (name lives under the
+    embedded ``id`` sub-struct) and a generic ``ID`` placeholder representing
+    a plain link this file never individually overrode (bare ``name`` field
+    directly, no ``id`` wrapper — the exact same shape already documented for
+    ``override_library.reference``, see :func:`read_override_reference`).
+
+    2026-06-27 fix (real production data, docs/TODO.md): a parent/Armature-
+    modifier/Hook-modifier/Child-Of-constraint target is very often a TEMPLATE
+    rig shared by hundreds of characters that nobody has individually
+    overridden in THIS file — it never gets a real local ``OB`` block, only
+    this generic placeholder shape. Reading ONLY the typed ``(b"id",
+    b"name")`` path silently returned ``""`` for every such target, making
+    the parent-chain/attach-target walk dead-end at the very first
+    bare-linked ancestor — which is why most characters in a donor file with
+    a shared, never-locally-overridden rig fell back to an unresolved
+    "standalone" group (and, since the SAME bug affected this object's own
+    ``data`` pointer whenever its mesh/armature data is a plain link too,
+    showed up generically as "Object (standalone)" instead of its real
+    type). Falling back to the bare ``(b"name",)`` path fixes both."""
+    if block is None:
+        return ""
+    raw = block.get((b"id", b"name"), as_str=True, default="")
+    return raw or block.get((b"name",), as_str=True, default="")
+
+
+def _block_id_name(block) -> str:
+    """An already-dereferenced ID block's own bare name (no 2-char prefix)."""
+    raw = _block_raw_name(block)
+    return raw[2:] if raw else ""
+
+
+def read_attach_target(block) -> tuple[str, str]:
+    """The first Armature-deform modifier, Hook modifier, or Child Of
+    constraint target found on this Object block — the non-parent ways an
+    object can attach to a rig (props/accessories skinned or bone-constrained
+    without ever being parented to the armature). Returns ``(target object
+    name, subtarget bone name)``, or ``("", "")`` if none of these are
+    present. ``""`` subtarget means "the whole object", not a specific bone.
+
+    DNA paths confirmed 2026-06-27 via a synthetic-fixture probe (see
+    docs/TODO.md): a modifier block is concretely typed per modifier kind
+    (e.g. ``ArmatureModifierData``) with ``object``/``subtarget`` as DIRECT
+    top-level fields, but ``type`` lives on the embedded base ``ModifierData
+    modifier;`` substruct every modifier struct starts with — read via the
+    nested path ``(b"modifier", b"type")``, same embedded-substruct pattern as
+    ``(b"id", b"override_library")``. A constraint's ``type`` IS a direct
+    top-level field on ``bConstraint`` itself, but its target is NOT — `data`
+    is a ``void*`` to a type-specific struct (e.g. ``bChildOfConstraint``)
+    that BAT's block header already records the CONCRETE type for (no
+    explicit ``refine_type()`` call needed) — read as two SEPARATE sequential
+    ``get_pointer``/``get`` calls, never one combined path tuple, same lesson
+    as the override-reference 2-hop case above. Only ``CHILD_OF`` is checked
+    for now; other targeting constraint types (Copy Location/Rotation/
+    Transforms, Damped Track, Track To, …) follow the identical two-hop
+    mechanism but haven't been individually probed yet."""
+    mod = block.get_pointer((b"modifiers", b"first"), default=None)
+    steps = 0
+    while mod is not None and steps < _MAX_LINKED_LIST_STEPS:
+        steps += 1
+        mtype = mod.get((b"modifier", b"type"), default=None)
+        if mtype in (_MOD_TYPE_ARMATURE, _MOD_TYPE_HOOK):
+            target = mod.get_pointer((b"object",), default=None)
+            if target is not None:
+                subtarget = mod.get((b"subtarget",), as_str=True, default="") or ""
+                return _block_id_name(target), subtarget
+        mod = mod.get_pointer((b"modifier", b"next"), default=None)
+
+    con = block.get_pointer((b"constraints", b"first"), default=None)
+    steps = 0
+    while con is not None and steps < _MAX_LINKED_LIST_STEPS:
+        steps += 1
+        ctype = con.get((b"type",), default=None)
+        if ctype == _CONSTRAINT_TYPE_CHILD_OF:
+            data = con.get_pointer((b"data",), default=None)
+            if data is not None:
+                target = data.get_pointer((b"tar",), default=None)
+                if target is not None:
+                    subtarget = data.get((b"subtarget",), as_str=True, default="") or ""
+                    return _block_id_name(target), subtarget
+        con = con.get_pointer((b"next",), default=None)
+    return "", ""
+
+
 @dataclass(frozen=True)
 class ObjectPosingInfo:
     """Raw, unjudged signals read off one local Object block.
@@ -146,7 +243,14 @@ class ObjectPosingInfo:
     ``source_file`` (added when the census was extended to every file in a
     multi-hop chain, not just the root — see ``classify_objects``) names which
     .blend this object is LOCAL to. Defaults to "" for any pre-existing caller
-    that only ever read one already-known file and didn't need to say so."""
+    that only ever read one already-known file and didn't need to say so.
+
+    ``obj_kind``/``parent_name``/``attach_target``/``attach_subtarget`` (added
+    2026-06-27 for the offline rig-grouping redesign, docs/TODO.md) are the
+    hierarchy signals ``build_offline_rig_index`` needs — read regardless of
+    override status, since a plain (non-overridden) mesh or an Armature whose
+    own object-transform is untouched still needs to participate in the
+    hierarchy walk."""
 
     name: str
     has_override: bool = False
@@ -157,6 +261,10 @@ class ObjectPosingInfo:
     size: tuple[float, ...] | None = None
     reference: OverrideReference | None = None
     source_file: str = ""
+    obj_kind: str = ""  # e.g. "Armature"/"Mesh", via the data-block name prefix
+    parent_name: str = ""
+    attach_target: str = ""  # Armature/Hook-modifier or Child-Of-constraint target
+    attach_subtarget: str = ""  # bone name, "" if the attachment isn't bone-specific
 
 
 def read_object_posing(block, source_file: str = "") -> ObjectPosingInfo:
@@ -168,7 +276,10 @@ def read_object_posing(block, source_file: str = "") -> ObjectPosingInfo:
     on ``Object``) and ``(b"modifiers", b"first")`` (presence-only — this
     deliberately does NOT identify the modifier TYPE, just whether one
     exists, since Phase A only needs to bucket "has some modifier-driven
-    motion" vs not)."""
+    motion" vs not). ``obj_kind``/``parent_name``/``attach_target``/
+    ``attach_subtarget`` (2026-06-27, see ``read_attach_target``) are read
+    unconditionally — every object participates in the hierarchy walk
+    regardless of override/transform status."""
     raw_name = block.get((b"id", b"name"), as_str=True, default="")
     name = raw_name[2:] if raw_name else ""
     ov_block = block.get_pointer((b"id", b"override_library"), default=None)
@@ -179,9 +290,17 @@ def read_object_posing(block, source_file: str = "") -> ObjectPosingInfo:
     rot = tuple(block.get((b"rot",), default=[0.0, 0.0, 0.0]))
     quat = tuple(block.get((b"quat",), default=[1.0, 0.0, 0.0, 0.0]))
     size = tuple(block.get((b"size",), default=[1.0, 1.0, 1.0]))
+
+    data_block = block.get_pointer((b"data",), default=None)
+    raw_data_name = _block_raw_name(data_block)
+    obj_kind = _PREFIX_KINDS.get(raw_data_name[:2], raw_data_name[:2] or "")
+    parent_name = _block_id_name(block.get_pointer((b"parent",), default=None))
+    attach_target, attach_subtarget = read_attach_target(block)
+
     return ObjectPosingInfo(name=name, has_override=has_override, has_modifier=has_modifier,
                             loc=loc, rot=rot, quat=quat, size=size, reference=reference,
-                            source_file=source_file)
+                            source_file=source_file, obj_kind=obj_kind, parent_name=parent_name,
+                            attach_target=attach_target, attach_subtarget=attach_subtarget)
 
 
 def classify_objects(blend_path) -> list[ObjectPosingInfo]:
@@ -240,6 +359,79 @@ def scan_links_and_objects(
         return refs, objects
     finally:
         bfile.close()
+
+
+# --- 2a-bis. offline hierarchy resolution (pure) ----------------------------
+#
+# Offline equivalent of ops.linkchain._resolve_rig's live-bpy walk, built
+# 2026-06-27 for the remote-candidate grouping redesign (docs/TODO.md): the
+# picker's remote rows used to be grouped only by source FILE, never by
+# character, because the offline census never read parent/modifier/constraint
+# relationships at all. Resolution is scoped PER FILE (``source_file``) since
+# parent/attach-target names are only meaningful within the same .blend's own
+# object namespace -- a name collision across two unrelated donor files must
+# never merge their hierarchies.
+
+def build_offline_rig_index(posing: list[ObjectPosingInfo]) -> dict[tuple[str, str], str]:
+    """``{(source_file, object_name): resolved rig name}`` (``""`` when no rig
+    could be found) for every object in ``posing``, which may span several
+    files. Keyed by ``(source_file, name)``, NOT bare name -- object names are
+    only unique WITHIN one .blend, so two unrelated donor files can easily
+    both have e.g. a "Rig"; a bare-name dict would silently let one file's
+    entry clobber another's. Mirrors ``ops.linkchain._resolve_rig``'s
+    priority order (self-is-armature > modifier/constraint attach-target-is-
+    armature > parent-chain walk) but over the offline per-file census
+    instead of ``bpy.data.objects``. Pure, no bpy/BAT -- crafted
+    ``ObjectPosingInfo`` lists are enough to test it."""
+    by_file: dict[str, dict[str, ObjectPosingInfo]] = {}
+    for info in posing:
+        by_file.setdefault(info.source_file, {})[info.name] = info
+
+    result: dict[tuple[str, str], str] = {}
+    for source_file, file_objects in by_file.items():
+        for info in file_objects.values():
+            result[(source_file, info.name)] = _resolve_offline_rig_one(info, file_objects)
+    return result
+
+
+def _resolve_offline_rig_one(
+    info: ObjectPosingInfo, file_objects: dict[str, ObjectPosingInfo]
+) -> str:
+    if info.obj_kind == "Armature":
+        return info.name
+    if info.attach_target:
+        target = file_objects.get(info.attach_target)
+        if target is not None and target.obj_kind == "Armature":
+            return target.name
+    seen: set[str] = set()
+    node = file_objects.get(info.parent_name) if info.parent_name else None
+    while node is not None and node.name not in seen:
+        seen.add(node.name)
+        if node.obj_kind == "Armature":
+            return node.name
+        node = file_objects.get(node.parent_name) if node.parent_name else None
+    return ""
+
+
+def posing_list_to_dict(posing: list[ObjectPosingInfo]) -> list[dict]:
+    """JSON-friendly round-trip of a full per-file object census, cached once
+    after "Find Flattenable Link Chains" runs (``ops.linkchain.
+    ASSETDOCTOR_OT_scan_link_chains``) so the picker can rebuild the rig index
+    without re-scanning every file."""
+    return [asdict(info) for info in posing]
+
+
+def posing_list_from_dict(data: list[dict]) -> list[ObjectPosingInfo]:
+    out = []
+    for d in data:
+        d = dict(d)
+        ref_d = d.pop("reference", None)
+        reference = OverrideReference(**ref_d) if ref_d else None
+        for key in ("loc", "rot", "quat", "size"):
+            if d.get(key) is not None:
+                d[key] = tuple(d[key])
+        out.append(ObjectPosingInfo(reference=reference, **d))
+    return out
 
 
 # --- 2b. posing classify (pure) ---------------------------------------------
@@ -426,6 +618,24 @@ class FlattenPlan:
     route: list[str] | None  # the multi-hop chain it currently routes through, if any
     properties: list[OverrideProperty]
     warnings: list[str]
+
+
+def is_direct_link_only(reference: OverrideReference | None,
+                        routes: dict[str, list[list[str]]]) -> bool:
+    """True when ``reference``'s library is KNOWN and reachable from the root
+    ONLY directly (no multi-hop route to it exists at all) — flattening it
+    would just re-link it from exactly where it's already linked from, so
+    it's excluded as a candidate entirely (user feedback, 2026-06-27) rather
+    than shown as a permanently-blocked row. False (NOT excluded) when the
+    reference is unknown/undetermined — that's a different, worth-surfacing
+    problem, not "nothing to do". Same basename cross-reference
+    :func:`build_flatten_plan` does internally to decide ``route``/
+    ``ultimate_library``, exposed standalone so callers can filter BEFORE
+    building a full plan."""
+    if reference is None or not reference.library:
+        return False
+    ref_base = _basename(reference.library)
+    return not any(_basename(target) == ref_base for target in routes)
 
 
 def build_flatten_plan(
@@ -723,8 +933,10 @@ __all__ = [
     "OVERRIDE_WITH_TRANSFORM", "MODIFIER_DRIVEN", "UNCLASSIFIED",
     "ObjectPosingInfo", "OverrideReference", "OverrideProperty", "FlattenPlan",
     "find_chains", "multihop_routes", "read_object_posing", "read_override_reference",
-    "classify_objects", "classify_posing", "transform_differs_from_identity",
-    "build_chain_report", "build_flatten_plan", "routes_from_report", "remote_posing_files",
+    "read_attach_target", "classify_objects", "classify_posing", "transform_differs_from_identity",
+    "build_offline_rig_index", "posing_list_to_dict", "posing_list_from_dict",
+    "build_chain_report", "build_flatten_plan", "is_direct_link_only",
+    "routes_from_report", "remote_posing_files",
     "drop_local_posing_findings", "build_flatten_plan_report",
     "flatten_plan_to_dict", "flatten_plan_from_dict", "summarize_properties", "build_rig_rollup",
     "FlattenApplyResult", "build_flatten_apply_report",

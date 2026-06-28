@@ -80,6 +80,23 @@ def main():
         checks.append(("object A repointed to Wood2K",
                        o1.data.materials[0] is not None and o1.data.materials[0].name == "Wood2K"))
 
+        # docs/TODO.md #16 (2026-06-27): a .NNN-name-family pair with genuinely
+        # DIFFERENT content (different images -> different fingerprints) should
+        # be reported "kept separate," not silently dropped.
+        img3 = bpy.data.images.new("rock_a", 64, 64)
+        img4 = bpy.data.images.new("rock_b", 64, 64)
+        m3 = _wood_mat(bpy, "Stone", img3)
+        m4 = _wood_mat(bpy, "Stone.001", img4)
+        _obj_with(bpy, "S1", m3)
+        _obj_with(bpy, "S2", m4)
+
+        res_conflict = bpy.ops.assetdoctor.material_dedup("EXEC_DEFAULT", apply=False)
+        wm = bpy.context.window_manager
+        checks.append(("conflict scan FINISHED", res_conflict == {"FINISHED"}))
+        checks.append(("differing-content name-family flagged as kept separate",
+                       wm.assetdoctor_mat_conflicts >= 1 and "Stone" in wm.assetdoctor_mat_conflicts_text
+                       and "differing content" in wm.assetdoctor_mat_conflicts_text))
+
         ok = all(p for _, p in checks)
         for label, p in checks:
             print(f"  [{'OK' if p else 'FAIL'}] {label}")

@@ -119,6 +119,12 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_resource_totals = bpy.props.StringProperty(default="")
     # Real peak RAM from the last Profile Render (human-readable string).
     bpy.types.WindowManager.assetdoctor_profiled_ram = bpy.props.StringProperty(default="")
+    # docs/TODO.md #15 (2026-06-27): the last scan's raw per-datablock items
+    # (JSON), cached so clicking a column header can cheaply re-sort/re-group
+    # without re-walking bpy.data; the chosen sort column persists too.
+    bpy.types.WindowManager.assetdoctor_resource_items_json = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.assetdoctor_resource_sort = bpy.props.EnumProperty(
+        items=[("ram", "RAM", ""), ("vram", "VRAM", ""), ("disk", "Disk", "")], default="ram")
 
     # Materialised, flattened tree rows that the Report/Resource UILists draw
     # (virtualized + scrollable — fixes blank rows on large reports). Rebuilt by
@@ -230,6 +236,10 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_mat_scanned = bpy.props.BoolProperty(default=False)
     bpy.types.WindowManager.assetdoctor_mat_removable = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_mat_linked = bpy.props.IntProperty(default=0)
+    # Find Duplicates display unification (docs/TODO.md #16, 2026-06-27): same-
+    # name-family materials that didn't merge cleanly, kept separate.
+    bpy.types.WindowManager.assetdoctor_mat_conflicts = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_mat_conflicts_text = bpy.props.StringProperty(default="")
 
     # Group 11 #44 (2026-06-26): Find Duplicate Geometry gets the same
     # selective checkbox/Instance-Selected shape as the other dedup tools,
@@ -239,6 +249,14 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_geo_index = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_geo_scanned = bpy.props.BoolProperty(default=False)
     bpy.types.WindowManager.assetdoctor_geo_removable = bpy.props.IntProperty(default=0)
+    # docs/TODO.md #21 (2026-06-27): linked victims that stay in their library
+    # (only their local users get repointed) -- tracked separately from
+    # assetdoctor_geo_removable, mirroring core.f3_materials' linked accounting.
+    bpy.types.WindowManager.assetdoctor_geo_linked = bpy.props.IntProperty(default=0)
+    # Find Duplicates display unification (docs/TODO.md #16, 2026-06-27): same-
+    # name-family meshes that didn't merge cleanly, kept separate.
+    bpy.types.WindowManager.assetdoctor_geo_conflicts = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.assetdoctor_geo_conflicts_text = bpy.props.StringProperty(default="")
 
     # Group 11 #45 (2026-06-26): Find Orphans gets a checkbox/Purge-Selected
     # shape for TRUE orphans (no keeper — purge is binary). Fake-user-only and
@@ -273,6 +291,12 @@ def register() -> None:
         type=ASSETDOCTOR_PG_flatten_candidate)
     bpy.types.WindowManager.assetdoctor_flatten_index = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_flatten_plans_json = bpy.props.StringProperty(default="")
+    # Full per-file object hierarchy census (core.linkchain.posing_list_to_dict),
+    # cached by Find Flattenable Link Chains so the picker can resolve each
+    # remote character's rig (parent/Armature-modifier/Hook-modifier/Child-Of-
+    # constraint relationships) without re-scanning every file -- 2026-06-27
+    # redesign, docs/TODO.md.
+    bpy.types.WindowManager.assetdoctor_flatten_hierarchy_json = bpy.props.StringProperty(default="")
     # Which rig/character groups are expanded in the picker (newline-joined
     # rig names), mirroring every other collapsible-group list in this addon.
     bpy.types.WindowManager.assetdoctor_flatten_expanded = bpy.props.StringProperty(default="")
@@ -334,6 +358,7 @@ def unregister() -> None:
                 "assetdoctor_active_report", "assetdoctor_resource_tree",
                 "assetdoctor_resource_expanded", "assetdoctor_resource_totals",
                 "assetdoctor_profiled_ram",
+                "assetdoctor_resource_items_json", "assetdoctor_resource_sort",
                 "assetdoctor_report_rows", "assetdoctor_report_index",
                 "assetdoctor_resource_rows", "assetdoctor_resource_index",
                 "assetdoctor_broken_libs", "assetdoctor_broken_index",
@@ -359,15 +384,19 @@ def unregister() -> None:
                 "assetdoctor_mat_families", "assetdoctor_mat_index",
                 "assetdoctor_mat_scanned", "assetdoctor_mat_removable",
                 "assetdoctor_mat_linked",
+                "assetdoctor_mat_conflicts", "assetdoctor_mat_conflicts_text",
                 "assetdoctor_geo_families", "assetdoctor_geo_index",
                 "assetdoctor_geo_scanned", "assetdoctor_geo_removable",
+                "assetdoctor_geo_linked",
+                "assetdoctor_geo_conflicts", "assetdoctor_geo_conflicts_text",
                 "assetdoctor_orphan_rows", "assetdoctor_orphan_index",
                 "assetdoctor_examine_library_pick", "assetdoctor_examine_library",
                 "assetdoctor_examine_rows", "assetdoctor_examine_index",
                 "assetdoctor_examine_scanned", "assetdoctor_examine_expanded",
                 "assetdoctor_analyze_steps", "assetdoctor_analyze_index",
                 "assetdoctor_flatten_candidates", "assetdoctor_flatten_index",
-                "assetdoctor_flatten_plans_json", "assetdoctor_flatten_expanded",
+                "assetdoctor_flatten_plans_json", "assetdoctor_flatten_hierarchy_json",
+                "assetdoctor_flatten_expanded",
                 "assetdoctor_flatten_remote_note", "assetdoctor_flatten_deselected",
                 "assetdoctor_flatten_make_local", "assetdoctor_flatten_make_copy",
                 "assetdoctor_flatten_done", "assetdoctor_flatten_failed",

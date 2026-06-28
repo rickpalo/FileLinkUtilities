@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from .datablock_dedup import FamilyConflict, MergePlan
 from .datablock_dedup import removable_count as removable_count
 from .datablock_dedup import victims_for_keeper as victims_for_keeper
+from .datablock_graph import duplicate_families
 from .report import Finding, Report
 
 
@@ -59,6 +60,44 @@ def plan_content_merges(images: list[ImgInfo]) -> list[MergePlan]:
         plans.append(MergePlan(base=canonical, canonical=canonical,
                                redundant=redundant, fingerprint=fp))
     return sorted(plans, key=lambda p: p.canonical)
+
+
+def _fingerprint_dims(fingerprint: str) -> str:
+    """The size/channel/depth portion of an image fingerprint, dropping the
+    trailing content hash — ``"1024x1024:4:8:<sha1>"`` -> ``"1024x1024:4:8"``."""
+    dims, _sep, _content_hash = fingerprint.rpartition(":")
+    return dims
+
+
+def find_image_conflicts(images: list[ImgInfo]) -> list[FamilyConflict]:
+    """Same-``.NNN``-name-family images that did NOT end up in one content-
+    merge group — informational only, never a merge trigger (a fingerprint
+    match is still the only thing ``plan_content_merges`` ever merges on).
+    Distinguishes WHY a family was kept separate: different dimensions
+    (probably a resolution variant misnamed with a ``.NNN`` suffix instead of
+    a resolution token, or just two unrelated images sharing a name) vs. the
+    same dimensions but a different pixel hash (the genuinely suspicious case
+    — looks like the same texture, isn't)."""
+    by_name = {i.name: i for i in images}
+    fams = duplicate_families([i.name for i in images])
+    conflicts: list[FamilyConflict] = []
+    for base in sorted(fams):
+        group = [by_name[n] for n in fams[base]]
+        fingerprints = {i.fingerprint for i in group if i.fingerprint}
+        unverified = [i.name for i in group if not i.fingerprint]
+        if len(fingerprints) <= 1 and not unverified:
+            continue  # single clean fingerprint group (or nothing at all to report)
+        bits = []
+        if len(fingerprints) > 1:
+            dims = {_fingerprint_dims(fp) for fp in fingerprints}
+            bits.append("different dimensions — likely a resolution variant, not a real "
+                        "duplicate" if len(dims) > 1
+                        else "same dimensions, different content — worth a closer look")
+        if unverified:
+            bits.append(f"{len(unverified)} unverified (no fingerprint available) — not merged")
+        conflicts.append(FamilyConflict(base=base, members=sorted(i.name for i in group),
+                                        reason="; ".join(bits)))
+    return conflicts
 
 
 def build_dedup_report(plans: list[MergePlan], conflicts: list[FamilyConflict],

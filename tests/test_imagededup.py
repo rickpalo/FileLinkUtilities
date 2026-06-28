@@ -58,3 +58,48 @@ def test_victims_for_keeper_follows_user_choice():
     assert imagededup.victims_for_keeper(members, "Leather") == ["Leather.001", "Leather.002"]
     # user overrides the keeper -> everything else is a victim, incl. the old canonical
     assert imagededup.victims_for_keeper(members, "Leather.001") == ["Leather", "Leather.002"]
+
+
+def test_find_image_conflicts_ignores_clean_families():
+    # A single clean fingerprint group (handled by plan_content_merges) and a
+    # lone, non-suffixed image -- neither is a name-family conflict.
+    imgs = [ImgInfo("A", "1024x1024:4:8:fp", users=1),
+            ImgInfo("A.001", "1024x1024:4:8:fp", users=1),
+            ImgInfo("Solo", "512x512:4:8:fp2", users=1)]
+    assert imagededup.find_image_conflicts(imgs) == []
+
+
+def test_find_image_conflicts_different_dimensions():
+    imgs = [ImgInfo("Wood", "1024x1024:4:8:fpA", users=1),
+            ImgInfo("Wood.001", "2048x2048:4:8:fpB", users=1)]
+    conflicts = imagededup.find_image_conflicts(imgs)
+    assert len(conflicts) == 1
+    assert conflicts[0].base == "Wood"
+    assert "different dimensions" in conflicts[0].reason
+
+
+def test_find_image_conflicts_same_dimensions_different_hash():
+    imgs = [ImgInfo("Wood", "1024x1024:4:8:fpA", users=1),
+            ImgInfo("Wood.001", "1024x1024:4:8:fpB", users=1)]
+    conflicts = imagededup.find_image_conflicts(imgs)
+    assert len(conflicts) == 1
+    assert "same dimensions, different content" in conflicts[0].reason
+
+
+def test_find_image_conflicts_unverified_member():
+    imgs = [ImgInfo("Wood", "1024x1024:4:8:fpA", users=1),
+            ImgInfo("Wood.001", "", users=1)]
+    conflicts = imagededup.find_image_conflicts(imgs)
+    assert len(conflicts) == 1
+    assert "unverified" in conflicts[0].reason
+    assert "dimensions" not in conflicts[0].reason
+
+
+def test_find_image_conflicts_dims_and_unverified_both_reported():
+    imgs = [ImgInfo("Wood", "1024x1024:4:8:fpA", users=1),
+            ImgInfo("Wood.001", "2048x2048:4:8:fpB", users=1),
+            ImgInfo("Wood.002", "", users=1)]
+    conflicts = imagededup.find_image_conflicts(imgs)
+    assert len(conflicts) == 1
+    assert "different dimensions" in conflicts[0].reason
+    assert "unverified" in conflicts[0].reason

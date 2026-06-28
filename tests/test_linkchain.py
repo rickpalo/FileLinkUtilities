@@ -337,6 +337,234 @@ def test_read_override_reference_no_library():
     assert ref == OverrideReference(name="child_older", kind="Collection", library="")
 
 
+# --- read_attach_target (stubbed BAT blocks -- DNA paths confirmed 2026-06-27
+# via a synthetic-fixture probe, not production data; see docs/TODO.md and the
+# function's own docstring) ----------------------------------------------------
+
+def _ob_block(name: str) -> _StubBlock:
+    return _StubBlock(gets={(b"id", b"name"): f"OB{name}"})
+
+
+def _modifier_block(mtype, target=None, subtarget="", nxt=None) -> _StubBlock:
+    pointers = {(b"modifier", b"next"): nxt}
+    if target is not None:
+        pointers[(b"object",)] = target
+    return _StubBlock(gets={(b"modifier", b"type"): mtype, (b"subtarget",): subtarget},
+                      pointers=pointers)
+
+
+def test_read_attach_target_finds_armature_modifier():
+    rig = _ob_block("Rig")
+    mod = _modifier_block(linkchain._MOD_TYPE_ARMATURE, target=rig)
+    block = _StubBlock(pointers={(b"modifiers", b"first"): mod})
+    assert linkchain.read_attach_target(block) == ("Rig", "")
+
+
+def test_read_attach_target_finds_hook_modifier_with_subtarget():
+    rig = _ob_block("Rig")
+    mod = _modifier_block(linkchain._MOD_TYPE_HOOK, target=rig, subtarget="Bone")
+    block = _StubBlock(pointers={(b"modifiers", b"first"): mod})
+    assert linkchain.read_attach_target(block) == ("Rig", "Bone")
+
+
+def test_read_attach_target_skips_unrelated_modifier_types():
+    rig = _ob_block("Rig")
+    subsurf = _modifier_block(99, target=rig)  # not Armature/Hook
+    block = _StubBlock(pointers={(b"modifiers", b"first"): subsurf})
+    assert linkchain.read_attach_target(block) == ("", "")
+
+
+def test_read_attach_target_walks_modifier_linked_list():
+    rig = _ob_block("Rig")
+    second = _modifier_block(linkchain._MOD_TYPE_ARMATURE, target=rig)
+    first = _modifier_block(99, nxt=second)  # an irrelevant modifier comes first
+    block = _StubBlock(pointers={(b"modifiers", b"first"): first})
+    assert linkchain.read_attach_target(block) == ("Rig", "")
+
+
+def test_read_attach_target_finds_child_of_constraint():
+    rig = _ob_block("Rig")
+    data = _StubBlock(gets={(b"subtarget",): "Bone"}, pointers={(b"tar",): rig})
+    con = _StubBlock(gets={(b"type",): linkchain._CONSTRAINT_TYPE_CHILD_OF},
+                      pointers={(b"data",): data})
+    block = _StubBlock(pointers={(b"constraints", b"first"): con})
+    assert linkchain.read_attach_target(block) == ("Rig", "Bone")
+
+
+def test_read_attach_target_skips_unrelated_constraint_types():
+    con = _StubBlock(gets={(b"type",): 7})  # not Child Of
+    block = _StubBlock(pointers={(b"constraints", b"first"): con})
+    assert linkchain.read_attach_target(block) == ("", "")
+
+
+def test_read_attach_target_none_when_no_modifiers_or_constraints():
+    block = _StubBlock()
+    assert linkchain.read_attach_target(block) == ("", "")
+
+
+def _ob_placeholder_block(name: str) -> _StubBlock:
+    """A generic ``ID`` placeholder block (bare ``name``, no ``id`` wrapper)
+    -- what a plain link nobody individually overrode looks like, the same
+    shape ``read_override_reference`` already documents for
+    ``override_library.reference``."""
+    return _StubBlock(gets={(b"name",): f"OB{name}"})
+
+
+def test_read_attach_target_finds_armature_modifier_via_bare_link_placeholder():
+    """A shared rig template nobody locally overrode has no real OB block --
+    only a generic ID placeholder (bare `name`, no `id` wrapper). The
+    attach-target walk must still resolve its name (2026-06-27 fix, real
+    production data -- this is why most characters in a donor file with a
+    shared, never-locally-overridden rig fell back to an unresolved
+    "standalone" group)."""
+    rig = _ob_placeholder_block("Rig")
+    mod = _modifier_block(linkchain._MOD_TYPE_ARMATURE, target=rig)
+    block = _StubBlock(pointers={(b"modifiers", b"first"): mod})
+    assert linkchain.read_attach_target(block) == ("Rig", "")
+
+
+# --- read_object_posing hierarchy fields (stubbed BAT blocks) -----------------
+
+def test_read_object_posing_detects_mesh_kind_parent_and_attach_target():
+    rig_target = _ob_block("Rig")
+    mesh_data = _StubBlock(gets={(b"id", b"name"): "MEBonnetData"})
+    mod = _modifier_block(linkchain._MOD_TYPE_ARMATURE, target=rig_target)
+    parent_block = _ob_block("Hat")
+    block = _StubBlock(
+        gets={(b"id", b"name"): "OBBonnet",
+              (b"loc",): [0.0, 0.0, 0.0], (b"rot",): [0.0, 0.0, 0.0],
+              (b"quat",): [1.0, 0.0, 0.0, 0.0], (b"size",): [1.0, 1.0, 1.0]},
+        pointers={(b"data",): mesh_data, (b"parent",): parent_block,
+                  (b"modifiers", b"first"): mod})
+    info = linkchain.read_object_posing(block, source_file="char.blend")
+    assert info.obj_kind == "Mesh"
+    assert info.parent_name == "Hat"
+    assert info.attach_target == "Rig"
+    assert info.attach_subtarget == ""
+    assert info.source_file == "char.blend"
+
+
+def test_read_object_posing_detects_armature_kind():
+    arm_data = _StubBlock(gets={(b"id", b"name"): "ARRigData"})
+    block = _StubBlock(
+        gets={(b"id", b"name"): "OBRig",
+              (b"loc",): [0.0, 0.0, 0.0], (b"rot",): [0.0, 0.0, 0.0],
+              (b"quat",): [1.0, 0.0, 0.0, 0.0], (b"size",): [1.0, 1.0, 1.0]},
+        pointers={(b"data",): arm_data})
+    info = linkchain.read_object_posing(block)
+    assert info.obj_kind == "Armature"
+    assert info.parent_name == ""
+    assert info.attach_target == ""
+
+
+def test_read_object_posing_detects_kind_via_bare_link_placeholder_data():
+    """The object's own data (e.g. shared mesh data nobody individually
+    overrode) can also be a bare-link placeholder -- obj_kind must still
+    resolve (2026-06-27 fix; previously fell back to "" -> a generic
+    "Object (standalone)" group instead of the real type)."""
+    mesh_data_placeholder = _StubBlock(gets={(b"name",): "MEBonnetData"})
+    block = _StubBlock(
+        gets={(b"id", b"name"): "OBBonnet",
+              (b"loc",): [0.0, 0.0, 0.0], (b"rot",): [0.0, 0.0, 0.0],
+              (b"quat",): [1.0, 0.0, 0.0, 0.0], (b"size",): [1.0, 1.0, 1.0]},
+        pointers={(b"data",): mesh_data_placeholder})
+    info = linkchain.read_object_posing(block)
+    assert info.obj_kind == "Mesh"
+
+
+def test_read_object_posing_resolves_parent_via_bare_link_placeholder():
+    parent_placeholder = _ob_placeholder_block("Rig")
+    block = _StubBlock(
+        gets={(b"id", b"name"): "OBBonnet",
+              (b"loc",): [0.0, 0.0, 0.0], (b"rot",): [0.0, 0.0, 0.0],
+              (b"quat",): [1.0, 0.0, 0.0, 0.0], (b"size",): [1.0, 1.0, 1.0]},
+        pointers={(b"parent",): parent_placeholder})
+    info = linkchain.read_object_posing(block)
+    assert info.parent_name == "Rig"
+
+
+# --- build_offline_rig_index (pure) -------------------------------------------
+
+def _hier(name, obj_kind="Mesh", parent_name="", attach_target="", source_file="a.blend"):
+    return ObjectPosingInfo(name=name, obj_kind=obj_kind, parent_name=parent_name,
+                            attach_target=attach_target, source_file=source_file)
+
+
+def test_build_offline_rig_index_self_is_armature():
+    posing = [_hier("Rig", obj_kind="Armature")]
+    assert linkchain.build_offline_rig_index(posing) == {("a.blend", "Rig"): "Rig"}
+
+
+def test_build_offline_rig_index_via_attach_target():
+    posing = [_hier("Rig", obj_kind="Armature"), _hier("Bonnet", attach_target="Rig")]
+    index = linkchain.build_offline_rig_index(posing)
+    assert index[("a.blend", "Bonnet")] == "Rig"
+
+
+def test_build_offline_rig_index_via_parent_chain():
+    posing = [_hier("Rig", obj_kind="Armature"),
+              _hier("Body", parent_name="Rig"),
+              _hier("Sleeve", parent_name="Body")]
+    index = linkchain.build_offline_rig_index(posing)
+    assert index[("a.blend", "Sleeve")] == "Rig"
+    assert index[("a.blend", "Body")] == "Rig"
+
+
+def test_build_offline_rig_index_falls_back_to_parent_when_attach_target_is_not_an_armature():
+    posing = [_hier("Rig", obj_kind="Armature"),
+              _hier("Empty", obj_kind="Empty", parent_name="Rig"),
+              _hier("Prop", attach_target="Empty", parent_name="Rig")]
+    index = linkchain.build_offline_rig_index(posing)
+    assert index[("a.blend", "Prop")] == "Rig"
+
+
+def test_build_offline_rig_index_no_rig_found():
+    posing = [_hier("Lonely")]
+    assert linkchain.build_offline_rig_index(posing) == {("a.blend", "Lonely"): ""}
+
+
+def test_build_offline_rig_index_scoped_per_file_no_cross_file_collision():
+    """Two unrelated donor files both happen to have an object named "Rig" --
+    a name collision across files must never let one resolve against the
+    other's hierarchy."""
+    posing = [
+        _hier("Rig", obj_kind="Armature", source_file="a.blend"),
+        _hier("Bonnet", attach_target="Rig", source_file="a.blend"),
+        _hier("Rig", obj_kind="Mesh", source_file="b.blend"),  # NOT an armature in b.blend
+        _hier("Sword", attach_target="Rig", source_file="b.blend"),
+    ]
+    index = linkchain.build_offline_rig_index(posing)
+    assert index[("a.blend", "Bonnet")] == "Rig"
+    assert index[("b.blend", "Sword")] == ""  # b.blend's "Rig" isn't an armature
+
+
+def test_build_offline_rig_index_is_cycle_safe():
+    """A corrupted/cyclic parent chain must not infinite-loop."""
+    posing = [_hier("A", parent_name="B"), _hier("B", parent_name="A")]
+    index = linkchain.build_offline_rig_index(posing)
+    assert index[("a.blend", "A")] == ""
+    assert index[("a.blend", "B")] == ""
+
+
+# --- posing_list_to_dict / from_dict (cache round-trip) -----------------------
+
+def test_posing_list_round_trips_through_dict():
+    posing = [linkchain.ObjectPosingInfo(
+        name="Bonnet", has_override=True, loc=(1.0, 2.0, 3.0), rot=(0.0, 0.0, 0.0),
+        quat=(1.0, 0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0),
+        reference=OverrideReference(name="bonnet", kind="Object", library="//lib.blend"),
+        source_file="char.blend", obj_kind="Mesh", parent_name="Rig",
+        attach_target="Rig", attach_subtarget="")]
+    restored = linkchain.posing_list_from_dict(linkchain.posing_list_to_dict(posing))
+    assert restored == posing
+
+
+def test_posing_list_round_trips_with_no_reference():
+    posing = [linkchain.ObjectPosingInfo(name="Plain", source_file="char.blend")]
+    restored = linkchain.posing_list_from_dict(linkchain.posing_list_to_dict(posing))
+    assert restored == posing
+
+
 # --- build_chain_report cross-referencing (override <-> multihop chain) -----
 
 def test_build_chain_report_attributes_override_to_its_chain():
@@ -409,6 +637,30 @@ def test_build_flatten_plan_no_properties_warns():
     ref = OverrideReference(name="bonnet", kind="Object", library="//libs/human_bundle.blend")
     plan = linkchain.build_flatten_plan("Char1", ref, [], {})
     assert "no override properties found to replay" in plan.warnings
+
+
+# --- is_direct_link_only (2026-06-27 user feedback) ---------------------------
+
+def test_is_direct_link_only_true_when_no_route_exists():
+    ref = OverrideReference(name="bonnet", kind="Object", library="//libs/human_bundle.blend")
+    assert linkchain.is_direct_link_only(ref, {}) is True
+
+
+def test_is_direct_link_only_false_when_route_exists():
+    ref = OverrideReference(name="bonnet", kind="Object", library="//libs/human_bundle.blend")
+    routes = {"human_bundle.blend": [["root.blend", "people1.blend", "human_bundle.blend"]]}
+    assert linkchain.is_direct_link_only(ref, routes) is False
+
+
+def test_is_direct_link_only_false_when_reference_unknown():
+    """An undetermined reference is a different, worth-surfacing problem --
+    must NOT be silently excluded the same way a confirmed direct link is."""
+    assert linkchain.is_direct_link_only(None, {}) is False
+
+
+def test_is_direct_link_only_false_when_reference_has_no_library():
+    ref = OverrideReference(name="bonnet", kind="Object", library="")
+    assert linkchain.is_direct_link_only(ref, {}) is False
 
 
 # --- summarize_properties / build_rig_rollup (2026-06-25 user feedback) -------

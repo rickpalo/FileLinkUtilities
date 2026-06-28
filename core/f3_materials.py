@@ -37,13 +37,19 @@ def _matches(name: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(name, p) for p in patterns)
 
 
-def _rank_key(m: dict):
-    # local before linked (False<True), higher res first, then stable by name.
-    return (m["linked"], -m.get("max_res", 0), m["name"])
+def _rank_key(m: dict, prefer_linked: bool = False):
+    # local before linked by default (False<True); flipped when the user
+    # prefers linked (docs/TODO.md #21, 2026-06-27). Higher res first, then
+    # stable by name either way.
+    linked_first = (not m["linked"]) if prefer_linked else m["linked"]
+    return (linked_first, -m.get("max_res", 0), m["name"])
 
 
-def choose_canonical(members: list[dict], whitelist: list[str], blacklist: list[str]):
-    """Pick the canonical member of a duplicate cluster. Returns (member, reason)."""
+def choose_canonical(members: list[dict], whitelist: list[str], blacklist: list[str],
+                     prefer_linked: bool = False):
+    """Pick the canonical member of a duplicate cluster. Returns (member, reason).
+    ``prefer_linked`` only affects the LOCAL/LINKED tie-break — whitelist/
+    blacklist still take precedence, same as before."""
     whitelisted = [m for m in members if _matches(m["name"], whitelist)]
     non_black = [m for m in members if not _matches(m["name"], blacklist)]
 
@@ -54,7 +60,7 @@ def choose_canonical(members: list[dict], whitelist: list[str], blacklist: list[
     else:
         pool, reason = members, "all blacklisted — kept best available"
 
-    best = sorted(pool, key=_rank_key)[0]
+    best = sorted(pool, key=lambda m: _rank_key(m, prefer_linked))[0]
     if reason is None:
         reason = (
             f"highest resolution ({best['max_res']})" if best.get("max_res") else "first by name"
@@ -62,7 +68,7 @@ def choose_canonical(members: list[dict], whitelist: list[str], blacklist: list[
     return best, reason
 
 
-def build_dedup_plan(items: list[dict], whitelist=(), blacklist=()):
+def build_dedup_plan(items: list[dict], whitelist=(), blacklist=(), prefer_linked: bool = False):
     """Return (Report, plan). plan is a list of
     {fingerprint, canonical: id, victims: [id], linked_victims: [id]}."""
     report = Report(title="Material duplicates", feature="F3")
@@ -76,7 +82,7 @@ def build_dedup_plan(items: list[dict], whitelist=(), blacklist=()):
     linked_victims: list[str] = []  # duplicate materials that stay in their library
     for fp, ids in sorted(clusters.items(), key=lambda kv: sorted(kv[1])[0]):
         members = [by_id[i] for i in sorted(ids)]
-        canonical, reason = choose_canonical(members, list(whitelist), list(blacklist))
+        canonical, reason = choose_canonical(members, list(whitelist), list(blacklist), prefer_linked)
         victims = [m for m in members if m["id"] != canonical["id"]]
         grp_linked = [v["id"] for v in victims if v["linked"]]
         plan.append({

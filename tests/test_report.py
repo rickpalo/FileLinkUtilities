@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from core.report import Finding, Report, SEVERITIES
+from core.report import Finding, Report, SEVERITIES, default_export_filename
 
 
 def test_finding_defaults():
@@ -91,3 +91,15 @@ def test_to_csv_has_header_and_rows():
 def test_severities_ordering_constant():
     # Order is relied on by max_severity; guard against accidental reordering.
     assert SEVERITIES == ("info", "warning", "error")
+
+
+def test_default_export_filename_slugifies_label():
+    assert default_export_filename("Duplicate Textures") == "AssetDoctor_Duplicate_Textures.txt"
+
+
+def test_default_export_filename_single_word():
+    assert default_export_filename("Orphans") == "AssetDoctor_Orphans.txt"
+
+
+def test_default_export_filename_empty_label_falls_back():
+    assert default_export_filename("") == "AssetDoctorReport.txt"

@@ -8,8 +8,9 @@ are scaffold stubs that register cleanly; feature logic arrives per-milestone.
 from .scan_folder import ASSETDOCTOR_OT_scan_folder
 from .dep_scan import ASSETDOCTOR_OT_scan_dependencies
 from .linkchain import (
-    ASSETDOCTOR_OT_build_flatten_plan,
+    ASSETDOCTOR_OT_evaluate_selected,
     ASSETDOCTOR_OT_flatten_category_toggle,
+    ASSETDOCTOR_OT_flatten_group_select_all,
     ASSETDOCTOR_OT_flatten_selected,
     ASSETDOCTOR_OT_scan_flatten_candidates,
     ASSETDOCTOR_OT_scan_link_chains,
@@ -47,6 +48,7 @@ from .datablock_dup import (
 from .examine_library import (
     ASSETDOCTOR_OT_examine_library,
     ASSETDOCTOR_OT_examine_pick_source,
+    ASSETDOCTOR_OT_examine_search_folder,
     ASSETDOCTOR_OT_examine_apply_selected,
     ASSETDOCTOR_OT_examine_category_toggle,
 )
@@ -82,7 +84,11 @@ from .orphans import ASSETDOCTOR_OT_purge_orphans_selected, ASSETDOCTOR_OT_scan_
 from .instance_dedup import (
     ASSETDOCTOR_OT_instance_geometry, ASSETDOCTOR_OT_instance_geometry_selected,
 )
-from .resource import ASSETDOCTOR_OT_analyze_resources, ASSETDOCTOR_OT_profile_render
+from .resource import (
+    ASSETDOCTOR_OT_analyze_resources,
+    ASSETDOCTOR_OT_profile_render,
+    ASSETDOCTOR_OT_resource_sort_by,
+)
 from .dryrun_render import ASSETDOCTOR_OT_dryrun_render
 from .open_preferences import ASSETDOCTOR_OT_open_preferences
 from .report_store import (
@@ -99,8 +105,9 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_scan_dependencies,
     ASSETDOCTOR_OT_scan_link_chains,
     ASSETDOCTOR_OT_scan_flatten_candidates,
-    ASSETDOCTOR_OT_build_flatten_plan,
     ASSETDOCTOR_OT_flatten_category_toggle,
+    ASSETDOCTOR_OT_flatten_group_select_all,
+    ASSETDOCTOR_OT_evaluate_selected,
     ASSETDOCTOR_OT_flatten_selected,
     ASSETDOCTOR_OT_check_dependents,
     ASSETDOCTOR_OT_analyze_overrides,
@@ -124,6 +131,7 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_datablock_category_toggle,
     ASSETDOCTOR_OT_examine_library,
     ASSETDOCTOR_OT_examine_pick_source,
+    ASSETDOCTOR_OT_examine_search_folder,
     ASSETDOCTOR_OT_examine_apply_selected,
     ASSETDOCTOR_OT_examine_category_toggle,
     ASSETDOCTOR_OT_scan_broken_textures,
@@ -158,6 +166,7 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_instance_geometry_selected,
     ASSETDOCTOR_OT_analyze_resources,
     ASSETDOCTOR_OT_profile_render,
+    ASSETDOCTOR_OT_resource_sort_by,
     ASSETDOCTOR_OT_dryrun_render,
     ASSETDOCTOR_OT_open_preferences,
     ASSETDOCTOR_OT_report_toggle,

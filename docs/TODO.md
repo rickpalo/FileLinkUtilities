@@ -125,27 +125,43 @@ never in question once verified three ways.
 
 ### Group 5 — Quick standalone fixes (different files, but each trivial/self-contained, no
 ### design ambiguity, good filler between bigger groups)
-14. Export default filename should interpolate the active feature (`AssetDoctor_<feature>.txt`),
-    not one hardcoded name — `ops/report_store.py`.
-15. Resource Usage: column headers (RAM|VRAM|disk at top, not repeated per row) + sortable
-    columns (`template_list` currently has `sort_lock=True`) — `ui/panels.py`/`core/resource_tree.py`.
-16. "Different content, kept separate" conflict rows should say WHY (different dimensions vs.
-    same dimensions but different hash) — report-text-only, no mutation.
+14. ~~Export default filename should interpolate the active feature...~~ **DONE @ v0.2.88
+    (2026-06-27)** — see the "Find Duplicates display unification" digest above.
+15. ~~Resource Usage: column headers (RAM|VRAM|disk at top, not repeated per row) + sortable
+    columns...~~ **DONE + LIVE-CONFIRMED @ v0.2.89 (2026-06-27)** — see the "Resource Usage real
+    columns" digest above the "NEXT SESSION" marker.
+16. ~~"Different content, kept separate" conflict rows should say WHY...~~ **DONE @ v0.2.88
+    (2026-06-27), turned into a real redesign (Materials/Geometry had NO conflict reporting at all;
+    Image Content's was dead code) — see the "Find Duplicates display unification" digest above.
+    NEEDS the user's live-Blender confirm.**
 
-### Group 6 — Make Local correctness/perf (mostly one area: `core/f2_makelocal.py` / the Make
-### Local op) — status uncertain on all three, confirm against current code before starting
-17. In-Place localize may not fully localize objects in hidden/excluded collections — lead
-    already recorded (temporarily reveal all collections for the bulk pass, restore after).
-18. Progress bar reportedly invisible on huge files — root cause already identified (heavy
-    phases run synchronously in `invoke()` before the modal starts).
-19. Guard against running In-Place localize on a file that's itself a shared library other files
-    depend on — needs design (ties to Check Link Chain), not just a code fix.
+### Group 6 — Make Local correctness/perf — confirmed against current code 2026-06-27, see the
+### "Make Local: 3 findings" digest above the "NEXT SESSION" marker
+17. ~~In-Place localize may not fully localize objects in hidden/excluded collections...~~ **NOT
+    A BUG — confirmed empirically @ v0.2.91 (2026-06-27).** `bpy.ops.object.make_local(type='ALL')`
+    is a file-wide mode (unlike `'SELECT_OBJECT'` etc.), proven via probe to localize everything
+    regardless of selection/visibility/collection-exclusion; the per-ID fallback pass is also
+    selection-independent. The recorded "lead" was based on a mistaken assumption.
+18. ~~Progress bar reportedly invisible on huge files...~~ **DONE @ v0.2.91 (2026-06-27)** — root
+    cause confirmed by reading the code (exactly as recorded) and fixed: `ops/make_local.py`'s
+    gather + in-place backup-write now run AS the modal generator's own first steps instead of
+    synchronously in `invoke()` before the timer starts.
+19. ~~Guard against running In-Place localize on a file that's itself a shared library...~~ **DONE
+    @ v0.2.91 (2026-06-27), narrower and more precise than the original ask** — investigation
+    showed the real risk is rename-driven name collisions specifically, not "shared file" in
+    general; built `core/f2_makelocal.py::find_rename_collisions`, surfaced in the F2 report and
+    the final apply message. NEEDS the user's live-Blender confirm (modal/progress-bar timing is
+    interactive-only).
 
 ### Group 7 — Small new features, self-contained, no major design ambiguity
-20. Examine Library: folder-wide search (walk every .blend in a chosen folder, peek each for a
-    name match) as a convenience layer on top of the existing per-row manual pick.
-21. Global dedup preference: keep-local vs keep-linked, separate for materials and meshes — new
-    `AssetDoctorPreferences` enum(s), confirmed still missing from `prefs.py` by code spot-check.
+20. ~~Examine Library: folder-wide search...~~ **DONE @ v0.2.92 (2026-06-27)** — see the
+    "Examine Library folder-wide search" digest above the "NEXT SESSION" marker. This was the
+    LAST item on the reprioritized Quick Fixes (Groups 5-7) list. NEEDS the user's live-Blender
+    confirm.
+21. ~~Global dedup preference: keep-local vs keep-linked, separate for materials and meshes...~~
+    **DONE @ v0.2.90 (2026-06-27)** — see the "Geometry now clusters local+linked" digest above
+    the "NEXT SESSION" marker. NEEDS the user's live-Blender confirm (the preference dropdown
+    + behavior on a real file mixing local/linked materials or meshes).
 
 ### Group 8 — Bigger ROADMAP features (genuinely new work, several need a design discussion
 ### before any code; ordered roughly cheapest-to-scope first)
@@ -763,8 +779,673 @@ never in question once verified three ways.
   `core.fingerprint.fingerprint_mesh` (F5's tool) — meaningful for Object families, fuzzier for
   Collection families (a collection's "content" is its whole subtree, not one mesh).
 
+## Find Duplicates display unification + item #16 — DONE 2026-06-27 (v0.2.85-v0.2.88), the "other
+## backlog" the Flatten v2 pause (below) asked for. NOT the same thread as Flatten v2 — that is
+## still ON HOLD, untouched by this work.
+
+**Item #14 (export filename) — DONE.** `ops/report_store.py::ASSETDOCTOR_OT_export_report` always
+offered the same hardcoded `AssetDoctorReport.txt`. New `core.report.default_export_filename(label)`
+(bpy-free, tested) + an `invoke()` override that resolves the active feature's label (or "Resource
+Usage") and sets `self.filepath` before the file browser opens — e.g. exporting f6dup now offers
+`AssetDoctor_Duplicate_Textures.txt`. The dead `filename` property (declared, never read) was removed.
+
+**Item #16 — turned into a real redesign once investigated, per the user's "force the combination
+of the Find Duplicates function" direction.** Original ask ("kept separate" rows should say WHY)
+traced to two asymmetric code paths: the generic Data-blocks conflict text was already real but
+imprecise (a family with BOTH a content split AND unverified members only ever reported the first
+fact — fixed, `core/datablock_dedup.py::plan_merges`, now reports both when both apply); the Image
+Content conflicts box was dead code, `_fill_families(context, plans, [])` always passed an empty
+list, so it could never show anything regardless of wording. Materials and Geometry had NO conflict
+concept at all — silently dropped any name-alike-but-content-differs pair with zero feedback.
+
+**Root design decision (confirmed with the user): the trigger-level merge done 2026-06-25 ("Find
+Duplicates" running all 4 scans from one button) was never meant to unify the 4 detection
+ALGORITHMS — each verifies "identical" differently (node-tree hash / mesh hash / dims+pixel hash /
+generic content hash) for a real reason and stays separate. What WAS missing: the DISPLAY layer and
+the "kept separate" reporting, which have no reason to differ by type.** Built:
+- `core/datablock_dedup.py::plan_merges`'s name-family + fingerprint-conflict algorithm (already
+  type-agnostic — just `(name, fingerprint, users)`) is now reused as a shared, INFORMATIONAL-ONLY
+  layer for Materials (`ops/material_dedup.py::_populate_material_conflicts`) and Geometry
+  (`ops/instance_dedup.py::_populate_geo_conflicts`) — new `assetdoctor_mat_conflicts(_text)` /
+  `assetdoctor_geo_conflicts(_text)` WM props, reset on Merge/Instance Selected. Never changes what
+  gets merged — content fingerprint alone still gates every actual apply.
+- New `core/imagededup.py::find_image_conflicts` — same name-family algorithm, but with the
+  image-specific split the original TODO item literally asked for: same family, fingerprint differs
+  → check whether the DIMS portion differs ("different dimensions — likely a resolution variant")
+  or only the trailing hash does ("same dimensions, different content — worth a closer look").
+  Wired into `ops/image_dedup.py::scan_content_dups` (previously hardcoded `[]`). Deliberately does
+  NOT revive the name-based ".NNN family" scan removed 2026-06-24 — this is read-only/informational,
+  never a merge trigger; content identity alone still gates `plan_content_merges`.
+- `ui/panels.py`: the 4 standalone boxes (`_draw_datablock_dups`/`_draw_material_dups`/
+  `_draw_geo_dups`/`_draw_duplicate_textures`) plus the separate floating 4-line
+  `_draw_duplicates_summary` headline block are gone, replaced by one `_draw_duplicates()` — a
+  single outer box, each type as a section with its own consistent `"<Type> — ..."` headline
+  (✓ none found / counts / "N kept separate"), its own existing actionable rows (keeper dropdowns
+  where they already existed, untouched), and a new shared `_draw_kept_separate()` helper for the
+  "kept separate" sub-list (reuses the existing generic `assetdoctor.toggle_inline_detail` /
+  `assetdoctor_detail_expanded` mechanism already used elsewhere in this panel, instead of inventing
+  a 5th per-feature toggle operator). Also fixes two known small bugs in this exact area for free:
+  the stale "Materials/Meshes/Images have their own dedup tools" info note (always drawn, now
+  removed — the new per-type headers already make the distinction obvious) and
+  `_draw_duplicate_textures` creating its box unconditionally before checking `scanned` (now an
+  early return like every other section).
+
+**Tests:** `core/datablock_dedup.py` +1 pytest (combined differing-content+unverified case);
+`core/imagededup.py` +5 pytest (`find_image_conflicts`: clean families ignored, dims-differ,
+same-dims-different-hash, unverified, dims+unverified combined). New
+`tests/smoke_image_dedup.py` (no prior coverage existed for `scan_content_dups` at all — covers
+the real operator, packed synthetic images, both the merge path and both conflict-reason branches).
+Extended `tests/smoke_f3.py` and `tests/smoke_instance.py` with a differing-content name-family
+case each. All three run clean against Blender 5.1.2; full pytest suite green throughout.
+**NEEDS the user's live-Blender confirm** — the panel restructuring (`_draw_duplicates`) can't be
+exercised headlessly; check the combined results area reads sensibly on a real file with material/
+geometry/image conflicts present (only Data-blocks conflicts have been seen live so far, per the
+v0.2.86 screenshot that prompted this whole investigation).
+
+**Live-confirmed 2026-06-27 (v0.2.88) — works.** One follow-up UI polish, EXPLICITLY DEFERRED by
+the user to next time this area of the UI is touched (not now): each `_draw_kept_separate` member
+line is currently one long flat string (`"{base} — {reason} ({', '.join(members)})"`), e.g. `"Node
+Group: cc3iid_3_point_dist — 2 unverified (no fingerprint available) — not merged
+(cc3iid_3_point_dist, cc3iid_3_point_dist.001)"` — too long. Wanted: the base name as its own row,
+the reason text indented on its own row below that, then each member name indented on its own row
+below that (3-4 rows per conflict instead of 1). Touches `_draw_kept_separate` (`ui/panels.py`) —
+the `conflict_lines` strings would need to become structured data (base/reason/members) instead of
+pre-joined text, since all 4 callers currently build the flat string themselves
+(`ops/material_dedup.py`, `ops/instance_dedup.py`, `ops/image_dedup.py`'s `_fill_families`,
+`ops/datablock_dup.py::_populate_datablock_families`).
+
+## Resource Usage real columns — DONE 2026-06-27 (v0.2.89), item #15. Same "other backlog" thread
+## as the Find Duplicates digest above — Flatten v2 (below) is still untouched/ON HOLD.
+
+The Resource Usage list shared `ASSETDOCTOR_UL_tree` with the Report panel's tree, which only ever
+drew one combined right-aligned `detail` string per row (`"12.3 MB RAM · 4.5 MB VRAM · 0 B disk ·
+3u"`) — hence the repeated unit names on every row, and no way to align values under a header
+since it was never more than one text blob. **User wanted real columns, confirmed worth the extra
+files it touches (vs. a cheaper non-aligned label-only fix).**
+
+Built: `core/tree.py`'s `TreeNode`/`Row` gained 3 new optional fields (`ram`/`vram`/`disk`, empty
+string for every non-Resource tree — Report rows keep using `detail` exactly as before, verified by
+the full pytest suite + `tests/smoke_report.py` staying green throughout). `core/resource_tree.py::
+build_resource_tree` now fills those 3 fields with pre-formatted `human_bytes` text per row instead
+of one joined string, and gained a `sort_by: "ram"|"vram"|"disk"` parameter that reorders the
+TOP-LEVEL type groups only (each group's own children stay RAM-sorted — sorting individual
+datablocks wasn't asked for and adds little value while a group is collapsed, which it is by
+default). `ui/panels.py`: a new shared `_resource_columns()` helper (3 fixed-width
+`ui_units_x`-sized sub-layouts) used by BOTH a new clickable column-header row (RAM/VRAM/Disk
+buttons, the active one shown depressed) and `ASSETDOCTOR_UL_tree.draw_item`'s new branch (draws 3
+real columns when `item.ram/vram/disk` are set, falls back to the old single-`detail` column
+otherwise — so the Report tree's rendering is provably unchanged). New `ops/resource.py::
+ASSETDOCTOR_OT_resource_sort_by`: clicking a header re-sorts CHEAPLY — the last scan's raw
+per-datablock `items` are now cached as JSON (`assetdoctor_resource_items_json`) specifically so a
+re-sort never re-walks `bpy.data` (the actually expensive part); the chosen sort persists
+(`assetdoctor_resource_sort`) across re-scans too.
+
+**Known, inherent limitation (not a bug, can't be fully solved):** the header row is drawn OUTSIDE
+`template_list`, which has no API for a header that's actually part of the list widget — so columns
+align cleanly until the list overflows its visible `rows=8` and Blender adds its own internal
+scrollbar, at which point the last column drifts slightly relative to the (unaware) external
+header. Accepted as the realistic ceiling for this UI toolkit; flagged to the user, not silently
+shipped as if it were pixel-perfect.
+
+**Tests:** `core/resource_tree.py`/`core/tree.py` — `tests/test_resource_tree.py` updated (label
+now carries the `(Nu)` user-count suffix instead of `detail`, new tests for `sort_by="vram"`
+reordering type groups, unknown `sort_by` falling back to "ram", disk column empty when zero) +
+`tests/test_tree.py`/`test_report.py` unaffected (ran to confirm). `tests/smoke_resource.py`
+extended: real RAM column present instead of a `detail` substring check, items get cached, a real
+`resource_sort_by("EXEC_DEFAULT", metric="VRAM")` call re-sorts without losing any type node.
+`smoke_register`/`smoke_report`/`smoke_analyze_all` re-run clean (shared-UIList regression risk
+areas). All pytest + 5 relevant smoke tests green against Blender 5.1.2.
+**Live-confirmed 2026-06-27 (v0.2.89) — works.** Columns aligned, Disk sort showed depressed/active,
+user-count suffixes correct, "0 B" disk on the unsaved test file as expected.
+
+## Geometry now clusters local+linked (item #21) — DONE 2026-06-27 (v0.2.90). Same "other backlog"
+## thread as the two digests above — Flatten v2 (below) is still untouched/ON HOLD.
+
+Investigating the literal ask ("keep-local vs keep-linked preference, separate for materials and
+meshes") surfaced a real asymmetry: **Materials already mix local+linked in one duplicate cluster**
+(`core/f3_materials.py`, no local-only filter) with a hardcoded "local wins" tie-break — a
+preference there really is just a tie-break flip. **Geometry was structurally different**:
+`core/geometry_dedup.py::build_instance_plan` explicitly filtered `if ... and not it["linked"]`
+before clustering, so a linked mesh was never even a CANDIDATE — `choose_canonical`'s local-vs-
+linked tie-break existed but was dead code in practice (nothing linked ever reached it). **User's
+call when asked: do both** — relax Geometry's filter too, not just add an inert preference.
+
+Built: `core/geometry_dedup.py::build_instance_plan` no longer excludes linked meshes from
+clustering — a local mesh's users can now be repointed onto an already-linked-in identical mesh
+(real footprint reduction), or vice versa. The linked datablock itself is never touched/removed
+either way (only local IDs can be) — `removable_count`/the report message/the UI headline all now
+track `linked_victims` separately from real removable victims, mirroring `core/f3_materials.py`'s
+existing local/linked accounting exactly (new `assetdoctor_geo_linked` WM prop, parallel to
+`assetdoctor_mat_linked`). Both `choose_canonical()`s gained a `prefer_linked: bool` parameter
+(tie-break only — whitelist/blacklist still take precedence for Materials, unchanged). New
+`AssetDoctorPreferences.material_keep_preference`/`geometry_keep_preference` enums (LOCAL/LINKED,
+default LOCAL = today's behavior unchanged unless the user opts in), wired into
+`ops/material_dedup.py`/`ops/instance_dedup.py::run_steps`.
+
+**Tests:** `tests/test_f3_materials.py`/`test_geometry_dedup.py` +6 pytest (prefer_linked flips the
+tie-break for both; whitelist still beats it; Geometry's old `test_linked_excluded` rewritten to
+`test_local_and_linked_cluster_but_linked_never_removed` since that's no longer the real behavior).
+New `tests/smoke_geo_linked.py` — a REAL linked mesh via `bpy.data.libraries.load(link=True)` (not
+just synthetic dicts), confirming end-to-end through the actual registered operator: local+linked
+cluster, the linked user gets repointed onto the local canonical, the linked datablock is never
+removed/delocalized. **Could NOT smoke-test the LINKED preference itself** — every smoke test in
+this project calls `register()` manually, which never populates
+`bpy.context.preferences.addons[pkg]` (confirmed empirically: `tests/smoke_idle_scan.py` actually
+FAILS on exactly this — `KeyError: 'AssetDoctor' not found` — a PRE-EXISTING, unrelated bug noticed
+while investigating, not introduced this session, not yet fixed; flagged for the user, see
+[[env-blender-verification]]). `ops.get_prefs()` always returns `None` in this harness, so
+`prefer_linked` always resolves to the LOCAL default regardless — the actual flip is covered at the
+core layer instead (prefs-free, the right layer for it anyway). All pytest + 4 relevant smoke tests
+(`smoke_f3`/`smoke_instance`/`smoke_geo_linked`/`smoke_register`) green against Blender 5.1.2.
+**NEEDS the user's live-Blender confirm** — the new Preferences dropdowns + real behavior on a file
+that actually mixes local/linked materials or meshes.
+
+## Make Local: 3 findings (items #17/18/19) — DONE 2026-06-27 (v0.2.91). Same "other backlog" thread
+## as the three digests above — Flatten v2 (below) is still untouched/ON HOLD.
+
+Per the original note's own "status uncertain, confirm against current code first" instruction —
+all three turned out differently than recorded.
+
+**#17 (hidden/excluded collections) — NOT A BUG.** Probed empirically (real linked objects via
+`bpy.data.libraries.load(link=True)`, one selected, one not, one in a collection EXCLUDED from the
+view layer): `bpy.ops.object.make_local(type='ALL')` localized all three regardless. Re-tested with
+ZERO objects selected and no active object — still localized everything. Conclusion: `type='ALL'`
+is a distinct, FILE-WIDE mode (unlike the `'SELECT_OBJECT'`/`'SELECT_OBDATA'`/
+`'SELECT_OBDATA_MATERIAL'` options, which genuinely are selection-scoped) — it was never
+selection/visibility-dependent, and the per-ID fallback pass (`_remaining_linked()`, walks raw
+`bpy.data` directly) is independently immune to this too. The recorded "lead" (temporarily reveal
+collections) was based on a mistaken assumption about how `type='ALL'` works; no code changed.
+
+**#18 (progress bar invisible) — confirmed and fixed, exactly as recorded.** Reading
+`ops/make_local.py::ASSETDOCTOR_OT_make_local.invoke()` confirmed `_prepare()` (gathers every
+linked datablock) and `_setup_apply()` (for IN_PLACE: writes the full pre-mutation backup — can be
+minutes on a huge file) ran synchronously before `RUNNING_MODAL` was ever returned, so the
+progress bar/timer didn't exist yet during that window. Fixed: both now run as the first steps of
+a new `_apply_steps()` generator that IS the modal's `_gen` from the start — `invoke()` just starts
+the timer/modal_handler immediately, with status text ("Scanning linked data…", "Backing up…")
+updating before `localize_steps()`'s own granular per-chunk progress takes over. Early-exit cases
+(nothing linked; `_setup_apply` returns an error, e.g. unsaved file in NEW_FILE mode) are now
+discovered mid-modal via a new `self._aborted` flag instead of short-circuiting before the modal
+starts, and `modal()` reports/finishes correctly either way. `execute()` (EXEC_DEFAULT/scripting/
+tests) is unchanged — it was already fully synchronous by design, never needed this.
+
+**#19 (shared-library guard) — built narrower and more precise than the literal ask, per the
+user's explicit choice ("detect actual collision risk," not a blanket "this file is shared"
+warning).** Working through the actual mechanics: In-Place Make Local doesn't rename/break what
+another file links FROM this one in general — Blender resolves a link by name at load time
+regardless of whether the target became local via Make Local or was always local. The REAL risk is
+narrower: Blender enforces datablock name uniqueness only WITHIN one library (local counts as its
+own), so two items can share a bare name today purely because they're in different libraries; once
+Make Local converts everything to local, every name after the first gets a `.001`-style
+auto-suffix — and THAT can silently break a same-named link from another file. Built
+`core/f2_makelocal.py::find_rename_collisions(all_names)` (bpy-free, groups by (type, name) across
+ALL existing datablocks — local included — flagging any name held by 2+ sources) + a new
+`ops/make_local.py::_gather_all_names()` (existing `_gather_linked()` only covered linked items,
+not local ones, which the collision check also needs). Surfaced as a new `rename_risk` Finding in
+the F2 report (visible on every dry-run, before the user ever clicks Apply — report-first, this
+project's standing safety pattern) AND restated in the final apply-message
+(`self._n_collisions`, computed pre-mutation in `_prepare()`) since that's the moment a downstream
+break would actually matter. Deliberately did NOT add a blocking confirmation dialog — no
+precedent for that pattern anywhere in this codebase; the auto-backup remains the established
+safety net for every mutating op here (see `[[feedback-modal-undo]]`). Deliberately did NOT cross-
+reference this with the existing "Safe to Delete?" (f7rev) reverse-dependency graph — that needs a
+folder-wide scan as a prerequisite and knowing exactly which names each dependent file imports,
+which would mean re-scanning every dependent file too; scoped out as a separate, bigger follow-up
+rather than conflated with this fix.
+
+**Tests:** `core/f2_makelocal.py` +6 pytest (`find_rename_collisions`: unique names ignored,
+local+linked collision, two-different-libraries collision, different types with the same name
+don't collide; `build_makelocal_report` wires collisions through) + 2 existing tests updated for
+the new `"collisions"` summary-data key. `tests/smoke_f2.py` extended: a real local object sharing
+a name with a linked one, dry-run, confirms the F2 report names it
+(`"Object/Tree — shared by 2 sources (//libA.blend, local); Make Local will rename all but one"`).
+All pytest + smoke_f2/smoke_register green against Blender 5.1.2.
+**Side finding, unrelated to this work, flagged not fixed:** `tests/smoke_idle_scan.py` is
+currently BROKEN (`KeyError: 'AssetDoctor' not found` — manually calling `register()`, the pattern
+every smoke test in this project uses, never populates `bpy.context.preferences.addons[pkg]`; that
+test indexes it directly instead of using `.get()`). Noticed while investigating why
+`ops.get_prefs()` returns `None` in this harness (relevant to item #21's digest above too) — not
+this session's regression, not yet fixed.
+**NEEDS the user's live-Blender confirm** — #18's progressive modal timing and #19's report/
+apply-message wording are both interactive-only, can't be verified headless.
+
+## Examine Library folder-wide search (item #20) — DONE 2026-06-27 (v0.2.92). Last item on the
+## reprioritized Quick Fixes (Groups 5-7) list — same "other backlog" thread as the four digests
+## above. Flatten v2 (below) is still untouched/ON HOLD.
+
+The existing "Pick a Specific Item" button already let the user pick ONE .blend and see ranked
+name candidates within it — but required already knowing which file in a folder held a
+replacement. New **"Search a Folder"** button right next to it: walks every `.blend` under a
+chosen folder (`core.blendscan.iter_blend_files`, the same folder-walk Map a Folder already uses),
+peeks each one's matching collection, and picks the single best match across the whole folder.
+
+Built: `core/reconnect.py::find_best_file_match(wanted, names_by_file)` (bpy-free) — an exact/
+numbered match in ANY file wins outright over a fuzzy one in another (never settle for a guess
+when a clean match exists elsewhere); ties keep whichever file was checked first (the folder
+walk's own alphabetical order is the deterministic tiebreak). `ops/examine_library.py`: factored
+the existing single-file peek (`with bpy.data.libraries.load(path, link=True) as ...`) out of
+`ASSETDOCTOR_OT_examine_pick_source` into a shared `_peek_names(path, attr)` (no behavior change,
+just de-duplicated — both operators need the identical peek-without-loading pattern) + new
+`ASSETDOCTOR_OT_examine_search_folder`. Sets the SAME `row.source_blend`/`row.candidates` fields
+the single-file picker already sets, so the existing dropdown/Apply Selected logic needed zero
+changes.
+
+**Safety carry-over from a DIFFERENT, already-documented crash class:** `ops/datablock_reconnect.
+py::_populate_missing_blocks`'s docstring records a real, uncatchable
+`EXCEPTION_ACCESS_VIOLATION` from re-peeking a library the session had just REALLY linked from
+moments earlier. A folder-wide walk would otherwise peek exactly that kind of file constantly (the
+examined library itself, or any other already-loaded one sitting in the same folder) — the new
+operator builds the set of already-loaded library paths up front and skips any matching file
+entirely, both for safety and because such a file's names are already in the in-memory pool
+`_populate_examine_rows` checks first anyway (searching it again would be redundant even if it
+were safe).
+
+**Tests:** `core/reconnect.py` +5 pytest (`find_best_file_match`: exact beats fuzzy in another
+file, first-file-wins on a same-confidence tie, falls back to fuzzy when nothing better exists,
+nothing-qualifies and empty-input cases). New `tests/smoke_examine_folder_search.py` — 3 real
+.blend files in a temp folder (one fuzzy-named decoy, one exact match, one that's also already
+linked into the session with an identical exact-match name) plus a real Examine Library scan via
+the actual registered operators; confirms the exact match wins over both the fuzzy file AND the
+already-loaded one (which sits alphabetically earlier and ties on confidence — would have won the
+tiebreak if the skip-logic weren't working), and that an empty folder cleanly CANCELs.
+**Side finding, unrelated to this work, flagged not fixed:** `tests/smoke_examine_library.py`
+(pre-existing, untouched by this session) is currently BROKEN — confirmed via `git stash` that it
+fails identically with none of this session's changes applied. Root cause not investigated (out of
+scope here); likely related to the orphan/zero-real-user test materials it creates before saving —
+not the same root cause as the `smoke_idle_scan.py` finding noted in item #19's digest, just
+another pre-existing gap noticed along the way.
+**NEEDS the user's live-Blender confirm** — the new button's placement/icon and real-world folder
+search timing (peeking many real files can be slow) are best judged interactively.
+
 ## ⏩ NEXT SESSION STARTS HERE — read this block first, it supersedes earlier "NEXT SESSION" markers
 ## further down (those are now history, kept for the detailed record).
+
+**STATUS: ON HOLD (user request, 2026-06-27) — paused mid live-test, NOT committed (working tree
+is v0.2.87, last real commit is still `41e7938` @ v0.2.84). Do not resume Flatten v2 work without
+the user explicitly picking it back up; next session was told to clean up OTHER backlog instead.**
+
+**Resume checklist, in priority order, when this DOES get picked back up again:**
+1. User was about to try making the People collections local (Blender's native Make Local, native
+   = no auto-backup, a copy of the file first was recommended) specifically to route around item
+   11's cross-file-template problem — check whether they did this and what Find Flattenable Links
+   found afterward before doing anything else.
+2. Item 11 (cross-file bare-link rig resolution) is the biggest real open gap — only fix it if the
+   Make Local route above didn't already make it moot for this file.
+3. Item 10/the drill-down-arrow bug is still NOT root-caused — last data point was that it
+   reproduces in a SECOND, unrelated code path (Audit This File's generic tree, not just the
+   Flatten picker), shifting suspicion toward general redraw/memory-pressure rather than a bug in
+   this session's new code. Get the System Console traceback check and the resource-pressure check
+   (item 13's cross-cutting note) before touching code again.
+4. Item 12 (debug log) needs a fresh Evaluate/Flatten Selected run on a failing group (toggle is
+   confirmed on, but the log was stale at last check) to actually capture the real
+   `override_create()` RuntimeError text.
+5. Items 5/6/13 are pure documentation (stale info note + an empty-box UI bug elsewhere, the Audit
+   This File feedback) — small, safe, no dependencies on 1-4 above; fine to batch into a cleanup
+   pass whenever convenient, including the "other backlog" the user mentioned wanting to clean up
+   next session.
+
+**SESSION DIGEST — 2026-06-27, v0.2.87 (uncommitted) — live-test of "Find Flattenable Links"
+against a real collection-with-multiple-characters file (`PSM_Stage_v5.1.blend` /
+`ThePiazzaSanMarco - People1_v5.1.blend`), across multiple real-Blender test rounds. Items 1-4
+found/agreed in round 1, then BUILT (item 2's census redesign + item 4's decisions). Round 2 (a
+real run against the actual file) surfaced items 5-6 (UI polish, documented not fixed), item 7 (a
+real root cause for "most characters missing" — found AND fixed), item 8 (two more UI fixes), item
+9 (two things investigated and confirmed NOT bugs), and item 10 (two things still open, need more
+repro info before guessing further). Round 3 found item 11 (the type-detection fix only partially
+worked — a deeper cross-file template-resolution gap remains, not yet built), item 12 (the debug
+log is stale, no new info yet), and item 13 (new Audit This File feedback, explicitly held).
+Session paused here at the user's request — see the STATUS/resume checklist above this digest.**
+
+1. **BUG, low priority, not yet fixed: progress bar shows "Starting…" for the entire ~5.5-minute
+   scan**, never updating to per-file status even though `ASSETDOCTOR_OT_scan_link_chains`
+   (`ops/linkchain.py`) yields per-file progress throughout. **Root cause:** the combined "Find
+   Flattenable Links" button (`ASSETDOCTOR_OT_find_flattenable_links`, `ops/analyze_all.py:117`)
+   is a `_AnalyzeSequencerMixin` that runs each of its 2 sub-steps via ONE synchronous
+   `bpy.ops.assetdoctor.<step>()` call (`ops/analyze_all.py::_call`) — with no execution-context
+   override this invokes the sub-operator's plain `execute()` (`ModalProgressMixin.execute`,
+   `ops/progress.py:85-88`), which drains that sub-operator's WHOLE `run_steps()` generator in one
+   tight loop, never touching the shared WM progress props per sub-step. The outer sequencer's own
+   modal tick (`ModalProgressMixin.modal`, `ops/progress.py:104-148`) compounds it: its time-budget
+   loop calls `next(self._gen)` repeatedly until `_PROGRESS_BUDGET` (default 0.04s) elapses: the
+   FIRST yield (`"Running Find Flattenable Link Chains…"`) returns almost instantly, so the loop
+   immediately calls `next()` again — which now blocks for the entire sub-scan — and only exits
+   (calling `set_progress()` for the first time) once that blocking call finally returns. Net
+   effect: the "Running…" status is computed but never painted before the multi-minute block
+   begins, so the panel keeps showing whatever `invoke()` last painted ("Starting…") until the
+   whole step finishes. **Same mechanism likely affects "Analyze All" and "Find Duplicates"**
+   (same `_AnalyzeSequencerMixin`) for any sub-step slow enough to notice — not confirmed live, but
+   the code path is identical. **Fix (not yet built):** have the sequencer interleave each
+   sub-step's own `run_steps()` generator into its own loop instead of calling it via `bpy.ops`, or
+   otherwise pass progress through from sub-step to outer sequencer.
+
+2. **Items 2-6 (remote-group ordering, the FILE_TEXT "Build Flatten Plan" icon being a dead end on
+   all-remote groups, and the stale "Run Find Flattenable Link Chains" message) all trace back to
+   ONE root design gap, found discussing them with the user: the picker's remote-candidate path
+   has no hierarchy data at all.** `ASSETDOCTOR_OT_scan_flatten_candidates` only ever surfaces a
+   remote row from `chain_report` findings already filtered to `category == "posing_override"`
+   (`ops/linkchain.py:268-286`) — and `build_chain_report` (`core/linkchain.py:355-382`) only emits
+   a `Finding` for objects classified `OVERRIDE_WITH_TRANSFORM`/`MODIFIER_DRIVEN` in the first
+   place; anything `UNCLASSIFIED` (a plain mesh child with no override, **or an Armature whose own
+   object-transform is untouched because it's posed via bones, not the object's own loc/rot/
+   scale** — the common case) never survives into the stashed report at all. Remote rows are then
+   grouped only by source FILE (`row.rig = f"Remote: {_display_file_name(source_file)}"`,
+   `ops/linkchain.py:279`), never by rig — `_resolve_rig`'s parent/modifier walk only ever runs
+   against LIVE `bpy.data.objects`, and `ObjectPosingInfo` (the offline census record) never reads
+   `parent`/modifier-target/object-type at all. The FILE_TEXT preview button only has cached plans
+   for LOCAL objects (built during the live scan), so it's a guaranteed no-op on an all-remote
+   group — which is what made it look like "nothing happened" and produced the stale
+   pre-merge-button-name message as its only (misleading) output.
+   **User's real need (this session, testing a file with zero local overrides — everything is
+   remote): see ALL objects in the donor file's hierarchy, not just override-with-transform ones,
+   so Armatures can roll up everything attached to them (true parent, Armature-deform modifier, OR
+   anything else that attaches to a bone) and the rest group sensibly.**
+   **Plan agreed: widen the existing offline per-file BAT census (the one pass already paid for
+   during "Find Flattenable Links") instead of a new harvest/subprocess** — add object-type (via
+   the data-block-name 2-char-prefix trick, reusing the already-proven `_PREFIX_KINDS` map),
+   `parent` name, and Armature/Hook-modifier target+subtarget to `ObjectPosingInfo`, and stop
+   dropping `UNCLASSIFIED` objects before the report is stashed (cache the full per-file object
+   census separately, the same way `flatten_plan_to_dict` already round-trips structured data,
+   rather than forcing it through the prose-oriented Report/Finding model). Then build an offline
+   equivalent of `_resolve_rig` over that per-file map.
+   **User pushed back, correctly: "are you determining that by checking for modifiers?"** — raised
+   that parenting + Armature modifiers don't cover every way an object attaches to a rig (props/
+   accessories are commonly attached via a BONE CONSTRAINT or a Hook modifier, with no parent
+   relationship and no Armature-deform modifier at all). Confirmed via a real headless probe
+   (synthetic fixture covering all 4 mechanisms + a live-RNA-vs-BAT cross-check, since Blender
+   closed for the session — see `[[env-blender-verification]]`'s diagnostic-probe pattern) that
+   **all of these ARE readable from the same offline BAT pass**, with two real path subtleties
+   worth recording before this gets built (verified 2026-06-27, synthetic fixture, Blender 5.1):
+   - **Modifier blocks are concretely typed per modifier** (block's own `dna_type.dna_type_id` is
+     e.g. `b"ArmatureModifierData"`/`b"HookModifierData"`, not generic `ModifierData`) — `object`/
+     `subtarget` are DIRECT top-level fields on the concrete struct, but `type` is NOT (it lives on
+     the embedded base `ModifierData modifier;` substruct all modifier structs start with) — read
+     it via the nested path `(b"modifier", b"type")`, same embedded-substruct pattern as `(b"id",
+     b"override_library")`. Confirmed values match live `bpy.types.Modifier.bl_rna.properties
+     ["type"].enum_items[...].value` exactly: `ARMATURE=8`, `HOOK=9` (read from live RNA, not
+     hardcoded — don't hardcode these elsewhere either, re-derive the same way if needed again).
+   - **`bConstraint.type` IS a direct top-level field** (`CHILD_OF=1`, also confirmed against live
+     RNA) but the target is NOT on `bConstraint` itself — `data` is a `void*` to a type-specific
+     struct (e.g. `bChildOfConstraint`), and BAT's block header already records the CONCRETE
+     struct for whatever got allocated there (no explicit `refine_type()` call needed — confirmed
+     the dereferenced block already reports `dna_type.dna_type_id == b"bChildOfConstraint"`). Read
+     it as **two separate sequential `get_pointer`/`get` calls** — `data_block =
+     con.get_pointer((b"data",))` then `data_block.get_pointer((b"tar",))` /
+     `data_block.get((b"subtarget",), as_str=True)` — never one combined path tuple, same lesson
+     as the override-reference 2-hop case (`core/linkchain.py`'s module docstring). Other
+     target+subtarget constraint types (Copy Location/Rotation/Transforms, Damped Track, Track
+     To, …) follow the identical two-hop mechanism, just with their own struct name in place of
+     `bChildOfConstraint` — not individually re-verified yet, only `CHILD_OF` was probed.
+   **BUILT (v0.2.85).** `ObjectPosingInfo` gained `obj_kind`/`parent_name`/`attach_target`/
+   `attach_subtarget`; `read_object_posing` reads all four unconditionally (`core/linkchain.py`).
+   New pure functions: `read_attach_target` (the modifier/constraint walk above),
+   `build_offline_rig_index` (the offline `_resolve_rig` equivalent — keyed by `(source_file,
+   name)`, NOT bare name, since object names are only unique WITHIN one .blend and two unrelated
+   donor files can easily both have e.g. a "Rig"), `posing_list_to_dict`/`from_dict` (cache
+   round-trip). `ASSETDOCTOR_OT_scan_link_chains.run_steps` now also caches the full `posing` list
+   as JSON (`wm.assetdoctor_flatten_hierarchy_json`) — previously computed, then discarded once
+   the generator returned. The live `ops.linkchain._resolve_rig` got the same Hook-modifier/
+   Child-Of-constraint checks added for parity with the offline walk.
+
+3. **RESOLVED — "local override" confusion, raised by the user multiple times this session; this
+   is the permanent answer, don't re-litigate it.** "Local" is used for TWO different things in
+   this codebase and they got conflated in conversation:
+   - **Local vs. remote CANDIDATE** (`row.is_remote` in the picker): does the override-with-changes
+     live in the file currently open in the session (local), or in some OTHER file only reached by
+     following the link chain (remote)? **This was never local-only** — the offline census was
+     already extended (2026-06-25) to walk every file the scan visits, specifically because real
+     production root files (e.g. `PSM_Stage_v5.1.blend`) have ZERO local overrides of their own;
+     every actual character lives several hops deep. Remote detection is the whole reason the
+     "Remote: …" groups in the user's screenshot exist at all.
+   - **Local-only CACHE** (`wm.assetdoctor_flatten_plans_json`, built in
+     `ASSETDOCTOR_OT_scan_flatten_candidates`): the FILE_TEXT "Build Flatten Plan (preview)" button
+     only has pre-built plan data for objects read live from `bpy.data.objects` during the scan —
+     remote objects never get an entry, since building their plan needs to open the donor file
+     (harvest), which today only happens inside "Flatten Selected." **This is the real, narrow gap**
+     — not a fundamental local-only limitation, just a preview button with no remote-aware path.
+     **Decision: remove this button** (see item 4 below) rather than fix it in place.
+   Separately, the OTHER reason real characters could go missing even from the remote census: the
+   offline classifier only ever flagged `OVERRIDE_WITH_TRANSFORM` (object-level loc/rot/scale
+   differs from identity) as worth keeping — a character posed entirely via BONES, with its
+   Armature's own object-transform untouched, was silently dropped as `UNCLASSIFIED` before the
+   report was even stashed (see item 2 above). The widened census (item 2) fixes this by keeping
+   every local object regardless of classification, not just the ones that already passed the old
+   transform gate.
+
+4. **Design decisions agreed this session, to land together with item 2's census widening:**
+   - **Filter out direct-linked overrides from the candidate list entirely, don't show them as
+     "blocked."** User's framing: if an override's reference is reachable from the root ONLY
+     directly (no multi-hop route exists to that target at all), flattening it is a no-op — it's
+     already linked from exactly where flattening would re-link it. `build_flatten_plan` already
+     detects this case (`"linked directly, no multi-hop chain to flatten — nothing to collapse"`)
+     but currently surfaces it as a blocked row anyway; switch this to an exclusion filter at
+     candidate-build time instead of a per-row warning.
+   - **Selection granularity: per-character/rig, not per-donor-file.** Today an all-remote group is
+     keyed by source file (`"Remote: ThePiazzaSanMarco - People1_v5.1"`), so its single checkbox
+     selects/deselects ALL ~762 characters in that file together — the user needs to pick Character
+     A without Character B. Falls out of item 2's redesign for free once remote rows group by
+     resolved rig instead of source file — **plus a new outer "select all" toggle at the donor-file
+     level**, above its per-character groups (a small nesting change to `_draw_flatten_candidates`:
+     today's group list is flat, this needs one more level — file → character — not built yet).
+   - **Remove the FILE_TEXT "Build Flatten Plan (preview)" icon entirely** (`ops/linkchain.py:1150`
+     in `_draw_flatten_candidates`, operator `ASSETDOCTOR_OT_build_flatten_plan`) — confirmed
+     useless for the user's actual files (item 3 above).
+   - **Add a new "Evaluate Selected" button**, next to "Flatten Selected" on the outer
+     "Flattenable overrides" row: harvests whatever's CHECKED (same harvest mechanism
+     `_harvest_remote`/`remote_harvest.py` already built for Flatten Selected — opens each donor
+     file once in a disposable background process), builds each one's `FlattenPlan`, and updates
+     `ready`/`status` on every row + stashes the f7flatten report — **but does not apply anything**.
+     Gives the user a real preview-after-harvest checkpoint before committing, which doesn't exist
+     today (today harvest+apply are fused into one click). Open question for whoever builds this:
+     should "Flatten Selected" skip re-harvesting anything "Evaluate Selected" already harvested in
+     the same session, or always harvest fresh? **Resolved while building:** yes — both operators
+     now go through one shared generator (`ops.linkchain._harvest_and_build_plans`), and a member
+     already present in the cached-plans dict (whether cached by the original LOCAL scan or by an
+     earlier Evaluate Selected run) is reused as-is, never re-harvested.
+   **BUILT (v0.2.85).** `core.linkchain.is_direct_link_only` (the exclusion-filter predicate,
+   +4 tests) is applied in BOTH the local and remote loops of `scan_flatten_candidates`. Remote
+   candidates are now sourced directly from the `assetdoctor_flatten_hierarchy_json` cache (every
+   local object regardless of override-with-transform classification) instead of the
+   already-filtered `posing_override` findings, grouped via `build_offline_rig_index` into
+   `row.group_parent` ("Remote: <file>") + `row.rig` ("<file> :: <character>", kept globally
+   unique by the file prefix so two donor files with a same-named "Rig" never merge). UI
+   (`ui/panels.py::_draw_flatten_candidates`, factored into a new `_draw_rig_group` helper reused
+   at both nesting levels) draws a two-level tree: each donor file is its own collapsible header
+   with a "select all in this library" toggle (new operator
+   `assetdoctor.flatten_group_select_all`), and each character underneath gets its own independent
+   checkbox. The FILE_TEXT "Build Flatten Plan (preview)" button/operator
+   (`ASSETDOCTOR_OT_build_flatten_plan`) is REMOVED entirely, along with the now-dead
+   `_flatten_rig` it was the only caller of (superseded by `_flatten_member`, which already covers
+   everything it did plus more — see the module comment in `ops/linkchain.py`). New
+   `assetdoctor.evaluate_selected` operator (bl_label "Evaluate Selected") harvests + builds a real
+   plan for whatever's checked, local or remote, updates each row's ready/status, stashes the
+   f7flatten preview report, and caches every newly-built plan — applies nothing.
+   **Verified:** full pytest suite (470, was 401 — `core/linkchain.py` pure-logic additions all
+   covered) + `tests/smoke_register.py`, `smoke_flatten_links.py`, `smoke_analyze_all.py`,
+   `smoke_remote_harvest.py`, `smoke_flatten_selected.py` (covers the LOCAL apply path through the
+   refactored shared harvest/plan helper) all still pass. Two NEW smoke tests added this session:
+   `smoke_flatten_hierarchy.py` (crafts a 2-character-one-donor-file census + a bone-only-posed
+   Armature with identity object-transform — directly proves both the original bug reports: the
+   Armature now survives as a candidate, and the two characters land in separate, independently
+   selectable groups under one outer donor-file header) and `smoke_evaluate_selected.py` (confirms
+   Evaluate Selected builds a ready plan and caches it WITHOUT creating/hiding/mutating any
+   object). **NEEDS A LIVE-BLENDER CONFIRM** against the user's real multi-character collection
+   file before this is considered done — none of the above touches a real multi-GB production
+   file or the actual N-panel UI interactively.
+
+5. **Stale info note, flagged by the user (2026-06-27), NOT fixed yet (explicitly told to just
+   document it).** `_draw_datablock_dups` (`ui/panels.py:1626-1627`) unconditionally draws "Objects,
+   Actions, Node Groups, etc. — Materials/Meshes/Images have their own dedup tools." every time the
+   Find Duplicates section draws, scanned or not — predates the 2025-06-25 merge of 4 separate
+   duplicate-finding buttons into one "Find Duplicates" trigger (`_analyze_row(...,
+   "assetdoctor.find_duplicates", ...)`, `ui/panels.py:1293`). Now that everything (Data-blocks/
+   Materials/Geometry/Textures) runs from one button, this per-subsection caveat about "their own
+   dedup tools" is stale guidance, not a useful note — candidate for deletion.
+
+6. **Real (small) UI bug found while answering the user's question about a "blank bar" below that
+   info note: `_draw_duplicate_textures` (`ui/panels.py:1841`) creates its `layout.box()`
+   UNCONDITIONALLY, before checking whether anything was actually found.** `_duplicate_textures_
+   headline` (`ui/panels.py:825-834`) returns `""` when `not scanned` — so before "Find Duplicates"
+   has ever been run, the box gets zero content added (no headline, no buttons) and the early
+   return at line 1855-1856 fires after the box already exists — rendering as a visually empty
+   box/blank bar between the Data-blocks info note and "Find Reconnectable Data-blocks". Not a
+   divider, not intentional — an accidentally-empty section. `_draw_material_dups`/`_draw_geo_dups`
+   don't have this problem (their early-return check happens BEFORE creating a box). Not fixed yet
+   — flagging alongside item 5 since both are in the same small area and likely worth a single
+   small cleanup pass together.
+
+7. **REAL ROOT CAUSE FOUND + FIXED (v0.2.85, same session): only 4 of an expected ~50 characters
+   resolved correctly from `ThePiazzaSanMarco - People1_v5.1.blend`, the rest falling into a
+   generic "Object (standalone)" bucket — the "Object" (not "Mesh"/etc.) label was the tell.**
+   `core/linkchain.py`'s `data`/`parent`/attach-target pointer reads only tried the typed
+   `(b"id", b"name")` path — which works for a REAL local `OB`/`ME`/etc. block, but returns `""`
+   for a generic `ID` PLACEHOLDER block (bare `(b"name",)`, no `id` wrapper — the exact shape
+   already documented for `override_library.reference`, see `read_override_reference`). A shared
+   rig TEMPLATE used by hundreds of characters, that nobody has individually overridden in THIS
+   donor file, is exactly such a placeholder — it never gets a real local `OB` block. So the
+   parent-chain/attach-target walk dead-ended at the very first bare-linked ancestor (silently —
+   no error, just `""`), AND the same bug hit the object's OWN `data` pointer whenever its mesh/
+   armature data is itself a plain link, which is why the fallback bucket showed the generic
+   `'Object'` label rather than `'Mesh'`/etc. **Fix:** new `core.linkchain._block_raw_name` tries
+   the typed path first, falls back to the bare path — used by `_block_id_name` AND the `data`-
+   pointer `obj_kind` read. +3 tests (`test_read_attach_target_finds_armature_modifier_via_bare_
+   link_placeholder`, `test_read_object_posing_detects_kind_via_bare_link_placeholder_data`,
+   `test_read_object_posing_resolves_parent_via_bare_link_placeholder`), suite now 481. **Not yet
+   live-confirmed against the real file** — the user's report that triggered this fix was itself
+   from a real run; needs a re-run to confirm the character count goes up.
+
+8. **Two small UI fixes from the same live-test feedback (v0.2.85):** (a) nested-row indent
+   separator factors in `_draw_rig_group` (`ui/panels.py`) were doubling per indent level
+   (`indent * 2.0`), making rows under a donor-file-nested character group look oddly spread out —
+   reduced to `indent * 1.0`. (b) "what happens to a group's row after Flatten Selected actually
+   applies it" was undesigned — user offered two options (move to a new "Successfully Flattened"
+   subgroup, or leave in place with a checkmark replacing the checkbox) and explicitly delegated
+   the choice ("whichever is more efficient"). Took the lower-effort option: new
+   `ASSETDOCTOR_PG_flatten_candidate.done` field (distinct from `ready`, which Evaluate Selected
+   also sets — `done` is ONLY set by a real Flatten Selected apply), set in
+   `ASSETDOCTOR_OT_flatten_selected.run_steps` alongside `ready`; `_draw_rig_group` shows a plain
+   CHECKMARK instead of the interactive checkbox once every member of a group is `done`. No new
+   subgroup, no regrouping logic touched.
+
+9. **Two items investigated, NOT bugs — clarified for the user:**
+   - The Outliner path `Scene Collection -> People -> Courtyard_people_left_near_a -> Balcony1 ->
+     balcony1_rig` (no `_flattened` suffix anywhere) is the file's OWN pre-existing scene
+     structure, not anything AssetDoctor created — contrast with `collection_mirror.mirror_name`'s
+     output, which always suffixes every level `_flattened` (confirmed in a separate screenshot
+     from the same session, e.g. `Stage_flattened > Rear_flattened > ... `).
+   - "Flattened 0/4 parts" (per-run report) and "0 flattened, 4 failed" (the persistent cross-
+     session `_flattenable_overrides_summary` line) are consistent, not contradictory — 0 succeeded
+     out of 4 attempted, and since this was the first Flatten Selected run this session, the
+     cumulative total happens to equal this run's result.
+
+10. **NOT YET DIAGNOSED — needs more repro info, do not guess further without it:**
+    - All 4 members of one rig group (`rig.026`/`dress.012`/`hair.012`/`HG_Body.019`) failed
+      `_flatten_member`'s `override_create()` call with "Blender declined to override this part"
+      — notably AFTER Evaluate Selected had already confirmed all 4 as a fully-ready plan (160
+      bones posed, animation override, etc. — the plan/harvest side is fine; the failure is
+      specifically at the live `override_create()` call). The actual `RuntimeError` text is only
+      ever logged via `log.warning(...)`, never shown to the user — needs the addon's own Debug
+      Log (`Scene.assetdoctor_debug_log` toggle, Utilities section) enabled, then a re-run, to see
+      it. Leading hypothesis (unconfirmed): these are shared-template references already
+      individually overridden by OTHER characters elsewhere in `People1_v5.1.blend` — the same
+      category of `override_create()` quirk already investigated for `Smock.002` (see the "Phase 4
+      Apply safety investigation" entry near the top of this file) — but that was for a DIFFERENT
+      specific object and should not be assumed to be the same root cause without the real error
+      text.
+    - After a Flatten Selected run, every TRIA_DOWN/TRIA_RIGHT expand-collapse toggle inside the
+      "Flattenable overrides" section stops responding (clicks don't open/close groups) — every
+      OTHER toggle/dropdown in the rest of the UI keeps working fine, so this is scoped to that one
+      section specifically, not a global freeze. No code-level explanation found yet; nothing in
+      `ASSETDOCTOR_OT_flatten_selected.run_steps` rebuilds the candidates collection or otherwise
+      touches `assetdoctor_flatten_expanded`, so the stored expand-state itself should be
+      unaffected — needs live reproduction (does a manual `tag_redraw` un-stick it? does it
+      recover after switching tabs/scrolling? does it happen even when 0 parts succeed, like this
+      run, or only after a successful apply?) before guessing at a fix. **Update:** user confirmed
+      (round 2, fresh reload) it's NOT specific to "after a successful apply" — still broken on a
+      clean reload, before any apply this round. Applied one low-risk, UNCONFIRMED mitigation:
+      `ASSETDOCTOR_OT_flatten_category_toggle`/`_flatten_group_select_all` now also call
+      `context.region.tag_redraw()` (not just `context.area`) — a known gap in some Blender
+      versions/contexts. Asked the user to check the System Console for a Python traceback on
+      click (the most likely real explanation if the mitigation doesn't help: an exception inside
+      `_draw_rig_group`/`_draw_flatten_candidates` for some specific row shape in the real
+      954-part data, which a panel `draw()` exception can leave visually stuck). Still not
+      root-caused.
+
+11. **Real round-2 finding: the bare-link-placeholder fix (item 7) only partially worked — type
+    detection is now correct ("Mesh (standalone)" replacing the generic "Object (standalone)"
+    label, confirming the `data`-pointer fix), but still only the SAME 4 Armature groups resolve
+    in `People1_v5.1.blend`; ~738 mesh parts remain ungrouped.** Root cause, NOT yet fixed: a
+    shared rig TEMPLATE that's never been individually overridden in `People1_v5.1.blend` has NO
+    real local `OB` block there AT ALL (not even a placeholder-shaped one with enough fields to
+    re-derive its `obj_kind`) — `_block_raw_name` can now read its NAME off a parent/attach-target
+    pointer, but `build_offline_rig_index`'s per-file-scoped lookup (`file_objects.get(name)`)
+    still finds nothing for it, since that name was never added to `file_objects` in the first
+    place (the per-file object census only ever iterates REAL local `OB` blocks). The rig almost
+    certainly DOES have a real local `OB` block — just in a DIFFERENT, deeper file in the chain
+    that `People1_v5.1.blend` itself links from (the recursive scan already visits that file too,
+    so its data IS in the overall `posing` census — just under a DIFFERENT `source_file`, invisible
+    to a per-file lookup by design, since that scoping exists specifically to prevent unrelated
+    files' same-named objects from merging). **Proposed fix, NOT built/agreed yet:** capture the
+    `lib` pointer (library path) whenever `parent`/attach-target resolves to a bare-link
+    placeholder (same technique `read_override_reference` already uses for `ov_block.get_pointer
+    ((b"lib",))`), store it on `ObjectPosingInfo` (e.g. `parent_library`/`attach_target_library`),
+    and have `build_offline_rig_index` fall back to a GLOBAL `(library_basename, name)` lookup
+    across every file's census when the per-file lookup misses. Bigger lift than item 7 — needs a
+    go-ahead before building.
+
+12. **Debug log checked for the "Blender declined to override" failures — file is STALE, contains
+    nothing from this session.** `E:\BlenderSync\SynologyDrive\ImageOfTheMonth\2018\November -
+    Canaletto\debugLog.txt` only has entries from 2026-06-11/06-12 (an old Find Broken Links scan)
+    — the override-decline warnings the user saw came from a Flatten Selected run in an EARLIER
+    session, before the debug-log toggle was turned on; merely re-running "Find Flattenable Links"
+    (a read-only scan) doesn't regenerate them. Needs the user to re-run Evaluate/Flatten Selected
+    on a failing group NOW (toggle confirmed on) for the real `RuntimeError` text to land in the
+    log.
+
+13. **NEW feedback on "Audit This File" (f7live) results, explicitly told to hold until the
+    current Flatten investigation is done — documented, NOT acted on:**
+    - Drop the redundant `"Dependency loop: "` prefix on every `override_loop` Finding's message
+      (`core/datablock_graph.py:121-122`) — the parent sub-heading "Override dependency loops
+      (cause resync spam / bloat)" already says what these are; repeating it on every single line
+      is noise.
+    - User found a loop reading `Material/Std_Skin_Head → Mesh/CC_Base_Body.031 →
+      Material/Std_Skin_Head` and asked for an in-depth investigation of how a Material can
+      reference a Mesh. Quick check of the mechanism (not a full investigation, just enough to
+      document accurately): `ops/datablock_inspect.py:140-148` builds edges as `(user, used)` from
+      `bpy.data.user_map(subset=relevant)`, where `user_map[used] = {users}` is Blender's own
+      ID-reference scan — so `Material → Mesh` means Blender found a genuine pointer FROM the
+      material TO the mesh datablock, not a naming/labeling artifact. The "Mesh → Material" half is
+      normal (a mesh's material slots, when link type is `'DATA'`, are stored on the mesh data
+      itself). The "Material → Mesh" half is the unusual one — leading hypothesis (UNCONFIRMED,
+      needs the user to actually check the file): a DRIVER on the material/its node tree with a
+      variable whose target ID is set to the Mesh datablock (not the Object), reading something
+      like `shape_keys.key_blocks["Name"].value` — a common CC3/Reallusion pattern (skin wetness/
+      blush nodes driven by a facial shape-key value). `bpy.data.user_map()`'s underlying ID-link
+      scan counts a driver variable's target as a real reference, so this would show up exactly as
+      this loop does. To verify: open the material in the Shader Editor, look for a node input with
+      the purple driver tint, right-click → Edit Driver, check whether its variable's target ID is
+      `CC_Base_Body.031`.
+    - User's own plan: make the People collections local via Blender's native Make Local, to expose
+      individual characters in the Outliner, then re-run Find Flattenable Links to see if grouping
+      improves. **This should directly route around item 11's cross-file-template problem** — once
+      a template rig is made truly local to the currently-open file, it gets a real local `OB`
+      block there, directly enumerable by `scan_flatten_candidates`'s LOCAL loop, no cross-file
+      lookup needed at all. One flagged risk: Blender's NATIVE Make Local (not this addon's own F2
+      feature, which auto-backs-up first) has no safety net — worth saving a copy of the file before
+      doing this, given this file's well-documented fragility (override-resync spam, missing
+      data-blocks, a prior real crash).
+    - **Important cross-cutting finding for item 10 (drill-down arrows):** the SAME "checkboxes
+      work, drill-down triangles don't, no console/info-panel activity" symptom now reported in
+      "Audit This File"'s override-loop tree too — a COMPLETELY different code path (the generic
+      `core/tree.py`/`_draw_report_detail` disclosure system, not `_draw_rig_group`/the Flatten
+      picker's custom toggle operator at all). This shifts the leading hypothesis away from "a bug
+      in the new Flatten-redesign code" toward something more general — either a real bug in the
+      shared generic tree-toggle mechanism, or (given memory was at 85%, 54.6/63.9GB, during this
+      same session per an earlier screenshot) general UI sluggishness/redraw starvation under
+      memory pressure on a 14GB+ file, unrelated to any specific operator's logic. Still needs the
+      System Console traceback check + a check of whether the triangles eventually respond after a
+      delay (supports the resource-pressure theory) versus never at all (supports a real bug).
+
+**Previous digest below, now superseded only in currency (still accurate):**
 
 **SESSION DIGEST — 2026-06-26, v0.2.81, COMMITTED as `14f8538` — NOT pushed/published yet
 (deliberate: the user chose to hold off publishing until this is live-Blender-confirmed, given

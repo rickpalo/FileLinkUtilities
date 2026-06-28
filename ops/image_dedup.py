@@ -359,10 +359,11 @@ class ASSETDOCTOR_OT_scan_content_dups(ModalProgressMixin, bpy.types.Operator):
                    f"Hashing textures by content… {idx + 1}/{total}")
 
         plans = imagededup.plan_content_merges(infos)
-        _fill_families(context, plans, [])
+        conflicts = imagededup.find_image_conflicts(infos)
+        _fill_families(context, plans, conflicts)
         blend_name = os.path.basename(bpy.data.filepath) or "current file"
         report_store.stash_report(
-            context, imagededup.build_dedup_report(plans, [], blend_name), "f6dup",
+            context, imagededup.build_dedup_report(plans, conflicts, blend_name), "f6dup",
             set_active=False)
         wm = context.window_manager
         wm.assetdoctor_dup_scanned = True
