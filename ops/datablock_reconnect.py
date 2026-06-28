@@ -408,20 +408,3 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_reconnect_category_toggle(bpy.types.Operator):
-    """Expand/collapse one library group in the Datablock Reconnect list."""
-
-    bl_idname = "assetdoctor.reconnect_category_toggle"
-    bl_label = "Expand/Collapse Library Group"
-    bl_options = {"INTERNAL"}
-
-    key: bpy.props.StringProperty()  # type: ignore[valid-type]
-
-    def execute(self, context):
-        wm = context.window_manager
-        keys = set(filter(None, wm.assetdoctor_missing_expanded.split("\n")))
-        keys.discard(self.key) if self.key in keys else keys.add(self.key)
-        wm.assetdoctor_missing_expanded = "\n".join(sorted(keys))
-        if context.area:
-            context.area.tag_redraw()
-        return {"FINISHED"}

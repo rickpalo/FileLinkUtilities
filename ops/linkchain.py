@@ -659,9 +659,10 @@ def _flatten_member(context, plan, mirror_collections: dict, make_local: bool):
 
 def _selected_members(wm) -> list:
     """Every row belonging to a CHECKED group (rig/standalone-type/remote
-    group key, tracked as DESELECTED keys — see
-    ``ASSETDOCTOR_OT_flatten_category_toggle``), shared by Evaluate Selected
-    and Flatten Selected so both act on identical selection state."""
+    group key, tracked as DESELECTED keys — toggled via the generic
+    ``ASSETDOCTOR_OT_row_toggle`` against ``assetdoctor_flatten_deselected``),
+    shared by Evaluate Selected and Flatten Selected so both act on identical
+    selection state."""
     rows = wm.assetdoctor_flatten_candidates
     deselected = set(filter(None, wm.assetdoctor_flatten_deselected.split("\n")))
     groups: dict[str, list] = {}
@@ -908,38 +909,6 @@ class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
         yield (1.0, "Done")
         level = "INFO" if ok == len(results) else "WARNING"
         self.report({level}, f"Flattened {ok}/{len(results)} part(s). Save to persist.")
-
-
-class ASSETDOCTOR_OT_flatten_category_toggle(bpy.types.Operator):
-    """Toggle membership of ``key`` in a newline-joined WM string-set property
-    -- expand/collapse one rig/character group by default
-    (``assetdoctor_flatten_expanded``), or select/deselect one
-    (``assetdoctor_flatten_deselected``, 2026-06-27 docs/TODO.md Group 11
-    #47 -- DESELECTED, not selected, so every group starts checked without
-    needing to pre-populate the set with every group's name)."""
-
-    bl_idname = "assetdoctor.flatten_category_toggle"
-    bl_label = "Toggle Rig Group State"
-    bl_options = {"INTERNAL"}
-
-    key: bpy.props.StringProperty()  # type: ignore[valid-type]
-    prop: bpy.props.StringProperty(default="assetdoctor_flatten_expanded")  # type: ignore[valid-type]
-
-    def execute(self, context):
-        wm = context.window_manager
-        raw = getattr(wm, self.prop, "")
-        keys = set(filter(None, raw.split("\n")))
-        keys.discard(self.key) if self.key in keys else keys.add(self.key)
-        setattr(wm, self.prop, "\n".join(sorted(keys)))
-        # Tag both the area AND its region -- area.tag_redraw() alone has been
-        # seen to miss a Properties-editor WINDOW region in some Blender
-        # versions/contexts (unconfirmed cause of the 2026-06-27 "drill-down
-        # arrows stop responding" report; cheap and safe either way).
-        if context.area:
-            context.area.tag_redraw()
-        if context.region:
-            context.region.tag_redraw()
-        return {"FINISHED"}
 
 
 class ASSETDOCTOR_OT_flatten_group_select_all(bpy.types.Operator):

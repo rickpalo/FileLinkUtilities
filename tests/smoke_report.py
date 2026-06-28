@@ -74,7 +74,7 @@ def main():
         first = tree_mod.report_to_tree(rep)[0].key
         rows_collapsed = len(wm.assetdoctor_report_rows)
         before = first in store.get_expanded(wm, store.exp_prop("f4"))
-        bpy.ops.assetdoctor.report_toggle(key=first, prop=store.exp_prop("f4"))
+        bpy.ops.assetdoctor.row_toggle(key=first, prop=store.exp_prop("f4"))
         after = first in store.get_expanded(wm, store.exp_prop("f4"))
         checks.append(("toggle flips active feature's expand", before != after))
         checks.append(("expanding a category grows the row collection",

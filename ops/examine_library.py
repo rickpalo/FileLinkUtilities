@@ -378,20 +378,3 @@ class ASSETDOCTOR_OT_examine_apply_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_examine_category_toggle(bpy.types.Operator):
-    """Expand/collapse one KIND group in the Examine Library list."""
-
-    bl_idname = "assetdoctor.examine_category_toggle"
-    bl_label = "Expand/Collapse Kind"
-    bl_options = {"INTERNAL"}
-
-    key: bpy.props.StringProperty()  # type: ignore[valid-type]
-
-    def execute(self, context):
-        wm = context.window_manager
-        keys = set(filter(None, wm.assetdoctor_examine_expanded.split("\n")))
-        keys.discard(self.key) if self.key in keys else keys.add(self.key)
-        wm.assetdoctor_examine_expanded = "\n".join(sorted(keys))
-        if context.area:
-            context.area.tag_redraw()
-        return {"FINISHED"}

@@ -111,7 +111,7 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
             row.separator(factor=1.4)
         if item.has_children:
             tri = "TRIA_DOWN" if item.expanded else "TRIA_RIGHT"
-            op = row.operator("assetdoctor.report_toggle", text="", icon=tri, emboss=False)
+            op = row.operator("assetdoctor.row_toggle", text="", icon=tri, emboss=False)
             op.key = item.key
             op.prop = item.prop
         else:
@@ -777,7 +777,7 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
     expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
     root_key = f"{feature}:__inline_root__"
     is_open = root_key in expanded
-    op = row.operator("assetdoctor.toggle_inline_detail", text="",
+    op = row.operator("assetdoctor.row_toggle", text="",
                        icon="TRIA_DOWN" if is_open else "TRIA_RIGHT", emboss=False)
     op.key = root_key
     row.label(text=headline)
@@ -794,7 +794,7 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
         for _ in range(r.indent):
             drow.separator(factor=1.4)
         if r.has_children:
-            top = drow.operator("assetdoctor.toggle_inline_detail", text="",
+            top = drow.operator("assetdoctor.row_toggle", text="",
                                 icon="TRIA_DOWN" if r.expanded else "TRIA_RIGHT", emboss=False)
             top.key = r.key
         else:
@@ -1156,11 +1156,12 @@ def _draw_rig_group(box, linkchain, cached, expanded, deselected, rig: str, memb
         # plain checkmark so it reads as done, not actionable.
         crow.label(text="", icon="CHECKMARK")
     else:
-        cop = crow.operator("assetdoctor.flatten_category_toggle", text="",
+        cop = crow.operator("assetdoctor.row_toggle", text="",
                             icon="CHECKBOX_HLT" if is_checked else "CHECKBOX_DEHLT", emboss=False)
         cop.key, cop.prop = rig, "assetdoctor_flatten_deselected"
-    crow.operator("assetdoctor.flatten_category_toggle", text="",
-                  icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = rig
+    top = crow.operator("assetdoctor.row_toggle", text="",
+                        icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+    top.key, top.prop = rig, "assetdoctor_flatten_expanded"
     group_icon = "ARMATURE_DATA" if is_rig else ("LINKED" if is_remote else "OBJECT_DATA")
     if is_done:
         crow.label(text=f"{label}  ({len(members)} part(s) flattened)", icon=group_icon)
@@ -1249,9 +1250,9 @@ def _draw_flatten_candidates(layout, wm):
     hrow = outer.row(align=True)
     all_key = "__flattenable_overrides__"
     is_open = all_key in expanded
-    hop = hrow.operator("assetdoctor.flatten_category_toggle", text="",
+    hop = hrow.operator("assetdoctor.row_toggle", text="",
                         icon="TRIA_DOWN" if is_open else "TRIA_RIGHT", emboss=False)
-    hop.key = all_key
+    hop.key, hop.prop = all_key, "assetdoctor_flatten_expanded"
     hrow.label(text=_flattenable_overrides_summary(wm))
     if not is_open:
         return
@@ -1274,8 +1275,9 @@ def _draw_flatten_candidates(layout, wm):
         gop = grow.operator("assetdoctor.flatten_group_select_all", text="",
                             icon="CHECKBOX_HLT" if is_checked else "CHECKBOX_DEHLT", emboss=False)
         gop.keys = "\n".join(children)
-        grow.operator("assetdoctor.flatten_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = group_parent
+        gtog = grow.operator("assetdoctor.row_toggle", text="",
+                             icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+        gtog.key, gtog.prop = group_parent, "assetdoctor_flatten_expanded"
         grow.label(text=f"{group_parent}  ({total_members} part(s) across {len(children)} "
                         "character(s))", icon="LIBRARY_DATA_OVERRIDE")
         if not is_exp:
@@ -1535,10 +1537,8 @@ class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         for kind in sorted(groups, key=str.lower):
             members = groups[kind]
             is_exp = kind in expanded
-            crow = box.row(align=True)
-            crow.operator("assetdoctor.examine_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = kind
-            crow.label(text=f"{kind}  ({len(members)})", icon="LIBRARY_DATA_DIRECT")
+            _draw_group_header(box, key=kind, prop="assetdoctor_examine_expanded", is_exp=is_exp,
+                               label=f"{kind}  ({len(members)})", icon="LIBRARY_DATA_DIRECT")
             if not is_exp:
                 continue
             for idx, item in members:
@@ -1670,12 +1670,47 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
                       icon="CHECKMARK" if wm.assetdoctor_last_result_ok else "ERROR")
 
 
+def _draw_group_header(layout, *, key: str, prop: str, is_exp: bool, label: str, icon: str,
+                       action=None, alert: bool = False, indent_factor: float = 0.0):
+    """One collapsible group-header row: expand/collapse triangle + icon +
+    label [+ an optional trailing action]. Extracted (docs/TODO.md Group 12
+    Phase 1, 2026-06-27) from the ~10 sections that each hand-built the same
+    "triangle + icon + counted label[ + action button]" row over their own
+    grouped/collapsible list — every section still builds its OWN
+    ``{group_key: [members]}`` dict, sort order, and label/icon text (the
+    genuine per-section flexibility); only this shell is shared.
+
+    ``action``, when given, is ``callable(row)`` drawing one more widget at
+    the row's right — a folder/file picker, a master-keeper button, a "Use
+    Selected" button — mirroring ``_analyze_row``'s own ``draw_action``
+    parameter. ``alert`` puts JUST the label (not the whole row) into
+    Blender's alert/red styling, for sections that flag a per-group problem
+    (e.g. Duplicate Textures' material-mismatch warning).
+
+    Deliberately NOT used by Flatten v2's ``_draw_rig_group`` — that one's
+    shape genuinely differs (a SECOND toggle for group-level select state,
+    indent, a checkmark-when-done swap) and is the planned Phase 2 prototype
+    for this initiative's virtualization layer, not worth reshaping twice."""
+    row = layout.row(align=True)
+    if indent_factor:
+        row.separator(factor=indent_factor)
+    tog = row.operator("assetdoctor.row_toggle", text="",
+                       icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
+    tog.key, tog.prop = key, prop
+    lab = row.row()
+    lab.alert = alert
+    lab.label(text=label, icon=icon)
+    if action is not None:
+        action(row)
+    return row
+
+
 def _draw_kept_separate(layout, wm, key: str, conflict_lines: list[str]) -> None:
     """Collapsible "kept separate" sub-list, shared by every Find Duplicates
     type section (docs/TODO.md #16, 2026-06-27): a name-family matched on
     naming but not content, so it was never merged/instanced/remapped —
     content identity alone still gates every actual apply, unchanged. Uses
-    the one shared inline-detail toggle (``assetdoctor.toggle_inline_detail``
+    the one shared inline-detail toggle (``assetdoctor.row_toggle``
     / ``assetdoctor_detail_expanded``) like every other inline disclosure in
     this panel; ``key`` already embeds its own section tag so it can't
     collide with another section's."""
@@ -1683,11 +1718,9 @@ def _draw_kept_separate(layout, wm, key: str, conflict_lines: list[str]) -> None
         return
     expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
     is_exp = key in expanded
-    crow = layout.row(align=True)
-    crow.operator("assetdoctor.toggle_inline_detail", text="",
-                  icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = key
-    crow.label(text=f"Kept separate — name matches, content differs ({len(conflict_lines)})",
-              icon="QUESTION")
+    _draw_group_header(layout, key=key, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+                       label=f"Kept separate — name matches, content differs ({len(conflict_lines)})",
+                       icon="QUESTION")
     if is_exp:
         for ln in conflict_lines:
             r = layout.row(align=True)
@@ -1722,11 +1755,9 @@ def _draw_datablock_dups(layout, wm) -> None:
         members = groups[kind]
         removable_here = sum(r.removable for r in members)
         is_exp = kind in expanded
-        crow = layout.row(align=True)
-        crow.operator("assetdoctor.datablock_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = kind
-        crow.label(text=f"{kind}  ({len(members)} family, −{removable_here})",
-                  icon="LIBRARY_DATA_OVERRIDE")
+        _draw_group_header(layout, key=kind, prop="assetdoctor_datablock_expanded", is_exp=is_exp,
+                           label=f"{kind}  ({len(members)} family, −{removable_here})",
+                           icon="LIBRARY_DATA_OVERRIDE")
         if not is_exp:
             continue
         for row in members:
@@ -1793,14 +1824,11 @@ def _draw_res_variants(layout, wm) -> None:
         ckey = f"resvar:{group_key}"
         is_exp = ckey in expanded
         kept = next((item.tag for _i, item in members if item.selected), "")
-        crow = box.row(align=True)
-        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
-                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-        top.key = ckey
         label = f"{group_key}  ({len(members)} resolutions)"
         if kept:
             label += f" — keeping {kept}"
-        crow.label(text=label, icon="IMAGE_DATA")
+        _draw_group_header(box, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+                           label=label, icon="IMAGE_DATA")
         if not is_exp:
             continue
         for idx, item in members:
@@ -1963,25 +1991,25 @@ def _draw_duplicate_textures(layout, wm, narrow: bool) -> None:
         for row in families:
             groups.setdefault(_eff_mat(row), []).append(row)
 
+        def _master_keeper_action(material):
+            # Master keeper for the whole material (sets every family's keeper by a
+            # policy) — the material-level counterpart to the per-family dropdowns.
+            def draw(row):
+                row.operator("assetdoctor.dup_material_keeper", text="",
+                             icon="DOWNARROW_HLT").material = material
+            return draw
+
         for key in sorted(groups, key=str.lower):
             members = groups[key]
             removable_here = sum(r.removable for r in members)
             mism = [r for r in members if _mismatch(r)]
             is_exp = key in expanded
-            crow = layout.row(align=True)
-            crow.operator("assetdoctor.dup_category_toggle", text="",
-                          icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = key
-            # Alert only the label (not the whole row) when some textures here don't
-            # look like they belong to this material.
-            lab = crow.row()
-            lab.alert = bool(mism)
             suffix = f", ⚠{len(mism)} mismatch" if mism else ""
-            lab.label(text=f"{key}  ({len(members)} family, −{removable_here}{suffix})",
-                      icon="ERROR" if mism else "MATERIAL")
-            # Master keeper for the whole material (sets every family's keeper by a
-            # policy) — the material-level counterpart to the per-family dropdowns.
-            crow.operator("assetdoctor.dup_material_keeper", text="",
-                          icon="DOWNARROW_HLT").material = key
+            _draw_group_header(
+                layout, key=key, prop="assetdoctor_dup_expanded", is_exp=is_exp,
+                label=f"{key}  ({len(members)} family, −{removable_here}{suffix})",
+                icon="ERROR" if mism else "MATERIAL", alert=bool(mism),
+                action=_master_keeper_action(key))
             if not is_exp:
                 continue
             for row in members:
@@ -2070,11 +2098,8 @@ def _draw_orphans(layout, wm) -> None:
     if fakes and fakes.items:
         ckey = "orphans:fake_only"
         is_exp = ckey in expanded
-        crow = box.row(align=True)
-        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
-                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-        top.key = ckey
-        crow.label(text=fakes.message, icon="INFO")
+        _draw_group_header(box, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+                           label=fakes.message, icon="INFO")
         if is_exp:
             for label in fakes.items:
                 type_name, _, name = label.partition("/")
@@ -2087,21 +2112,15 @@ def _draw_orphans(layout, wm) -> None:
     if identical:
         ckey = "orphans:identical"
         is_exp = ckey in expanded
-        crow = box.row(align=True)
-        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
-                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-        top.key = ckey
-        crow.label(text=f"{len(identical)} identical-datablock group(s)", icon="INFO")
+        _draw_group_header(box, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+                           label=f"{len(identical)} identical-datablock group(s)", icon="INFO")
         if is_exp:
             for i, f in enumerate(identical):
                 fkey = f"orphans:identical:{i}"
                 f_is_exp = fkey in expanded
-                frow = box.row(align=True)
-                frow.separator(factor=2.0)
-                ftop = frow.operator("assetdoctor.toggle_inline_detail", text="",
-                                     icon="TRIA_DOWN" if f_is_exp else "TRIA_RIGHT", emboss=False)
-                ftop.key = fkey
-                frow.label(text=f.message)
+                _draw_group_header(box, key=fkey, prop="assetdoctor_detail_expanded",
+                                   is_exp=f_is_exp, label=f.message, icon="NONE",
+                                   indent_factor=2.0)
                 if not f_is_exp:
                     continue
                 for label in f.items:
@@ -2169,9 +2188,6 @@ def _draw_reconnect(layout, wm) -> None:
         lib_found = members[0].library_found
         has_source = bool(members[0].source_blend)
         is_exp = library in expanded
-        crow = box.row(align=True)
-        crow.operator("assetdoctor.reconnect_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = library
         disp = library or "(unknown library)"
         bits = []
         if matched:
@@ -2181,15 +2197,19 @@ def _draw_reconnect(layout, wm) -> None:
         if external:
             bits.append(f"{external} fix at the source library")
         label = f"{disp}  ({', '.join(bits)})" if bits else f"{disp}  ({len(members)})"
+
+        def _pick_source_action(row):
+            row.operator("assetdoctor.reconnect_pick_source", text="",
+                         icon="FILEBROWSER").library = library
+
         # ERROR icon when the group's OWN library can't be found anywhere in
         # this session AND no source has been picked yet — distinguishes
         # "genuinely needs a manual file pick" from the normal broken-link
         # icon (user report 2026-06-24: these looked identical before).
-        crow.label(text=label,
-                  icon="LIBRARY_DATA_BROKEN" if (lib_found or has_source) else "ERROR")
-        pick = crow.operator("assetdoctor.reconnect_pick_source", text="",
-                             icon="FILEBROWSER")
-        pick.library = library
+        _draw_group_header(box, key=library, prop="assetdoctor_missing_expanded", is_exp=is_exp,
+                           label=label,
+                           icon="LIBRARY_DATA_BROKEN" if (lib_found or has_source) else "ERROR",
+                           action=_pick_source_action)
         if not is_exp:
             continue
         source = members[0].source_blend
@@ -2258,14 +2278,14 @@ def _draw_duplicate_library_paths(layout, wm) -> None:
         ckey = f"duplib:{group_key}"
         is_exp = ckey in expanded
         fname = os.path.basename(members[0][1].stored.rstrip("/\\")) or members[0][1].stored
-        crow = layout.row(align=True)
-        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
-                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-        top.key = ckey
-        crow.label(text=f"{fname} — {len(members)} forms", icon="FILE_BLEND")
-        mop = crow.operator("assetdoctor.merge_duplicate_libraries",
-                            text="Use Selected Paths", icon="AREA_JOIN")
-        mop.group = group_key
+
+        def _use_selected_paths_action(row):
+            row.operator("assetdoctor.merge_duplicate_libraries", text="Use Selected Paths",
+                        icon="AREA_JOIN").group = group_key
+
+        _draw_group_header(layout, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+                           label=f"{fname} — {len(members)} forms", icon="FILE_BLEND",
+                           action=_use_selected_paths_action)
         if not is_exp:
             continue
         for idx, item in members:
@@ -2304,18 +2324,20 @@ def _draw_absolute_paths(layout, wm) -> None:
         fixable = members[0][1].target != ""
         ckey = f"abspath:{group_key}"
         is_exp = ckey in expanded
-        crow = layout.row(align=True)
-        top = crow.operator("assetdoctor.toggle_inline_detail", text="",
-                            icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-        top.key = ckey
         label = f"{group_key} — {len(members)} librar{'y' if len(members) == 1 else 'ies'}"
+
+        def _make_relative_action(row):
+            row.operator("assetdoctor.make_selected_relative",
+                         text="Make Selected Relative", icon="FILE_REFRESH")
+
         if fixable:
-            crow.label(text=label, icon="CHECKMARK")
-            crow.operator("assetdoctor.make_selected_relative",
-                          text="Make Selected Relative", icon="FILE_REFRESH")
+            _draw_group_header(layout, key=ckey, prop="assetdoctor_detail_expanded",
+                               is_exp=is_exp, label=label, icon="CHECKMARK",
+                               action=_make_relative_action)
         else:
-            crow.label(text=label + "  (different drive — can't be made relative)",
-                      icon="ERROR")
+            _draw_group_header(
+                layout, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+                label=label + "  (different drive — can't be made relative)", icon="ERROR")
         if not is_exp:
             continue
         for idx, item in members:
@@ -2413,19 +2435,18 @@ def _draw_missing_textures(layout, wm, narrow: bool) -> None:
         else:
             disp = (os.path.basename(raw.rstrip("/")) or raw) if mode == "DIR" else raw
         is_exp = raw in expanded
-        crow = tex.row(align=True)
-        crow.operator("assetdoctor.tex_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = raw
         label = f"{disp}  ({matched} of {total} matched)" if matched else f"{disp}  ({total})"
-        crow.label(text=label,
-                   icon="CHECKMARK" if matched and matched == total else
-                   ("FILE_FOLDER" if mode == "DIR" else "MATERIAL"))
-        # Category-level "point at a folder" (stages targets for the whole group).
-        if raw != UNGROUPED:
-            cop = crow.operator("assetdoctor.point_group_at_folder", text="",
-                                icon="FILE_FOLDER")
-            cop.group_key = raw
-            cop.by = mode
+
+        def _point_at_folder_action(row):
+            # Category-level "point at a folder" (stages targets for the whole group).
+            cop = row.operator("assetdoctor.point_group_at_folder", text="", icon="FILE_FOLDER")
+            cop.group_key, cop.by = raw, mode
+
+        _draw_group_header(
+            tex, key=raw, prop="assetdoctor_tex_expanded", is_exp=is_exp, label=label,
+            icon="CHECKMARK" if matched and matched == total else
+            ("FILE_FOLDER" if mode == "DIR" else "MATERIAL"),
+            action=_point_at_folder_action if raw != UNGROUPED else None)
         if not is_exp:
             continue
         # Individual files: checkbox + name + staged target + per-file file picker.
@@ -2473,10 +2494,8 @@ def _draw_linked_missing_textures(tex, wm) -> None:
         members = groups[lib]
         ckey = LM + lib
         is_exp = ckey in expanded
-        crow = tex.row(align=True)
-        crow.operator("assetdoctor.tex_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
-        crow.label(text=f"{os.path.basename(lib)}  ({len(members)})", icon="FILE_BLEND")
+        _draw_group_header(tex, key=ckey, prop="assetdoctor_tex_expanded", is_exp=is_exp,
+                           label=f"{os.path.basename(lib)}  ({len(members)})", icon="FILE_BLEND")
         if not is_exp:
             continue
         for item in members:
@@ -2534,14 +2553,16 @@ def _draw_possible_matches(tex, wm) -> None:
         is_exp = ckey in expanded
         best_lbl = _TEX_CONF.get(
             {2: "high", 1: "medium", 0: "low"}[cat_rank(members)], ("", "?", 0))[1]
-        crow = tex.row(align=True)
-        crow.operator("assetdoctor.tex_category_toggle", text="",
-                      icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False).key = ckey
-        crow.label(text=f"{key}  ({len(members)}, {best_lbl})", icon="MATERIAL")
-        # Material-level accept (the whole rolled-up group) — CHECKMARK marks the
-        # group action, distinct from the single-row IMPORT below.
-        crow.operator("assetdoctor.accept_material_matches", text="",
-                      icon="CHECKMARK").material = key
+
+        def _accept_material_action(row):
+            # Material-level accept (the whole rolled-up group) — CHECKMARK marks the
+            # group action, distinct from the single-row IMPORT below.
+            row.operator("assetdoctor.accept_material_matches", text="",
+                        icon="CHECKMARK").material = key
+
+        _draw_group_header(tex, key=ckey, prop="assetdoctor_tex_expanded", is_exp=is_exp,
+                           label=f"{key}  ({len(members)}, {best_lbl})", icon="MATERIAL",
+                           action=_accept_material_action)
         if not is_exp:
             continue
         for idx, item in members:

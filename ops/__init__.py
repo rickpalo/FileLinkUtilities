@@ -9,7 +9,6 @@ from .scan_folder import ASSETDOCTOR_OT_scan_folder
 from .dep_scan import ASSETDOCTOR_OT_scan_dependencies
 from .linkchain import (
     ASSETDOCTOR_OT_evaluate_selected,
-    ASSETDOCTOR_OT_flatten_category_toggle,
     ASSETDOCTOR_OT_flatten_group_select_all,
     ASSETDOCTOR_OT_flatten_selected,
     ASSETDOCTOR_OT_scan_flatten_candidates,
@@ -38,19 +37,16 @@ from .datablock_reconnect import (
     ASSETDOCTOR_OT_scan_reconnect_targets,
     ASSETDOCTOR_OT_reconnect_pick_source,
     ASSETDOCTOR_OT_reconnect_selected,
-    ASSETDOCTOR_OT_reconnect_category_toggle,
 )
 from .datablock_dup import (
     ASSETDOCTOR_OT_scan_datablock_dups,
     ASSETDOCTOR_OT_merge_datablock_selected,
-    ASSETDOCTOR_OT_datablock_category_toggle,
 )
 from .examine_library import (
     ASSETDOCTOR_OT_examine_library,
     ASSETDOCTOR_OT_examine_pick_source,
     ASSETDOCTOR_OT_examine_search_folder,
     ASSETDOCTOR_OT_examine_apply_selected,
-    ASSETDOCTOR_OT_examine_category_toggle,
 )
 from .image_relink import (
     ASSETDOCTOR_OT_scan_broken_textures,
@@ -62,7 +58,6 @@ from .image_relink import (
     ASSETDOCTOR_OT_accept_match,
     ASSETDOCTOR_OT_accept_material_matches,
     ASSETDOCTOR_OT_accept_all_matches,
-    ASSETDOCTOR_OT_tex_category_toggle,
     ASSETDOCTOR_OT_point_group_at_folder,
     ASSETDOCTOR_OT_relink_pick_texture,
     ASSETDOCTOR_OT_relink_textures_selected,
@@ -71,7 +66,6 @@ from .image_dedup import (
     ASSETDOCTOR_OT_scan_content_dups,
     ASSETDOCTOR_OT_merge_dup_selected,
     ASSETDOCTOR_OT_dup_material_keeper,
-    ASSETDOCTOR_OT_dup_category_toggle,
     ASSETDOCTOR_OT_scan_res_variants,
     ASSETDOCTOR_OT_res_variant_keep,
     ASSETDOCTOR_OT_res_variant_select,
@@ -93,11 +87,10 @@ from .dryrun_render import ASSETDOCTOR_OT_dryrun_render
 from .open_preferences import ASSETDOCTOR_OT_open_preferences
 from .report_store import (
     ASSETDOCTOR_OT_export_report,
-    ASSETDOCTOR_OT_report_toggle,
     ASSETDOCTOR_OT_row_label,
+    ASSETDOCTOR_OT_row_toggle,
     ASSETDOCTOR_OT_select_datablock,
     ASSETDOCTOR_OT_show_linked_from,
-    ASSETDOCTOR_OT_toggle_inline_detail,
 )
 
 REGISTER_CLASSES = (
@@ -105,7 +98,6 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_scan_dependencies,
     ASSETDOCTOR_OT_scan_link_chains,
     ASSETDOCTOR_OT_scan_flatten_candidates,
-    ASSETDOCTOR_OT_flatten_category_toggle,
     ASSETDOCTOR_OT_flatten_group_select_all,
     ASSETDOCTOR_OT_evaluate_selected,
     ASSETDOCTOR_OT_flatten_selected,
@@ -125,15 +117,12 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_scan_reconnect_targets,
     ASSETDOCTOR_OT_reconnect_pick_source,
     ASSETDOCTOR_OT_reconnect_selected,
-    ASSETDOCTOR_OT_reconnect_category_toggle,
     ASSETDOCTOR_OT_scan_datablock_dups,
     ASSETDOCTOR_OT_merge_datablock_selected,
-    ASSETDOCTOR_OT_datablock_category_toggle,
     ASSETDOCTOR_OT_examine_library,
     ASSETDOCTOR_OT_examine_pick_source,
     ASSETDOCTOR_OT_examine_search_folder,
     ASSETDOCTOR_OT_examine_apply_selected,
-    ASSETDOCTOR_OT_examine_category_toggle,
     ASSETDOCTOR_OT_scan_broken_textures,
     ASSETDOCTOR_OT_relink_folder_search,
     ASSETDOCTOR_OT_search_textures_folder,
@@ -143,14 +132,12 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_accept_match,
     ASSETDOCTOR_OT_accept_material_matches,
     ASSETDOCTOR_OT_accept_all_matches,
-    ASSETDOCTOR_OT_tex_category_toggle,
     ASSETDOCTOR_OT_point_group_at_folder,
     ASSETDOCTOR_OT_relink_pick_texture,
     ASSETDOCTOR_OT_relink_textures_selected,
     ASSETDOCTOR_OT_scan_content_dups,
     ASSETDOCTOR_OT_merge_dup_selected,
     ASSETDOCTOR_OT_dup_material_keeper,
-    ASSETDOCTOR_OT_dup_category_toggle,
     ASSETDOCTOR_OT_scan_res_variants,
     ASSETDOCTOR_OT_res_variant_keep,
     ASSETDOCTOR_OT_res_variant_select,
@@ -169,10 +156,9 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_resource_sort_by,
     ASSETDOCTOR_OT_dryrun_render,
     ASSETDOCTOR_OT_open_preferences,
-    ASSETDOCTOR_OT_report_toggle,
     ASSETDOCTOR_OT_row_label,
+    ASSETDOCTOR_OT_row_toggle,
     ASSETDOCTOR_OT_select_datablock,
     ASSETDOCTOR_OT_show_linked_from,
-    ASSETDOCTOR_OT_toggle_inline_detail,
     ASSETDOCTOR_OT_export_report,
 )

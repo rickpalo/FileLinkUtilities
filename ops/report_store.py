@@ -177,10 +177,22 @@ def rebuild_resource_rows(wm) -> None:
 
 
 def rebuild_rows_for_prop(wm, prop: str) -> None:
-    """Rebuild whichever collection a toggle on ``prop`` affects."""
+    """Rebuild whichever virtualized collection a toggle on ``prop`` affects.
+
+    Only two ``prop`` families are backed by a virtualized ``CollectionProperty``
+    today: ``RESOURCE_EXP_PROP`` and any feature's own ``exp_prop`` (always
+    ``"assetdoctor_repx_<feature>"``, see ``exp_prop()``) for the Reports tab.
+    ``ASSETDOCTOR_OT_row_toggle`` (docs/TODO.md Group 12) is now the ONE toggle
+    operator for every grouped section in the addon, not just these two, so an
+    unconditional "anything else must be a report feature" ``else`` would be
+    wrong — it would silently rebuild the Reports tab's rows (wasted work, and
+    liable to clobber the wrong report) every time an unrelated section (e.g.
+    Missing Textures) toggles a group. No-op for any other ``prop`` — those
+    sections still draw manually and have nothing to rebuild (yet; see Group
+    12's phased rollout for sections gaining their own virtualized collection)."""
     if prop == RESOURCE_EXP_PROP:
         rebuild_resource_rows(wm)
-    else:
+    elif prop.startswith("assetdoctor_repx_"):
         rebuild_report_rows(wm)
 
 
@@ -193,7 +205,13 @@ def focus_row(wm, prop: str, key: str) -> None:
     rebuild) so Blender's ``template_list`` scrolls to keep it visible. Without
     this, expanding/collapsing a row deep in a long report re-filled the whole
     collection from scratch with no active-index change, so the list appeared to
-    jump back to the top instead of staying where you clicked (user, 2026-06-23)."""
+    jump back to the top instead of staying where you clicked (user, 2026-06-23).
+    No-op for a ``prop`` that isn't one of the two virtualized collections today
+    (every other grouped section still draws manually) — same guard as
+    ``rebuild_rows_for_prop``, see there for why a blanket "else" would be wrong
+    now that one shared toggle op (below) serves every section."""
+    if not (prop == RESOURCE_EXP_PROP or prop.startswith("assetdoctor_repx_")):
+        return
     coll = wm.assetdoctor_resource_rows if prop == RESOURCE_EXP_PROP else wm.assetdoctor_report_rows
     for i, item in enumerate(coll):
         if item.key == key and item.prop == prop:
@@ -201,13 +219,35 @@ def focus_row(wm, prop: str, key: str) -> None:
             return
 
 
-class ASSETDOCTOR_OT_report_toggle(bpy.types.Operator):
-    bl_idname = "assetdoctor.report_toggle"
+class ASSETDOCTOR_OT_row_toggle(bpy.types.Operator):
+    """The one generic expand/collapse (and, via a differently-named ``prop``,
+    select/deselect — see ``ops.linkchain``'s Flatten-candidate groups) toggle
+    for every grouped results section in the addon (docs/TODO.md Group 12,
+    2026-06-27). Replaces 8 near-identical operator classes that each
+    hand-rolled the same "toggle ``key`` in/out of a newline-joined WM
+    string-set named ``prop``" logic — one per section, plus this one's own
+    two predecessors (``report_toggle``/``toggle_inline_detail``).
+
+    ``prop`` defaults to ``assetdoctor_detail_expanded``, the one shared
+    bucket used by every inline Analyze-button disclosure (a node's own key
+    already embeds its report's feature tag, so two features' keys never
+    collide there); every other section passes its own dedicated ``prop``
+    explicitly. ``rebuild_rows_for_prop``/``focus_row`` are no-ops for any
+    ``prop`` that isn't (yet) backed by a virtualized row collection — see
+    those functions — so this is a pure behavior-preserving merge for the
+    ~11 sections still drawn manually; only the Reports tab/Resource Usage
+    case (the two ``prop`` families ``report_toggle`` used to serve) gets the
+    rebuild+refocus treatment today. Redraws BOTH the area and its region
+    (``ASSETDOCTOR_OT_flatten_category_toggle`` added the region redraw
+    2026-06-27 as a defensive fix for a reported "drill-down arrows stop
+    responding" issue; adopted here for every section, not just Flatten's)."""
+
+    bl_idname = "assetdoctor.row_toggle"
     bl_label = "Expand/Collapse"
     bl_options = {"INTERNAL"}
 
     key: bpy.props.StringProperty()  # type: ignore[valid-type]
-    prop: bpy.props.StringProperty()  # type: ignore[valid-type]
+    prop: bpy.props.StringProperty(default="assetdoctor_detail_expanded")  # type: ignore[valid-type]
 
     def execute(self, context):
         wm = context.window_manager
@@ -218,46 +258,8 @@ class ASSETDOCTOR_OT_report_toggle(bpy.types.Operator):
         focus_row(wm, self.prop, self.key)
         if context.area:
             context.area.tag_redraw()
-        return {"FINISHED"}
-
-
-
-class ASSETDOCTOR_OT_toggle_inline_detail(bpy.types.Operator):
-    """Expand/collapse one node of an Analyze button's inline report
-    disclosure (items a/c, 2026-06-25): a single shared newline-joined key
-    set on the WindowManager. Deliberately INDEPENDENT of each feature's own
-    ``exp_prop`` (the dedicated Reports tab pre-seeds that one expanded via
-    ``stash_tree``/``stash_report``; this one always starts empty, so the
-    inline view defaults to fully collapsed). One flat set covers every
-    feature's inline view at once — a node's own key already embeds its
-    report's feature tag, so two features' keys never collide."""
-
-    bl_idname = "assetdoctor.toggle_inline_detail"
-    bl_label = "Expand/Collapse"
-    bl_options = {"INTERNAL"}
-
-    key: bpy.props.StringProperty()  # type: ignore[valid-type]
-
-    def execute(self, context):
-        wm = context.window_manager
-        keys = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
-        keys.discard(self.key) if self.key in keys else keys.add(self.key)
-        wm.assetdoctor_detail_expanded = "\n".join(sorted(keys))
-        if context.area:
-            context.area.tag_redraw()
-        return {"FINISHED"}
-
-
-# ASSETDOCTOR_OT_report_expand_all / _report_select / _report_clear were
-# deleted (Group 11 #46, 2026-06-26) along with the generic Reports selector
-# panel (ui.panels.ASSETDOCTOR_PT_results) they exclusively powered — every
-# feature now has its own inline display. rebuild_report_rows/
-# assetdoctor_report_rows/active_feature's role in stash_report are left in
-# place even though nothing displays assetdoctor_report_rows anymore — they
-# run unconditionally from the core stash pipeline every scan operator uses,
-# so removing them is a deeper, separate cleanup, not part of this change.
-        if context.area:
-            context.area.tag_redraw()
+        if context.region:
+            context.region.tag_redraw()
         return {"FINISHED"}
 
 

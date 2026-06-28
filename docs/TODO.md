@@ -1,11 +1,13 @@
 # AssetDoctor — TODO / backlog
 
-## ⏩ NEXT SESSION: Group 3 leftovers (user's explicit pick, 2026-06-27, after v0.2.92 was
-## committed). See "Group 3 — Phase 3 panel restructuring" in the Consolidated Task List below
-## (items 11-12): progress-bar position needs the user's pick among 3 already-identified options;
-## UIList virtualization for the remaining manually-drawn report sections (Missing/Duplicate
-## Textures, Datablock Reconnect, Examine Library). Flatten v2 is committed but still imperfect
-## (see its own status block further down) — not the priority, don't resume unless asked.
+## ⏩ NEXT SESSION: Group 3 leftovers are CLOSED (2026-06-27) — #11 resolved (leave progress bar
+## where it is, no code), #12 superseded by **Group 12: generalize the "results section" UI**
+## (see Group 12 in the Consolidated Task List below; full plan at
+## `C:\Users\Rick\.claude\plans\graceful-wondering-steele.md`). **Group 12 Phase 1 is DONE @
+## v0.2.93** (toggle-op consolidation + shared group-header helper) but NOT yet live-verified —
+## do that FIRST, then start **Phase 2** (virtualization primitives, proven on Flattenable
+## Overrides). Flatten v2 is committed but still imperfect (see its own status block further
+## down) — not the priority, don't resume unless asked.
 
 ## ✅ Phase 4 Apply (Flatten Link) safety investigation — RESOLVED 2026-06-26 (v0.2.69)
 
@@ -118,12 +120,96 @@ never in question once verified three ways.
 8. **"Reporting & Recommendations" section** — see Group 11 Phase E.
 9. **"Cleanup & Fixes" section** — see Group 11 Phases B/C/D.
 10. **"Info & Utilities" section** — see Group 11 Phase A.
-11. Progress-bar position — genuine Blender layout constraint (can't inject parent content
-    between sibling child panels); 3 real options identified, needs the user's pick before code.
-    NOT covered by Group 11 — still open, pick up separately.
-12. UIList virtualization for Missing/Duplicate Textures, Datablock Reconnect, Examine Library
-    (still manually-drawn boxes, not scrollable `template_list`s) — confirmed still true by code.
-    NOT covered by Group 11 — still open, pick up separately.
+11. ~~Progress-bar position...~~ **RESOLVED 2026-06-27, no code.** User's pick of the 3 identified
+    options: leave it where it is. `_draw_progress()` is already the first call in the parent
+    panel's (`ASSETDOCTOR_PT_scene_deps`) own `draw()` — the highest point achievable given
+    Blender can't inject parent content between sibling child panels. "Near the top" is correct as-is.
+12. ~~UIList virtualization for Missing/Duplicate Textures, Datablock Reconnect, Examine
+    Library...~~ **CLOSED 2026-06-27 via a design pivot — see Group 12 below.** Discussing this
+    item, the user pointed at "Flattenable overrides" (Find Flattenable Links / Flatten v2) as a
+    UI template that already works well and asked for a broader pass: audit EVERY results
+    section in the addon and extract a small set of shared, reusable components (not just bolt a
+    UIList onto these 4 sections individually) — while actually solving the blank-rows-past-a-
+    point risk this item was originally about, not just copying Flattenable Overrides' look
+    (which is itself still a manually-drawn, non-virtualized box). Superseded by Group 12.
+
+### Group 12 — Generalize the "results section" UI across the whole addon (started 2026-06-27,
+### full plan at `C:\Users\Rick\.claude\plans\graceful-wondering-steele.md`). Supersedes Group 3
+### item #12. Each phase is its OWN session with its own live-Blender confirm before the next
+### starts, per this project's established practice for multi-phase UI work.
+**Audit (2026-06-27):** 3 sections already virtualized (`ASSETDOCTOR_UL_tree` for the Reports tab
++ Resource Usage breakdown; `ASSETDOCTOR_UL_broken_libs` for Find Broken Library Links — proof a
+`UIList` can draw LIVE widgets straight onto a real `PropertyGroup` row, not just static labels).
+~13 sections are NOT virtualized, hand-looped Python in `panel.draw()`, in 3 shapes: (A) two-level
+group→member mostly-read-only (`_draw_report_detail` — the inline disclosure under EVERY Analyze
+button, e.g. the "24 multi-hop route(s)…" line — is a THIRD independent reimplementation of
+`core.tree.flatten_visible`, the same primitive the Reports tab already virtualizes; plus Orphans'
+informational sub-lists, duplicate-library-paths, absolute-paths); (B) single-level group→member
+interactive (Missing Textures, Duplicate Textures, Datablock Reconnect, Examine Library, Datablock/
+Material/Geometry Dups, Resolution Variants — checkbox/radio + label + 1-2 extra widgets per
+member); (C) two-level outer→group→member with a GROUP-level checkbox — "Flattenable overrides"
+(`_draw_flatten_candidates`/`_draw_rig_group`), the liked template: shared control row above the
+list, ready-first sort, per-group rollup, live counts kept in sync
+([[feedback-summary-propagation]]) — same shape as B, just one more nesting level + group- not
+member-level checkbox. Also found **8 near-identical toggle operator classes across 6 files**
+doing the exact same "toggle a key in/out of a newline-joined WM string-set" logic (2 of the 8,
+`report_toggle`/`flatten_category_toggle`, already generalized themselves with a `prop` param —
+the pattern the other 6 should have used); `report_toggle` is the most complete (toggle + rebuild
++ focus-row + redraw). `get_expanded`/`set_expanded` already exist generically in
+`ops/report_store.py` but most of `ui/panels.py`'s 15 inline expanded-set reads don't use them.
+
+**Design:** (1) one generic toggle operator (key+prop+optional rebuild dispatch) replacing all 8;
+(2) shared `_draw_group_header()` + member-row-prefix helpers replacing the hand-copied
+dict-build/sort/triangle/icon/label block in every shape-B/C function (each section keeps its OWN
+per-member extra-widget code — that's the real, kept flexibility); (3) the actual virtualization
+layer — new `ASSETDOCTOR_PG_picker_row` (`kind` outer/group/member, `group_key`, `ref_prop`/
+`ref_index` pointing back into the section's REAL collection so `draw_item` reads/writes live data
+with no sync step, `indent`, `label`, `icon`, `count_text`, `checkbox_state`) + a bpy-free flatten
+helper (likely `core/picker.py`, the live-data analogue of `flatten_visible`) + 2-3 `UIList`
+classes (one per ROW-SHAPE family, shared across the sections that have that shape — not one per
+section, not one mega-list).
+
+**Phases:** 0 (done, this entry) → **1** mechanical de-dup, no behavior change (toggle-op
+consolidation + group-header helper, across all ~13 sections; lowest risk, fast pytest-only
+verify) → **2** build the virtualization primitives, PROVE ON FLATTENABLE OVERRIDES ITSELF (hardest
+shape — 2-level + group checkbox + remote sub-grouping — proves the simpler sections are a subset;
+also closes its own latent blank-row exposure) → **3** roll out to the single-level sections,
+risk-ordered: Missing Textures (documented real risk on huge files) → Duplicate Textures →
+Datablock Reconnect → Examine Library → the smaller ones → **4** retarget `_draw_report_detail`
+onto the existing `ASSETDOCTOR_UL_tree`/`rebuild_report_rows` mechanism instead of its own manual
+loop, closing the third duplicate tree-renderer.
+
+**Phase 1 DONE @ v0.2.93 (2026-06-27, pytest 475 green, NOT live-verified — Blender was already
+running a real user session, user chose to skip a headless smoke pass for now).**
+(1) **Toggle-op consolidation**: new `ASSETDOCTOR_OT_row_toggle` (`ops/report_store.py`) replaces
+all 8 — `report_toggle`, `toggle_inline_detail`, and the 6 bespoke per-section ones (deleted from
+`ops/linkchain.py`/`datablock_reconnect.py`/`datablock_dup.py`/`examine_library.py`/
+`image_relink.py`/`image_dedup.py`). Default `prop="assetdoctor_detail_expanded"` (the common
+case — the 9 inline-disclosure call sites needed no change beyond the idname); every dedicated-prop
+section now sets `.prop` explicitly at the call site. Adopted Flatten's area+region double-redraw
+(the 2026-06-27 "drill-down arrows stop responding" defensive fix) for every section, not just
+Flatten's. `rebuild_rows_for_prop`/`focus_row` hardened to no-op for any `prop` that isn't (yet) a
+virtualized collection — was a blanket `else: rebuild_report_rows(wm)`, which would have been
+WRONG once one op serves every section (it would silently rebuild/clobber the Reports tab's rows on
+an unrelated section's toggle). Removed a genuinely-dead unreachable code fragment found along the
+way in `report_store.py` (leftover from a prior deletion, sitting after an unconditional `return`).
+(2) **Shared `_draw_group_header()` helper** (`ui/panels.py`, next to `_draw_kept_separate`, which
+now also uses it): triangle + icon + label [+ optional `action(row)` callback for a trailing
+button] + optional `indent_factor`. Applied to 10 of the ~13 audited sections — Duplicate
+Data-blocks, Duplicate Textures (incl. its master-keeper button + alert styling), Missing Textures
+categories + its Linked-companion list + Possible Matches, Datablock Reconnect, Examine Library,
+Resolution Variants, Duplicate Library Paths, Absolute Paths, Orphans' fake-user/identical
+sub-lists. **Deliberately NOT touched**: `_draw_rig_group`/`_draw_flatten_candidates` (Flatten
+v2 — structurally different shape, IS Phase 2's prototype target, not worth reshaping twice) and
+`_draw_report_detail`'s inline tree disclosure (Phase 4's retarget target) and
+`_draw_material_dups`/`_draw_geo_dups` (flat lists, no grouping at all — never had this duplication).
+Zero visual/behavioral change intended throughout — verified by pytest (475 passed, same as before
+this phase) + a full-repo `py_compile` pass; **NEEDS a live-Blender registration + visual spot-check
+before Phase 2 starts** (deferred this session per the user's call).
+
+**NEXT SESSION: live-Blender confirm Phase 1, THEN Phase 2** (build the virtualization primitives,
+prove on Flattenable Overrides itself). Full detail in the plan file above — don't re-derive from
+scratch, read it first.
 
 ### Group 4 — Phase 4 Flatten UI polish (`ui/panels.py` + `ops/linkchain.py`)
 13. ~~Per-character checkboxes... "make local instead" checkbox...~~ **SUPERSEDED by Group 11

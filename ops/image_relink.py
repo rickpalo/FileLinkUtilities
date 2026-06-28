@@ -636,25 +636,6 @@ class ASSETDOCTOR_OT_accept_all_matches(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_tex_category_toggle(bpy.types.Operator):
-    """Expand/collapse one missing-texture category (folder or material group)."""
-
-    bl_idname = "assetdoctor.tex_category_toggle"
-    bl_label = "Expand/Collapse Category"
-    bl_options = {"INTERNAL"}
-
-    key: bpy.props.StringProperty()  # type: ignore[valid-type]
-
-    def execute(self, context):
-        wm = context.window_manager
-        keys = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
-        keys.discard(self.key) if self.key in keys else keys.add(self.key)
-        wm.assetdoctor_tex_expanded = "\n".join(sorted(keys))
-        if context.area:
-            context.area.tag_redraw()
-        return {"FINISHED"}
-
-
 class ASSETDOCTOR_OT_point_group_at_folder(FilePickerMixin, bpy.types.Operator):
     """Follow-up B1 — point a whole GROUP of missing textures at one folder and
     resolve every member by filename within it (directory-level relink). Groups are

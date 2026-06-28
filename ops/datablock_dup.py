@@ -201,20 +201,3 @@ class ASSETDOCTOR_OT_merge_datablock_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_datablock_category_toggle(bpy.types.Operator):
-    """Expand/collapse one KIND group in the Duplicate Data-blocks list."""
-
-    bl_idname = "assetdoctor.datablock_category_toggle"
-    bl_label = "Expand/Collapse Kind"
-    bl_options = {"INTERNAL"}
-
-    key: bpy.props.StringProperty()  # type: ignore[valid-type]
-
-    def execute(self, context):
-        wm = context.window_manager
-        keys = set(filter(None, wm.assetdoctor_datablock_expanded.split("\n")))
-        keys.discard(self.key) if self.key in keys else keys.add(self.key)
-        wm.assetdoctor_datablock_expanded = "\n".join(sorted(keys))
-        if context.area:
-            context.area.tag_redraw()
-        return {"FINISHED"}
