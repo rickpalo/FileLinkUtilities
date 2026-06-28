@@ -1,5 +1,12 @@
 # AssetDoctor — TODO / backlog
 
+## ⏩ NEXT SESSION: Group 3 leftovers (user's explicit pick, 2026-06-27, after v0.2.92 was
+## committed). See "Group 3 — Phase 3 panel restructuring" in the Consolidated Task List below
+## (items 11-12): progress-bar position needs the user's pick among 3 already-identified options;
+## UIList virtualization for the remaining manually-drawn report sections (Missing/Duplicate
+## Textures, Datablock Reconnect, Examine Library). Flatten v2 is committed but still imperfect
+## (see its own status block further down) — not the priority, don't resume unless asked.
+
 ## ✅ Phase 4 Apply (Flatten Link) safety investigation — RESOLVED 2026-06-26 (v0.2.69)
 
 `ops/linkchain.py::_flatten_rig` used to silently steal and corrupt another character's body/
@@ -1057,12 +1064,13 @@ another pre-existing gap noticed along the way.
 **NEEDS the user's live-Blender confirm** — the new button's placement/icon and real-world folder
 search timing (peeking many real files can be slow) are best judged interactively.
 
-## ⏩ NEXT SESSION STARTS HERE — read this block first, it supersedes earlier "NEXT SESSION" markers
-## further down (those are now history, kept for the detailed record).
+## Flatten v2 — paused mid live-test, items 10-13 still open (historical detail below)
 
-**STATUS: ON HOLD (user request, 2026-06-27) — paused mid live-test, NOT committed (working tree
-is v0.2.87, last real commit is still `41e7938` @ v0.2.84). Do not resume Flatten v2 work without
-the user explicitly picking it back up; next session was told to clean up OTHER backlog instead.**
+**STATUS: COMMITTED @ v0.2.92 (`03a3248`, 2026-06-27) along with the same session's Quick Fixes
+batch — the user explicitly accepted shipping it in this state ("doesn't work as desired, but is
+better than it has been... don't need to keep anything in Flatten V1"). Still has the same open
+gaps recorded below (items 10-13); not a "do not touch" hold anymore, just not the next priority —
+the user's own next-session pick is Group 3 leftovers (see the top of this file).**
 
 **Resume checklist, in priority order, when this DOES get picked back up again:**
 1. User was about to try making the People collections local (Blender's native Make Local, native
