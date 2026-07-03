@@ -1,13 +1,12 @@
 # AssetDoctor — TODO / backlog
 
-## ⏩ NEXT SESSION: Group 3 leftovers are CLOSED (2026-06-27) — #11 resolved (leave progress bar
-## where it is, no code), #12 superseded by **Group 12: generalize the "results section" UI**
-## (see Group 12 in the Consolidated Task List below; full plan at
-## `C:\Users\Rick\.claude\plans\graceful-wondering-steele.md`). **Group 12 Phase 1 is DONE @
-## v0.2.93** (toggle-op consolidation + shared group-header helper) but NOT yet live-verified —
-## do that FIRST, then start **Phase 2** (virtualization primitives, proven on Flattenable
-## Overrides). Flatten v2 is committed but still imperfect (see its own status block further
-## down) — not the priority, don't resume unless asked.
+## ⏩ NEXT SESSION: Group 12 Phase 2 DONE @ v0.2.95 (2026-07-03) — NOT yet live-verified.
+## **RESTART Blender** (not Reload Scripts — structural registration change), run Find
+## Flattenable Links on a file with multiple characters, confirm the UIList scrolls and
+## checkboxes/triangles still respond. Phases 1 (v0.2.93) and 2 are both pending live-verify.
+## After verify: **Phase 3** = roll virtualization out to single-level interactive sections
+## (Missing Textures first → Duplicate Textures → Datablock Reconnect → Examine Library).
+## Flatten v2 is committed but still imperfect — not the priority, don't resume unless asked.
 
 ## ✅ Datablock Reconnect "2 skipped" bug — ROOT-CAUSED + FIXED 2026-06-28 (uncommitted)
 
