@@ -9,6 +9,150 @@
 ## Overrides). Flatten v2 is committed but still imperfect (see its own status block further
 ## down) — not the priority, don't resume unless asked.
 
+## ✅ Datablock Reconnect "2 skipped" bug — ROOT-CAUSED + FIXED 2026-06-28 (uncommitted)
+
+Real user report against `human_bundle.blend`: Reconnect Selected said "Reconnected 0
+data-block(s) ... 2 skipped" for `Std_Tongue.026`/`Std_Upper_Teeth.026` even though Pick Source
+had correctly auto-suggested `Std_Tongue`/`Std_Upper_Teeth` from `materialMaster.blend`.
+Root-caused via a real headless probe against the production file (not guessed): this project's
+real files routinely have a LOCAL data-block sharing the exact same literal name as a
+linked-but-missing placeholder (here, a local `.026` from an unrelated local duplicate family,
+colliding by sheer coincidence with the stale-named linked placeholder).
+`ASSETDOCTOR_OT_reconnect_selected.execute()` looked the placeholder up via a bare
+`target_coll.get(row.name)` — ambiguous in this situation, and Blender's plain-name `.get()`
+silently returned the LOCAL (non-missing) one, so the code concluded "no longer a missing
+placeholder" and skipped it, even though the real placeholder was untouched and still
+resolvable. This is the SAME disease already documented in `env-blender-verification` memory
+(2026-06-25, `bpy.data.user_map` vs name-lookup) recurring in a spot that hadn't been fixed yet.
+**Fix:** use the documented `(name, library)` tuple form of `.get()` to disambiguate
+(`ops/datablock_reconnect.py`). New regression test `tests/smoke_datablock_reconnect.py` builds
+the exact collision via a real save/reopen round-trip and confirms reconnect now succeeds with
+zero skips; confirmed it FAILS against the pre-fix code (`git stash` check). pytest still 475
+green. **Committed together with the Find Duplicates crash fix below as v0.2.94.**
+
+**Three side-note TODOs from the same conversation, explicitly deferred (not built yet):**
+1. **Check Link Chain formatting:** the results-section titles are currently centered; should be
+   left-aligned / indentation standardized like the rest of the tree rows. Fix "next time we
+   modify Check Link Chain results."
+2. **Analyze Memory/Disk default state:** Groups/Sub-Groups should default to COLLAPSED (they
+   currently open expanded, screenshot showed the full Image (1389) breakdown open by default).
+   Fix "next time we modify Analyze Memory results."
+3. **Datablock Reconnect needs an explicit success/fail note IN the results section itself**, not
+   just the shared top-of-panel sticky banner (`assetdoctor_last_result`) — by the time a user
+   scrolls down to a specific sub-panel like Datablock Reconnect, the global banner up top is easy
+   to miss or misattribute to a different action. Likely the same fix is worth considering for
+   other sub-sections sharing the one sticky banner. Needs a design pass — see
+   [[feedback-suggest-better-designs]].
+
+## ✅ Find Duplicates CRASH root-caused + mitigated 2026-06-28 (v0.2.94)
+
+Real crash report from the user's live session on `human_bundle.blend` (crash log they
+retrieved from the networked machine: `human_bundle.crash2.txt`). Python backtrace (the
+authoritative section, present in the actual crash dump) pins it exactly:
+`ops/progress.py:137 modal` → `ops/analyze_all.py:65 run_steps` → `ops/analyze_all.py:27 _call`
+(invoking the Find Duplicates sub-operator) → `ops/progress.py:86 execute` →
+`ops/datablock_dup.py:135 run_steps` → `_gather_steps` → `_fingerprint_for` →
+`ops/extract.py::extract_shape_key` — a genuine `EXCEPTION_ACCESS_VIOLATION` (read @ null)
+inside CPython's own eval loop, i.e. a true native segfault, not a catchable Python exception
+(`_fingerprint_for` already wraps the call in `try/except Exception`, which is why that
+existing guard didn't help — a C-level access violation skips Python's exception machinery
+entirely and takes the whole process down).
+
+**Likely root cause (not yet proven with a minimal repro, but well-supported circumstantially):**
+`_gather_steps` only fingerprints LOCAL `.NNN`-family shape keys (`b.library is None`), and
+`extract_shape_key` reads `key.user` (owning Mesh) then iterates `kb.data` for every key block.
+`human_bundle.blend` has ALREADY-documented override/dependency LOOPS involving exactly this
+kind of data (this session's own Audit This File screenshot: `Dependency loop:
+Mesh/CC_Base_Body → Material/Std_Skin_Head.001 → Object/CC_Base_Body`) — a shape key whose
+owning mesh participates in one of these loops likely has a corrupted/dangling internal
+pointer that reads as a hard NULL when touched.
+
+**Why a try/except fix won't work:** access violations can't be caught in Python (same
+documented constraint as the `_populate_missing_blocks` re-peek crash risk, see
+[[env-blender-verification]]). The only real mitigation is AVOIDING the unsafe read in the
+first place. **User chose the cheap pre-filter option (not the heavier subprocess-isolation
+alternative — that's still on the table later if this doesn't fully solve it).**
+
+**BUILT (v0.2.94):** `ops/extract.py` gained `shape_key_risk_reason(key) -> str` — returns a
+human-readable reason ("owner mesh 'X' is a missing placeholder" / "... is a Library Override")
+or `""` if safe; `extract_shape_key` calls it and bails (returns `{}`) before touching `kb.data`
+when non-empty, reusing the EXACT signal `ops.datablock_inspect`'s Audit already trusts
+(`shape_key_risks`), not a new heuristic. `ops/datablock_dup.py::_fingerprint_for` gained a
+`skipped` out-param (mirrors `core.imagefamily.iter_resolve_group_in_dir`'s existing
+ambiguous/skipped_dirs out-param pattern) so the caller learns WHICH shape keys were skipped
+and why, instead of them silently vanishing into the generic "unverified" bucket — **user
+feedback mid-session: "should be notified... by name so the user can investigate."** New WM
+`assetdoctor_datablock_skipped_text` + a "Skipped — unsafe to read (N)" collapsible list in the
+Duplicate Data-blocks section (`_draw_kept_separate` generalized with an optional `label`/`icon`
+to render both that and the existing "kept separate" list); `scan_datablock_dups`'s closing
+report escalates to WARNING and names the skip count when any occurred. Two new smoke tests:
+`smoke_extract_shape_key.py` (the guard itself, via a REAL Library Override built through the
+normal link + `override_create()` round trip — confirmed the override mesh's shape key stays
+LOCAL even though its owner is an override, so it WOULD have reached the unsafe read pre-fix)
+and `smoke_datablock_dup_skip.py` (end-to-end: the override shape key is named in
+`assetdoctor_datablock_skipped_text` with "Override" in the reason, a sibling plain-local
+shape key in the same `.NNN` family is NOT). Both confirmed to fail against the pre-fix code.
+pytest 475 green throughout. **Residual risk, disclosed not hidden:** this targets the
+specific documented disease (override/missing-owner), not every conceivable corruption mode —
+if Find Duplicates ever crashes again on different data, the subprocess-isolation option is
+still the fallback. [[feedback-suggest-better-designs]]
+
+## ⚠ Real bloat pattern found 2026-06-28: orphaned LINKED datablock coexists with a LOCAL
+## same-name "made local" copy (newspaper object in PSM_Stage_v5.2.blend) — same disease
+## family as the Reconnect Selected bug above, one level up (objects, not just materials)
+
+User noticed (Outliner "newspaper" search) that the View Layer only shows an UNLINKED
+"newspaper", while the Blend File Outliner view shows a "newspaper" nested under
+`ThePiazzaSanMarco - People1_v5.1.blend`. Confirmed via direct offline BAT read of
+`PSM_Stage_v5.2.blend`'s raw block table: there is exactly ONE "OBnewspaper" block in the
+file, and it is LOCAL (`lib=None`) — NOT a linked ID placeholder. The linked "newspaper" the
+Outliner shows nested under People1 is content PSM_Stage pulls in transitively via linking
+People1.blend's collections (confirmed `human_bundle.blend` IS directly + indirectly linked
+into `PSM_Stage_v5.2.blend` — 101 datablocks direct, plus reachable again via the separate
+direct 7-datablock People1 link — matches the already-recorded 2026-06-24 multi-path finding).
+That linked "newspaper" (and its Mesh + Material + 4 textures: `Newspaper001_COL/GLOSS/NRM/
+REFL_2K.jpg`) is most likely an ORPHAN — pulled in because it's part of a linked Collection,
+but never actually placed into any of PSM_Stage's own scene collections (hence invisible in
+the View Layer search) — while the scene's REAL, visible newspaper is the local copy (likely
+created by an earlier Make Local pass on the original linked prop). **Real, measurable bloat:
+a full duplicate Mesh+Material+4×2K-texture set sitting unused.** Likely NOT unique to
+"newspaper" — probably a systemic pattern across this project's asset-prep history (anything
+that got "made local" once while the original linked source remained reachable). **Candidate
+new AssetDoctor feature: detect "local datablock whose name/identity shadows a linked-but-
+unplaced-in-scene datablock of the same family" as a new bloat-finding category** — distinct
+from the existing Duplicate Data-blocks tool (same name, but one side is LOCAL+visible, the
+other LINKED+orphaned, not two same-type local family members). **NEEDS DESIGN — discuss with
+the user before building** (how to detect "unplaced in scene" cheaply at scale; whether removing
+the orphan is safe to automate or report-only).
+
+## ✅ human_bundle "missing link from People1" — NOT a bug, scope/direction mismatch (2026-06-28)
+
+User saw, in PSM_Stage's native Outliner Blend File view, `human_bundle.blend` apparently
+nested with `ThePiazzaSanMarco - People1_v5.1.blend` nearby, and asked why AssetDoctor's Check
+Link Chain (run with `human_bundle.blend` itself as the current file) didn't show this.
+Confirmed via direct offline BAT read: `human_bundle.blend`'s OWN file genuinely links exactly
+ONE library (`materialMaster.blend`, 97 datablocks) — it has ZERO reference to People1.
+Already-recorded 2026-06-24 finding (this memory file) independently confirms `PSM_Stage`
+links `human_bundle.blend` BOTH directly AND via `People1.blend` (a real verified 2-hop
+diamond). Check Link Chain scoped to `human_bundle.blend` can only ever show what
+human_bundle ITSELF links forward (materialMaster) — it structurally cannot show an INBOUND
+link from People1, since that's the reverse direction from a different root. `core.depscan.
+_build_file_map`'s recursion (keyed by each file's own `scan.refs`, not the lossy single-
+parent BFS `scan.parents`) WOULD render human_bundle nested under People1 too, if Check Link
+Chain is run with PSM_Stage (not human_bundle) as the scanned root.
+
+**CONFIRMED with real data, same day.** Ran `core.depscan.scan_recursive` from
+`PSM_Stage_v5.2.blend` for real (174-242s). PSM_Stage's own direct refs DO include
+`//ThePiazzaSanMarco - People1_v5.1.blend`, and the tree correctly renders it as a `[missing]`
+leaf — its resolved path simply doesn't exist on disk on this machine right now (same Synology
+sync churn that evicted `PSM_Stage_v5.1.blend` mid-session almost certainly relocated/evicted
+this file too). Since it's unreachable, the scan can't recurse into it, so the exact
+"human_bundle via People1" path the user's live session showed (where the file presumably
+still resolves) can't be reproduced offline here — but the underlying multi-path tree mechanism
+IS confirmed working: human_bundle legitimately renders via 2 other real paths
+(`/PSM_Stage_v5.2/Asset_bundle/human_bundle` and `/PSM_Stage_v5.2/human_bundle` directly).
+**Not a Check Link Chain bug, full stop — closed.**
+
 ## ✅ Phase 4 Apply (Flatten Link) safety investigation — RESOLVED 2026-06-26 (v0.2.69)
 
 `ops/linkchain.py::_flatten_rig` used to silently steal and corrupt another character's body/

@@ -225,6 +225,7 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_datablock_removable = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_datablock_conflicts = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_datablock_conflicts_text = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.assetdoctor_datablock_skipped_text = bpy.props.StringProperty(default="")
     bpy.types.WindowManager.assetdoctor_datablock_expanded = bpy.props.StringProperty(default="")
 
     # F3 reformat (user feedback, 2026-06-25): Find Duplicate Materials gets the
@@ -380,6 +381,7 @@ def unregister() -> None:
                 "assetdoctor_datablock_families", "assetdoctor_datablock_index",
                 "assetdoctor_datablock_scanned", "assetdoctor_datablock_removable",
                 "assetdoctor_datablock_conflicts", "assetdoctor_datablock_conflicts_text",
+                "assetdoctor_datablock_skipped_text",
                 "assetdoctor_datablock_expanded",
                 "assetdoctor_mat_families", "assetdoctor_mat_index",
                 "assetdoctor_mat_scanned", "assetdoctor_mat_removable",

@@ -125,13 +125,42 @@ def extract_action(action) -> dict:
     return {"fcurves": fcurves}
 
 
+def shape_key_risk_reason(key) -> str:
+    """Why :func:`extract_shape_key` would refuse to read ``key``'s per-vertex
+    data, or ``""`` if there's no known risk. A missing or Library-Override
+    owner is the documented "KEKey... not linkable, flagged as directly
+    linked" disease (a shape key can never be its own override, only
+    inherited via its owner) — `ops.datablock_inspect`'s Audit already flags
+    exactly this combination as `shape_key_risks` without ever reading
+    `kb.data` on it. Real crash (EXCEPTION_ACCESS_VIOLATION, 2026-06-28,
+    human_bundle.blend via Find Duplicates) traced to `extract_shape_key`
+    reading shape-key vertex data on a file with known override/dependency
+    loops touching shape-keyed meshes; a native access violation can't be
+    caught with try/except, so the only real mitigation is never touching
+    the risky data in the first place. Split out from `extract_shape_key`
+    itself so callers can report WHICH shape keys got skipped and why,
+    instead of silently dropping them (user 2026-06-28: needs to be visible
+    by name so they can investigate the underlying file corruption)."""
+    owner = key.user
+    if not isinstance(owner, bpy.types.Mesh):
+        return ""
+    if getattr(owner, "is_missing", False):
+        return f"owner mesh {owner.name!r} is a missing placeholder"
+    if getattr(owner, "override_library", None) is not None:
+        return f"owner mesh {owner.name!r} is a Library Override"
+    return ""
+
+
 def extract_shape_key(key) -> dict:
     """Walk a bpy Key (shape-key) datablock into a core.fingerprint
     shape_key_dict. Returns ``{}`` ('unverified', no safe identity check
-    possible) when the owner isn't a Mesh — Curve/Lattice shape keys are
-    rarer in practice and not yet covered."""
+    possible) when the owner isn't a Mesh (Curve/Lattice shape keys are rarer
+    in practice and not yet covered) or :func:`shape_key_risk_reason` flags it
+    as unsafe to read."""
     owner = key.user
     if not isinstance(owner, bpy.types.Mesh):
+        return {}
+    if shape_key_risk_reason(key):
         return {}
     blocks = [{"name": kb.name, "co": [list(p.co) for p in kb.data]}
               for kb in key.key_blocks]

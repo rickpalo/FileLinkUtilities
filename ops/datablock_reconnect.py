@@ -304,7 +304,17 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
 
             for row in rows:
                 target_coll = getattr(bpy.data, row.collection, None)
-                placeholder = target_coll.get(row.name) if target_coll is not None else None
+                # A bare name lookup (`target_coll.get(row.name)`) is ambiguous: this
+                # project's real files routinely have a LOCAL data-block sharing the
+                # exact same name as the linked-but-missing placeholder (e.g. a local
+                # "Std_Tongue.026" alongside the linked placeholder of the same name),
+                # and Blender's plain-name `.get()` silently returns the wrong one (the
+                # local, non-missing one), making every row look "already resolved" —
+                # confirmed via a real headless probe against human_bundle.blend
+                # (2026-06-28). The (name, library) tuple form is the documented way to
+                # disambiguate ID lookups by library.
+                placeholder = (target_coll.get((row.name, row.library))
+                                if target_coll is not None else None)
                 if placeholder is None or not getattr(placeholder, "is_missing", False):
                     warnings.append(f"{row.name}: no longer a missing placeholder, skipped")
                     continue

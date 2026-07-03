@@ -43,9 +43,16 @@ _GENERIC_COLLECTIONS = [(label, attr) for label, attr in _COLLECTIONS if attr no
 _LABEL_BY_ATTR = dict((attr, label) for label, attr in _COLLECTIONS)
 
 
-def _fingerprint_for(attr: str, block) -> str:
+def _fingerprint_for(attr: str, block, skipped: list[tuple[str, str]]) -> str:
     """Content fingerprint for one datablock, or ``""`` if this type has none yet
-    (lands as an "unverified" conflict — never silently merged)."""
+    (lands as an "unverified" conflict — never silently merged). ``skipped``
+    is an out-param (mirrors `core.imagefamily.iter_resolve_group_in_dir`'s
+    own ambiguous/skipped_dirs out-params — same reasoning: avoid reshaping
+    this function's return just to carry one extra, rare case): appended to
+    with ``(name, reason)`` whenever a block was deliberately NOT read because
+    doing so risks a native crash (see `extract.shape_key_risk_reason`), so
+    the caller can surface WHICH ones by name instead of silently dropping
+    them into the generic "unverified" bucket."""
     if attr == "actions":
         from .extract import extract_action
         from ..core.fingerprint import fingerprint_action
@@ -55,9 +62,13 @@ def _fingerprint_for(attr: str, block) -> str:
         except Exception:
             return ""
     if attr == "shape_keys":
-        from .extract import extract_shape_key
+        from .extract import extract_shape_key, shape_key_risk_reason
         from ..core.fingerprint import fingerprint_shape_key
 
+        reason = shape_key_risk_reason(block)
+        if reason:
+            skipped.append((block.name, reason))
+            return ""
         try:
             return fingerprint_shape_key(extract_shape_key(block))
         except Exception:
@@ -68,12 +79,15 @@ def _fingerprint_for(attr: str, block) -> str:
 def _gather_steps(context):
     """Fingerprint every LOCAL ``.NNN``-family member across the in-scope
     collections, yielding ``(fraction, status)`` per collection. Returns
-    ``(members, id_by_key)`` (via the generator's value) — ``members`` use
-    ``"{attr}:{name}"`` as their :class:`core.datablock_dedup.MemberInfo` name so
-    one ``plan_merges`` call naturally keeps each type's families separate
-    (the attr prefix survives ``.NNN``-suffix stripping)."""
+    ``(members, id_by_key, skipped)`` (via the generator's value) — ``members``
+    use ``"{attr}:{name}"`` as their :class:`core.datablock_dedup.MemberInfo`
+    name so one ``plan_merges`` call naturally keeps each type's families
+    separate (the attr prefix survives ``.NNN``-suffix stripping); ``skipped``
+    is every ``(name, reason)`` a type's fingerprinter refused to read
+    safely (currently only shape keys)."""
     members: list[dd.MemberInfo] = []
     id_by_key: dict[tuple[str, str], object] = {}
+    skipped: list[tuple[str, str]] = []
     total = len(_GENERIC_COLLECTIONS) or 1
     for i, (label, attr) in enumerate(_GENERIC_COLLECTIONS):
         coll = getattr(bpy.data, attr, None)
@@ -85,15 +99,16 @@ def _gather_steps(context):
                 continue
             id_by_key[(attr, block.name)] = block
             members.append(dd.MemberInfo(name=f"{attr}:{block.name}",
-                                         fingerprint=_fingerprint_for(attr, block),
+                                         fingerprint=_fingerprint_for(attr, block, skipped),
                                          users=block.users))
         yield ((i + 1) / total, f"Scanning {label} ({len(family_names)} in families)…")
-    return members, id_by_key
+    return members, id_by_key, skipped
 
 
-def _populate_datablock_families(context, plans, conflicts) -> None:
+def _populate_datablock_families(context, plans, conflicts, skipped) -> None:
     """Refill ``assetdoctor_datablock_families`` (one row per merge-plan family,
-    grouped by KIND in the panel) + the summary counts + the conflict-list text."""
+    grouped by KIND in the panel) + the summary counts + the conflict-list and
+    skipped-list text."""
     wm = context.window_manager
     coll = wm.assetdoctor_datablock_families
     coll.clear()
@@ -118,6 +133,9 @@ def _populate_datablock_families(context, plans, conflicts) -> None:
         lines.append(f"{_LABEL_BY_ATTR.get(attr, attr)}: {base} — {c.reason} ({', '.join(names)})")
     wm.assetdoctor_datablock_conflicts_text = "\n".join(lines)
 
+    wm.assetdoctor_datablock_skipped_text = "\n".join(
+        f"Shape Key: {name} — not read, {reason}" for name, reason in skipped)
+
 
 class ASSETDOCTOR_OT_scan_datablock_dups(ModalProgressMixin, bpy.types.Operator):
     bl_idname = "assetdoctor.scan_datablock_dups"
@@ -132,17 +150,19 @@ class ASSETDOCTOR_OT_scan_datablock_dups(ModalProgressMixin, bpy.types.Operator)
     bl_options = {"REGISTER"}
 
     def run_steps(self, context):
-        members, _id_by_key = yield from _gather_steps(context)
+        members, _id_by_key, skipped = yield from _gather_steps(context)
         yield (0.95, "Building merge plan…")
         plans, conflicts = dd.plan_merges(members)
-        _populate_datablock_families(context, plans, conflicts)
+        _populate_datablock_families(context, plans, conflicts, skipped)
         wm = context.window_manager
         wm.assetdoctor_datablock_scanned = True
         yield (1.0, "Done")
         n = dd.removable_count(plans)
-        if plans or conflicts:
-            self.report({"INFO"}, f"{len(plans)} merge group(s); ~{n} removable; "
-                        f"{len(conflicts)} differing/unverified")
+        tail = f"; {len(skipped)} shape key(s) skipped, unsafe to read (see below)" if skipped else ""
+        if plans or conflicts or skipped:
+            self.report({"WARNING"} if skipped else {"INFO"},
+                        f"{len(plans)} merge group(s); ~{n} removable; "
+                        f"{len(conflicts)} differing/unverified{tail}")
         else:
             self.report({"INFO"}, "✓ No duplicate data-blocks found")
 

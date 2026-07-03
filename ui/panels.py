@@ -909,14 +909,17 @@ def _datablock_dups_headline(wm) -> str:
     scanned = wm.assetdoctor_datablock_scanned
     removable = wm.assetdoctor_datablock_removable
     conflicts = wm.assetdoctor_datablock_conflicts
+    skipped = len([ln for ln in wm.assetdoctor_datablock_skipped_text.split("\n") if ln])
     if not scanned:
         return ""
-    if not len(families) and not conflicts:
+    if not len(families) and not conflicts and not skipped:
         return "Data-blocks — ✓ none found"
     kinds = len({row.kind for row in families})
     bits = [f"{kinds} kind(s)", f"{removable} removable"]
     if conflicts:
         bits.append(f"{conflicts} kept separate")
+    if skipped:
+        bits.append(f"{skipped} skipped")
     return "Data-blocks — " + ", ".join(bits)
 
 
@@ -1705,7 +1708,8 @@ def _draw_group_header(layout, *, key: str, prop: str, is_exp: bool, label: str,
     return row
 
 
-def _draw_kept_separate(layout, wm, key: str, conflict_lines: list[str]) -> None:
+def _draw_kept_separate(layout, wm, key: str, conflict_lines: list[str], *,
+                        label: str | None = None, icon: str = "QUESTION") -> None:
     """Collapsible "kept separate" sub-list, shared by every Find Duplicates
     type section (docs/TODO.md #16, 2026-06-27): a name-family matched on
     naming but not content, so it was never merged/instanced/remapped —
@@ -1713,14 +1717,16 @@ def _draw_kept_separate(layout, wm, key: str, conflict_lines: list[str]) -> None
     the one shared inline-detail toggle (``assetdoctor.row_toggle``
     / ``assetdoctor_detail_expanded``) like every other inline disclosure in
     this panel; ``key`` already embeds its own section tag so it can't
-    collide with another section's."""
+    collide with another section's. ``label``/``icon`` let a caller reuse this
+    same collapsible-list widget for a differently-worded case (e.g. "skipped,
+    unsafe to read" rather than "kept separate, content differs")."""
     if not conflict_lines:
         return
     expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
     is_exp = key in expanded
     _draw_group_header(layout, key=key, prop="assetdoctor_detail_expanded", is_exp=is_exp,
-                       label=f"Kept separate — name matches, content differs ({len(conflict_lines)})",
-                       icon="QUESTION")
+                       label=label or f"Kept separate — name matches, content differs ({len(conflict_lines)})",
+                       icon=icon)
     if is_exp:
         for ln in conflict_lines:
             r = layout.row(align=True)
@@ -1740,7 +1746,8 @@ def _draw_datablock_dups(layout, wm) -> None:
         return
     conflicts = wm.assetdoctor_datablock_conflicts
     layout.label(text=_datablock_dups_headline(wm), icon="LIBRARY_DATA_OVERRIDE")
-    if not (len(families) or conflicts):
+    has_skipped = bool(wm.assetdoctor_datablock_skipped_text)
+    if not (len(families) or conflicts or has_skipped):
         return
     if len(families):
         layout.operator("assetdoctor.merge_datablock_selected",
@@ -1773,6 +1780,10 @@ def _draw_datablock_dups(layout, wm) -> None:
 
     conflict_lines = [ln for ln in wm.assetdoctor_datablock_conflicts_text.split("\n") if ln]
     _draw_kept_separate(layout, wm, "dupdb:conflicts", conflict_lines)
+
+    skipped_lines = [ln for ln in wm.assetdoctor_datablock_skipped_text.split("\n") if ln]
+    _draw_kept_separate(layout, wm, "dupdb:skipped", skipped_lines,
+                        label=f"Skipped — unsafe to read ({len(skipped_lines)})", icon="ERROR")
 
 
 def _res_variants_headline(wm) -> str:
