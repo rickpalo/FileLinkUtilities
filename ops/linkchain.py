@@ -215,6 +215,98 @@ def _live_override_reference(obj) -> linkchain.OverrideReference | None:
     return linkchain.OverrideReference(name=ref.name, kind=type(ref).__name__, library=lib_path)
 
 
+def _flatten_group_sort_key(rig: str, members) -> tuple:
+    """Ready-first / rig-first sort for the Flattenable Overrides picker.
+    Moved from ui/panels.py (Group 12 Phase 2) so rebuild_flatten_picker_rows
+    can use it without a ui→ops import."""
+    is_rig = members[0].is_rig if members else False
+    is_remote = members[0].is_remote if members else False
+    ready = sum(1 for m in members if m.ready)
+    if ready == len(members) and ready > 0:
+        readiness = 0
+    elif ready > 0:
+        readiness = 1
+    else:
+        readiness = 2
+    tier = 0 if is_rig else (2 if is_remote else 1)
+    return (tier, readiness, rig.lower())
+
+
+def rebuild_flatten_picker_rows(wm) -> None:
+    """Rebuild ``wm.assetdoctor_flatten_picker_rows`` from the current
+    candidates + expand/deselect state.
+
+    Called after ``scan_flatten_candidates``, ``evaluate_selected``,
+    ``flatten_selected``, ``flatten_group_select_all``, and via
+    ``ops.report_store.rebuild_rows_for_prop`` whenever the user toggles
+    ``assetdoctor_flatten_expanded`` or ``assetdoctor_flatten_deselected``
+    through the shared ``assetdoctor.row_toggle`` operator."""
+    from ..core import picker as picker_mod
+    from .report_store import get_expanded
+
+    coll = wm.assetdoctor_flatten_candidates
+    if not len(coll):
+        wm.assetdoctor_flatten_picker_rows.clear()
+        return
+
+    cached = json.loads(wm.assetdoctor_flatten_plans_json or "{}")
+    expanded = get_expanded(wm, "assetdoctor_flatten_expanded")
+    deselected = get_expanded(wm, "assetdoctor_flatten_deselected")
+
+    groups: dict[str, list[picker_mod.MemberData]] = {}
+    order: list[str] = []
+    outer_order: list[str] = []
+    outer_children: dict[str, list[str]] = {}
+
+    for i, row in enumerate(coll):
+        if row.rig not in groups:
+            groups[row.rig] = []
+            if row.group_parent:
+                if row.group_parent not in outer_children:
+                    outer_children[row.group_parent] = []
+                    outer_order.append(row.group_parent)
+                outer_children[row.group_parent].append(row.rig)
+            else:
+                order.append(row.rig)
+        groups[row.rig].append(picker_mod.MemberData(
+            name=row.name, status=row.status, ready=row.ready, done=row.done,
+            is_remote=row.is_remote, is_rig=row.is_rig, ref_index=i,
+        ))
+
+    rollups: dict[str, str] = {}
+    for rig, members in groups.items():
+        plans = [linkchain.flatten_plan_from_dict(cached[m.name])
+                 for m in members if m.name in cached]
+        if plans:
+            rollups[rig] = linkchain.build_rig_rollup(plans)
+
+    picker_rows = picker_mod.flatten_picker_rows(
+        groups=groups,
+        order=sorted(order, key=lambda r: _flatten_group_sort_key(r, groups[r])),
+        outer_order=sorted(outer_order),
+        outer_children={gp: sorted(ch, key=lambda r: _flatten_group_sort_key(r, groups[r]))
+                        for gp, ch in outer_children.items()},
+        expanded=expanded,
+        deselected=deselected,
+        rollups=rollups,
+    )
+
+    picker_coll = wm.assetdoctor_flatten_picker_rows
+    picker_coll.clear()
+    for pr in picker_rows:
+        item = picker_coll.add()
+        item.kind = pr.kind
+        item.key = pr.key
+        item.group_key = pr.group_key
+        item.children_keys = pr.children_keys
+        item.ref_index = pr.ref_index
+        item.indent = pr.indent
+        item.label = pr.label
+        item.icon = pr.icon
+        item.checkbox_state = pr.checkbox_state
+        item.is_expanded = pr.is_expanded
+
+
 class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
     """Find every override-with-transform character and cache a plan for each
     (cheap — no disk I/O, just RNA reads), so the user can pick ONE row in the
@@ -347,6 +439,7 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
             rigs = len({r.rig for r in coll})
             self.report({"INFO"}, f"Found {len(coll)} override part(s) across {rigs} group(s) "
                                    f"({remote_count} remote)")
+        rebuild_flatten_picker_rows(wm)
         return {"FINISHED"}
 
 
@@ -803,6 +896,7 @@ class ASSETDOCTOR_OT_evaluate_selected(ModalProgressMixin, bpy.types.Operator):
                                message=f"Object/{r.object_name}: {r.message}",
                                severity="warning", items=[f"Object/{r.object_name}"]))
         stash_report(context, report, "f7flatten")
+        rebuild_flatten_picker_rows(context.window_manager)
 
         ready, total = len(plans), len(members)
         yield (1.0, "Done")
@@ -906,6 +1000,7 @@ class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
 
         report = linkchain.build_flatten_apply_report("Selected", results)
         stash_report(context, report, "f7flatten")
+        rebuild_flatten_picker_rows(context.window_manager)
         yield (1.0, "Done")
         level = "INFO" if ok == len(results) else "WARNING"
         self.report({level}, f"Flattened {ok}/{len(results)} part(s). Save to persist.")
@@ -933,6 +1028,7 @@ class ASSETDOCTOR_OT_flatten_group_select_all(bpy.types.Operator):
         else:
             deselected.difference_update(children)
         wm.assetdoctor_flatten_deselected = "\n".join(sorted(deselected))
+        rebuild_flatten_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()
         if context.region:

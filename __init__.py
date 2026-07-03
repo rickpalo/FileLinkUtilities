@@ -135,7 +135,7 @@ def register() -> None:
                             ASSETDOCTOR_PG_examine_row, ASSETDOCTOR_PG_flatten_candidate,
                             ASSETDOCTOR_PG_geo_family, ASSETDOCTOR_PG_material_family,
                             ASSETDOCTOR_PG_missing_block, ASSETDOCTOR_PG_orphan_row,
-                            ASSETDOCTOR_PG_tree_row)
+                            ASSETDOCTOR_PG_picker_row, ASSETDOCTOR_PG_tree_row)
 
     bpy.types.WindowManager.assetdoctor_report_rows = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_tree_row)
@@ -291,6 +291,11 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_flatten_candidates = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_flatten_candidate)
     bpy.types.WindowManager.assetdoctor_flatten_index = bpy.props.IntProperty(default=0)
+    # Group 12 Phase 2: virtualized picker rows (rebuilt by ops.linkchain.
+    # rebuild_flatten_picker_rows after every scan/toggle/evaluate/flatten).
+    bpy.types.WindowManager.assetdoctor_flatten_picker_rows = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_picker_row)
+    bpy.types.WindowManager.assetdoctor_flatten_picker_active = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_flatten_plans_json = bpy.props.StringProperty(default="")
     # Full per-file object hierarchy census (core.linkchain.posing_list_to_dict),
     # cached by Find Flattenable Link Chains so the picker can resolve each
@@ -397,6 +402,7 @@ def unregister() -> None:
                 "assetdoctor_examine_scanned", "assetdoctor_examine_expanded",
                 "assetdoctor_analyze_steps", "assetdoctor_analyze_index",
                 "assetdoctor_flatten_candidates", "assetdoctor_flatten_index",
+                "assetdoctor_flatten_picker_rows", "assetdoctor_flatten_picker_active",
                 "assetdoctor_flatten_plans_json", "assetdoctor_flatten_hierarchy_json",
                 "assetdoctor_flatten_expanded",
                 "assetdoctor_flatten_remote_note", "assetdoctor_flatten_deselected",

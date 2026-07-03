@@ -209,6 +209,31 @@ class ASSETDOCTOR_PG_flatten_candidate(bpy.types.PropertyGroup):
     group_parent: bpy.props.StringProperty()  # type: ignore[valid-type]
 
 
+class ASSETDOCTOR_PG_picker_row(bpy.types.PropertyGroup):
+    """One row in the flat virtualized picker list (Group 12 Phase 2).
+
+    ``kind`` selects the row shape in ``ASSETDOCTOR_UL_flatten_picker.draw_item``:
+    - "outer"  — remote donor-file header (select-all checkbox + triangle + label)
+    - "group"  — one rig/character group (done-checkmark OR checkbox + triangle + label)
+    - "rollup" — the combined property summary under an expanded group (INFO icon + text)
+    - "member" — one individual flatten candidate; ``ref_index`` points into the
+                 real ``wm.assetdoctor_flatten_candidates`` collection so edits land
+                 on live data with no sync step.
+    ``checkbox_state`` is pre-computed at rebuild time so ``draw_item`` never has
+    to parse the full newline-joined deselected/done string-sets on every redraw."""
+
+    kind: bpy.props.StringProperty()           # type: ignore[valid-type]
+    key: bpy.props.StringProperty()            # toggle/action key  # type: ignore[valid-type]
+    group_key: bpy.props.StringProperty()      # parent group (member + nested-group rows)  # type: ignore[valid-type]
+    children_keys: bpy.props.StringProperty()  # newline-joined child rig keys (outer rows)  # type: ignore[valid-type]
+    ref_index: bpy.props.IntProperty(default=-1)  # index into real candidates collection  # type: ignore[valid-type]
+    indent: bpy.props.IntProperty(default=0)   # type: ignore[valid-type]
+    label: bpy.props.StringProperty()          # type: ignore[valid-type]
+    icon: bpy.props.StringProperty()           # type: ignore[valid-type]
+    checkbox_state: bpy.props.StringProperty()  # "none"|"checked"|"unchecked"|"done"  # type: ignore[valid-type]
+    is_expanded: bpy.props.BoolProperty()      # type: ignore[valid-type]
+
+
 class ASSETDOCTOR_PG_broken_lib(bpy.types.PropertyGroup):
     """One broken/missing library link, for the per-link relink list (F7).
 
@@ -522,6 +547,62 @@ class ASSETDOCTOR_UL_broken_libs(bpy.types.UIList):
         else:
             target.label(text="no match — pick a file", icon="QUESTION")
         row.operator("assetdoctor.relink_pick_file", text="", icon="FILEBROWSER").index = index
+
+
+class ASSETDOCTOR_UL_flatten_picker(bpy.types.UIList):
+    """Virtualized picker for the Flattenable Overrides section (Group 12 Phase 2).
+
+    Renders from ``wm.assetdoctor_flatten_picker_rows`` (rebuilt by
+    ``ops.linkchain.rebuild_flatten_picker_rows`` after scan/toggle/evaluate/flatten).
+    Four row shapes handled in ``draw_item`` via ``item.kind``; all state (expanded,
+    deselected, done) is pre-baked into the row at rebuild time so this draw path
+    stays pure read-only — no per-redraw string-set parsing."""
+
+    bl_idname = "ASSETDOCTOR_UL_flatten_picker"
+
+    def draw_item(self, context, layout, data, item, icon,
+                  active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.label or "—")
+            return
+
+        row = layout.row(align=True)
+        if item.indent:
+            row.separator(factor=float(item.indent) * 1.5)
+
+        if item.kind == "outer":
+            gop = row.operator("assetdoctor.flatten_group_select_all", text="",
+                               icon=("CHECKBOX_HLT" if item.checkbox_state == "checked"
+                                     else "CHECKBOX_DEHLT"),
+                               emboss=False)
+            gop.keys = item.children_keys
+            tog = row.operator("assetdoctor.row_toggle", text="",
+                               icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
+                               emboss=False)
+            tog.key, tog.prop = item.key, "assetdoctor_flatten_expanded"
+            row.label(text=item.label, icon=item.icon)
+
+        elif item.kind == "group":
+            if item.checkbox_state == "done":
+                row.label(text="", icon="CHECKMARK")
+            else:
+                cop = row.operator("assetdoctor.row_toggle", text="",
+                                   icon=("CHECKBOX_HLT" if item.checkbox_state == "checked"
+                                         else "CHECKBOX_DEHLT"),
+                                   emboss=False)
+                cop.key, cop.prop = item.key, "assetdoctor_flatten_deselected"
+            tog = row.operator("assetdoctor.row_toggle", text="",
+                               icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
+                               emboss=False)
+            tog.key, tog.prop = item.key, "assetdoctor_flatten_expanded"
+            row.label(text=item.label, icon=item.icon)
+
+        elif item.kind == "rollup":
+            row.label(text=item.label, icon="INFO")
+
+        elif item.kind == "member":
+            row.label(text=item.label, icon=item.icon)
 
 
 class _SceneFeaturePanel:
@@ -1096,27 +1177,6 @@ def _analyze_row(layout, wm, step_key, opname, text, icon, summary="", has_run=N
     return op
 
 
-def _flatten_group_sort_key(rig: str, members: list) -> tuple:
-    """2026-06-26 (docs/TODO.md #41): lead with real characters you CAN
-    flatten, not an alphabetical shuffle. Primary tier: real ARMATURE-rooted
-    rigs, then standalone overrides (grouped by object type since 2026-06-27,
-    docs/TODO.md Group 11 #47), then remote-sourced groups last (their
-    readiness is unknown until Flatten Selected actually harvests them, so
-    they're the least immediately actionable). Secondary: fully-ready
-    groups, then partially-ready, then fully-blocked. Tertiary: alphabetical,
-    so the order is still stable/predictable within a tier."""
-    is_rig = members[0].is_rig if members else False
-    is_remote = members[0].is_remote if members else False
-    ready = sum(1 for m in members if m.ready)
-    if ready == len(members) and ready > 0:
-        readiness = 0
-    elif ready > 0:
-        readiness = 1
-    else:
-        readiness = 2
-    tier = 0 if is_rig else (2 if is_remote else 1)
-    return (tier, readiness, rig.lower())
-
 
 def _flattenable_overrides_summary(wm) -> str:
     """The "Flattenable overrides" subgroup's own live outcome line —
@@ -1130,170 +1190,49 @@ def _flattenable_overrides_summary(wm) -> str:
     return f"Flattenable overrides — {total} original, {done} flattened, {failed} failed"
 
 
-def _draw_rig_group(box, linkchain, cached, expanded, deselected, rig: str, members: list,
-                    indent: int = 0) -> None:
-    """One rig/character/standalone-type group's row + (if expanded) its
-    rollup and per-member rows. Factored out of :func:`_draw_flatten_candidates`
-    2026-06-27 so the SAME drawing logic serves both the flat local groups and
-    the nested per-character groups under a remote donor-file header
-    (``indent=1``). ``rig``'s display label strips a remote row's
-    ``"<file> :: <character>"`` uniqueness prefix — the donor file is already
-    named on the outer header it's nested under."""
-    plans = [linkchain.flatten_plan_from_dict(cached[m.name]) for m in members if m.name in cached]
-    ready = sum(1 for m in members if m.ready)
-    is_rig = members[0].is_rig
-    is_remote = members[0].is_remote
-    is_exp = rig in expanded
-    is_checked = rig not in deselected
-    is_done = all(m.done for m in members)  # fully flattened already this session
-    label = rig.split(" :: ", 1)[-1] if " :: " in rig else rig
-
-    crow = box.row(align=True)
-    if indent:
-        crow.separator(factor=1.0 * indent)
-    if is_done:
-        # 2026-06-27 user feedback: once every part of a group is actually
-        # flattened (not just evaluated-ready), it's no longer a selectable
-        # candidate -- leave it in place (simpler than moving it to a new
-        # "Successfully Flattened" subgroup) but swap its checkbox for a
-        # plain checkmark so it reads as done, not actionable.
-        crow.label(text="", icon="CHECKMARK")
-    else:
-        cop = crow.operator("assetdoctor.row_toggle", text="",
-                            icon="CHECKBOX_HLT" if is_checked else "CHECKBOX_DEHLT", emboss=False)
-        cop.key, cop.prop = rig, "assetdoctor_flatten_deselected"
-    top = crow.operator("assetdoctor.row_toggle", text="",
-                        icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-    top.key, top.prop = rig, "assetdoctor_flatten_expanded"
-    group_icon = "ARMATURE_DATA" if is_rig else ("LINKED" if is_remote else "OBJECT_DATA")
-    if is_done:
-        crow.label(text=f"{label}  ({len(members)} part(s) flattened)", icon=group_icon)
-    elif is_remote:
-        crow.label(text=f"{label}  ({len(members)} part(s), remote)", icon=group_icon)
-    else:
-        crow.label(text=f"{label}  ({ready}/{len(members)} part(s) ready)", icon=group_icon)
-    if not is_exp:
-        return
-    if plans:
-        rollup = box.row(align=True)
-        rollup.separator(factor=2.0 + indent * 1.0)
-        rollup.label(text=linkchain.build_rig_rollup(plans), icon="INFO")
-    for m in members:
-        # `m.status` already holds the blocking REASON (the matching
-        # FlattenPlan's warnings — "no override properties found to
-        # replay", etc.) whenever not ready, set in
-        # ops.linkchain.scan_flatten_candidates; ERROR (was QUESTION,
-        # 2026-06-26) reads as "blocked, here's why" instead of "unknown".
-        # A remote member is neither ready nor blocked yet — QUESTION,
-        # genuinely unknown until Evaluate/Flatten Selected harvests it.
-        mrow = box.row(align=True)
-        mrow.separator(factor=3.0 + indent * 1.0)
-        icon = "CHECKMARK" if m.ready else ("QUESTION" if m.is_remote else "ERROR")
-        mrow.label(text=f"{m.name}  —  {m.status}", icon=icon)
-
 
 def _draw_flatten_candidates(layout, wm):
-    """Phase 4-B picker, grouped by ARMATURE/rig (user feedback, 2026-06-25:
-    present everything in terms of the rig, with body/eyes/clothes rolled up
-    underneath). Each rig's combined replay rollup (core.linkchain.
-    build_rig_rollup) shows directly below its own row — no separate report
-    tab needed to judge whether flattening one is worth it.
+    """Phase 4-B picker (Group 12 Phase 2 — now virtualized via UIList).
 
-    Sort/icon redesign 2026-06-26 (docs/TODO.md #41): groups used to sort
-    purely alphabetically with one icon for every group regardless of shape
-    — see :func:`_flatten_group_sort_key` for the new ready-first/rig-first
-    ordering; a standalone override (no rig found) now draws with OBJECT_DATA
-    instead of ARMATURE_DATA so it doesn't read as a multi-part character.
-
-    Flatten v2 (2026-06-27, docs/TODO.md Group 11 #47): a per-character
-    "Flatten (creates backup)" button no longer exists — replaced by ONE
-    shared Make Local / Make Copy / "Evaluate Selected" / "Flatten Selected"
-    control row living on the outer "Flattenable overrides" heading, acting
-    on whichever GROUPS have their own checkbox ticked (default all ticked —
-    tracked as DESELECTED keys, so nothing needs pre-populating).
-
-    Two-level grouping (2026-06-27, user feedback this session): remote rows
-    now nest under an outer "Remote: <donor file>" header (``row.
-    group_parent``) ABOVE their per-character ``row.rig`` group, with its own
-    "select all in this donor file" toggle (``assetdoctor.
-    flatten_group_select_all``) — the old design grouped every character
-    from one donor file under a single key, making it impossible to select
-    Character A without Character B. The old per-row FILE_TEXT preview
-    button is gone (it only ever had cached data for LOCAL rows, a dead end
-    for the common all-remote case) — "Evaluate Selected" now builds/previews
-    a real plan for whatever's checked, local or remote, without applying."""
-    rows = wm.assetdoctor_flatten_candidates
-    if not len(rows):
+    The outer box + header + control row are still drawn manually (they're
+    not part of the scrollable list); the per-group/per-member rows are
+    rendered by ``ASSETDOCTOR_UL_flatten_picker`` from the pre-built
+    ``wm.assetdoctor_flatten_picker_rows`` collection.  That collection is
+    rebuilt by ``ops.linkchain.rebuild_flatten_picker_rows`` after every
+    scan/toggle/evaluate/flatten — never on each redraw."""
+    if not len(wm.assetdoctor_flatten_candidates):
         return
-    import json
 
-    from ..core import linkchain
-
-    cached = json.loads(wm.assetdoctor_flatten_plans_json or "{}")
     expanded = set(filter(None, wm.assetdoctor_flatten_expanded.split("\n")))
-    deselected = set(filter(None, wm.assetdoctor_flatten_deselected.split("\n")))
-
-    groups: dict[str, list] = {}
-    order: list[str] = []
-    outer_order: list[str] = []
-    outer_children: dict[str, list[str]] = {}
-    for row in rows:
-        if row.rig not in groups:
-            groups[row.rig] = []
-            if row.group_parent:
-                if row.group_parent not in outer_children:
-                    outer_children[row.group_parent] = []
-                    outer_order.append(row.group_parent)
-                outer_children[row.group_parent].append(row.rig)
-            else:
-                order.append(row.rig)
-        groups[row.rig].append(row)
+    all_key = "__flattenable_overrides__"
+    is_open = all_key in expanded
 
     outer = layout.box().column(align=True)
     hrow = outer.row(align=True)
-    all_key = "__flattenable_overrides__"
-    is_open = all_key in expanded
     hop = hrow.operator("assetdoctor.row_toggle", text="",
                         icon="TRIA_DOWN" if is_open else "TRIA_RIGHT", emboss=False)
     hop.key, hop.prop = all_key, "assetdoctor_flatten_expanded"
     hrow.label(text=_flattenable_overrides_summary(wm))
     if not is_open:
         return
+
     crow = outer.row(align=True)
     crow.prop(wm, "assetdoctor_flatten_make_local", text="Make Local")
     crow.prop(wm, "assetdoctor_flatten_make_copy", text="Make Copy")
     crow.operator("assetdoctor.evaluate_selected", text="Evaluate Selected", icon="VIEWZOOM")
     crow.operator("assetdoctor.flatten_selected", text="Flatten Selected", icon="CHECKMARK")
 
-    box = outer.column(align=True)
-    for rig in sorted(order, key=lambda r: _flatten_group_sort_key(r, groups[r])):
-        _draw_rig_group(box, linkchain, cached, expanded, deselected, rig, groups[rig])
+    n = len(wm.assetdoctor_flatten_picker_rows)
+    if n:
+        outer.template_list(
+            "ASSETDOCTOR_UL_flatten_picker", "",
+            wm, "assetdoctor_flatten_picker_rows",
+            wm, "assetdoctor_flatten_picker_active",
+            rows=min(12, max(3, n)),
+        )
 
-    for group_parent in sorted(outer_order):
-        children = outer_children[group_parent]
-        total_members = sum(len(groups[rig]) for rig in children)
-        is_exp = group_parent in expanded
-        is_checked = all(rig not in deselected for rig in children)
-        grow = box.row(align=True)
-        gop = grow.operator("assetdoctor.flatten_group_select_all", text="",
-                            icon="CHECKBOX_HLT" if is_checked else "CHECKBOX_DEHLT", emboss=False)
-        gop.keys = "\n".join(children)
-        gtog = grow.operator("assetdoctor.row_toggle", text="",
-                             icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
-        gtog.key, gtog.prop = group_parent, "assetdoctor_flatten_expanded"
-        grow.label(text=f"{group_parent}  ({total_members} part(s) across {len(children)} "
-                        "character(s))", icon="LIBRARY_DATA_OVERRIDE")
-        if not is_exp:
-            continue
-        for rig in sorted(children, key=lambda r: _flatten_group_sort_key(r, groups[r])):
-            _draw_rig_group(box, linkchain, cached, expanded, deselected, rig, groups[rig], indent=1)
-
-    # The detailed per-property Flatten Plan preview/apply result (Group 11
-    # #46, 2026-06-26) — "Evaluate Selected" stashes it now (the FILE_TEXT
-    # button that used to is gone). One shared slot (whichever run was last
-    # evaluated/applied), so it draws once here rather than per-rig — the
-    # rollup INFO line above is the per-rig summary, this is the deeper
-    # "every recorded property" dump for the most recent run.
+    # The detailed per-property Flatten Plan preview/apply result — stashed by
+    # "Evaluate Selected" / "Flatten Selected" into the f7flatten report slot.
     _draw_report_detail(layout, wm, "f7flatten")
 
 

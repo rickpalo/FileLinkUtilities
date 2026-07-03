@@ -194,6 +194,9 @@ def rebuild_rows_for_prop(wm, prop: str) -> None:
         rebuild_resource_rows(wm)
     elif prop.startswith("assetdoctor_repx_"):
         rebuild_report_rows(wm)
+    elif prop in ("assetdoctor_flatten_expanded", "assetdoctor_flatten_deselected"):
+        from .linkchain import rebuild_flatten_picker_rows  # lazy — avoids circular import
+        rebuild_flatten_picker_rows(wm)
 
 
 def _index_prop_for(prop: str) -> str:
@@ -210,13 +213,17 @@ def focus_row(wm, prop: str, key: str) -> None:
     (every other grouped section still draws manually) — same guard as
     ``rebuild_rows_for_prop``, see there for why a blanket "else" would be wrong
     now that one shared toggle op (below) serves every section."""
-    if not (prop == RESOURCE_EXP_PROP or prop.startswith("assetdoctor_repx_")):
-        return
-    coll = wm.assetdoctor_resource_rows if prop == RESOURCE_EXP_PROP else wm.assetdoctor_report_rows
-    for i, item in enumerate(coll):
-        if item.key == key and item.prop == prop:
-            setattr(wm, _index_prop_for(prop), i)
-            return
+    if prop == RESOURCE_EXP_PROP or prop.startswith("assetdoctor_repx_"):
+        coll = wm.assetdoctor_resource_rows if prop == RESOURCE_EXP_PROP else wm.assetdoctor_report_rows
+        for i, item in enumerate(coll):
+            if item.key == key and item.prop == prop:
+                setattr(wm, _index_prop_for(prop), i)
+                return
+    elif prop in ("assetdoctor_flatten_expanded", "assetdoctor_flatten_deselected"):
+        for i, item in enumerate(wm.assetdoctor_flatten_picker_rows):
+            if item.key == key:
+                wm.assetdoctor_flatten_picker_active = i
+                return
 
 
 class ASSETDOCTOR_OT_row_toggle(bpy.types.Operator):
