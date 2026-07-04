@@ -154,6 +154,11 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_broken_imgs = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_broken_lib)
     bpy.types.WindowManager.assetdoctor_broken_imgs_index = bpy.props.IntProperty(default=0)
+    # Group 12 Phase 3: virtualized picker rows for Missing Textures (rebuilt by
+    # ops.image_relink.rebuild_missing_tex_picker_rows after scan/pick/accept/relink).
+    bpy.types.WindowManager.assetdoctor_missingtex_picker_rows = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_picker_row)
+    bpy.types.WindowManager.assetdoctor_missingtex_picker_active = bpy.props.IntProperty(default=0)
     # F6 read-only companion list: missing textures whose Image is LINKED (owned by
     # another library) — can't be relinked from here, but the user asked for them
     # to be visible (a render-time dry run found far more missing images than this
@@ -203,6 +208,12 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_dup_removable = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_dup_conflicts = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_dup_conflicts_text = bpy.props.StringProperty(default="")
+    # Group 12 Phase 3 item 2: virtualized picker rows for Duplicate Textures
+    # (rebuilt by ops.image_dedup.rebuild_dup_tex_picker_rows after scan/merge/
+    # toggle, and by material_override's own update callback).
+    bpy.types.WindowManager.assetdoctor_duptex_picker_rows = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_picker_row)
+    bpy.types.WindowManager.assetdoctor_duptex_picker_active = bpy.props.IntProperty(default=0)
 
     # Batch 3 reverse-dep check: a small verdict the panel colors without having
     # to re-parse the stashed f7rev report JSON on every redraw. "" = not run yet.
@@ -216,6 +227,12 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_missing_index = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_missing_scanned = bpy.props.BoolProperty(default=False)
     bpy.types.WindowManager.assetdoctor_missing_expanded = bpy.props.StringProperty(default="")
+    # Group 12 Phase 3 item 3: virtualized picker rows for Datablock Reconnect
+    # (rebuilt by ops.datablock_reconnect.rebuild_reconnect_picker_rows after
+    # scan/pick-source/reconnect-selected).
+    bpy.types.WindowManager.assetdoctor_reconnect_picker_rows = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_picker_row)
+    bpy.types.WindowManager.assetdoctor_reconnect_picker_active = bpy.props.IntProperty(default=0)
 
     # Batch C #3: generic Duplicate Data-blocks list (any type, via ID.user_remap).
     bpy.types.WindowManager.assetdoctor_datablock_families = bpy.props.CollectionProperty(
@@ -276,6 +293,12 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_examine_index = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.assetdoctor_examine_scanned = bpy.props.BoolProperty(default=False)
     bpy.types.WindowManager.assetdoctor_examine_expanded = bpy.props.StringProperty(default="")
+    # Group 12 Phase 3 item 4: virtualized picker rows for Examine Library
+    # (rebuilt by ops.examine_library.rebuild_examine_picker_rows after
+    # Examine/Apply Selected).
+    bpy.types.WindowManager.assetdoctor_examine_picker_rows = bpy.props.CollectionProperty(
+        type=ASSETDOCTOR_PG_picker_row)
+    bpy.types.WindowManager.assetdoctor_examine_picker_active = bpy.props.IntProperty(default=0)
 
     # Phase 3a — Analyze section's "Analyze All" sequencer: per-step status
     # (pending/running/done/error), rebuilt by ops.analyze_all at the start of
@@ -369,6 +392,7 @@ def unregister() -> None:
                 "assetdoctor_resource_rows", "assetdoctor_resource_index",
                 "assetdoctor_broken_libs", "assetdoctor_broken_index",
                 "assetdoctor_broken_imgs", "assetdoctor_broken_imgs_index",
+                "assetdoctor_missingtex_picker_rows", "assetdoctor_missingtex_picker_active",
                 "assetdoctor_linked_missing_imgs",
                 "assetdoctor_dup_lib_members", "assetdoctor_abs_path_members",
                 "assetdoctor_res_variant_members",
@@ -377,12 +401,14 @@ def unregister() -> None:
                 "assetdoctor_tex_source_material",
                 "assetdoctor_dup_families", "assetdoctor_dup_index",
                 "assetdoctor_dup_scanned",
+                "assetdoctor_duptex_picker_rows", "assetdoctor_duptex_picker_active",
                 "assetdoctor_dup_expanded",
                 "assetdoctor_dup_removable", "assetdoctor_dup_conflicts",
                 "assetdoctor_dup_conflicts_text",
                 "assetdoctor_dep_verdict", "assetdoctor_dep_verdict_text",
                 "assetdoctor_missing_blocks", "assetdoctor_missing_index",
                 "assetdoctor_missing_scanned", "assetdoctor_missing_expanded",
+                "assetdoctor_reconnect_picker_rows", "assetdoctor_reconnect_picker_active",
                 "assetdoctor_datablock_families", "assetdoctor_datablock_index",
                 "assetdoctor_datablock_scanned", "assetdoctor_datablock_removable",
                 "assetdoctor_datablock_conflicts", "assetdoctor_datablock_conflicts_text",
@@ -400,6 +426,7 @@ def unregister() -> None:
                 "assetdoctor_examine_library_pick", "assetdoctor_examine_library",
                 "assetdoctor_examine_rows", "assetdoctor_examine_index",
                 "assetdoctor_examine_scanned", "assetdoctor_examine_expanded",
+                "assetdoctor_examine_picker_rows", "assetdoctor_examine_picker_active",
                 "assetdoctor_analyze_steps", "assetdoctor_analyze_index",
                 "assetdoctor_flatten_candidates", "assetdoctor_flatten_index",
                 "assetdoctor_flatten_picker_rows", "assetdoctor_flatten_picker_active",

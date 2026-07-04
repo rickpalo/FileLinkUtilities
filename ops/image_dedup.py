@@ -92,6 +92,87 @@ def _fill_families(context, plans, conflicts):
     wm.assetdoctor_dup_conflicts_text = "\n".join(f"{c.base} — {c.reason}" for c in conflicts)
 
 
+# Below this name-token overlap, a duplicate family's material looks mis-attributed
+# (e.g. a lightBlue texture under a brown material) → flag it + offer the eyedropper.
+_DUP_MISMATCH_AFFINITY = 0.5
+
+
+def effective_material(row) -> str:
+    """The material a duplicate-texture family displays under: the user's
+    eyedropper override if set, else the auto-attributed material (or
+    "(no material)"). Shared by the panel's virtualized picker and
+    ``ASSETDOCTOR_OT_dup_material_keeper`` — both used to compute this inline."""
+    return row.material_override.name if row.material_override else (row.material or "(no material)")
+
+
+def is_mismatch(row) -> bool:
+    """True when the (effective) material's name barely overlaps the
+    texture's own — e.g. a lightBlue texture under a brown material —
+    flagged so the user can re-home it via the eyedropper."""
+    from ..core.imagematch import name_affinity
+
+    eff = effective_material(row)
+    return eff != "(no material)" and name_affinity(row.name, eff) < _DUP_MISMATCH_AFFINITY
+
+
+def rebuild_dup_tex_picker_rows(wm) -> None:
+    """Rebuild ``wm.assetdoctor_duptex_picker_rows`` (Group 12 Phase 3, item 2)
+    from the current ``assetdoctor_dup_families`` + expand state.
+
+    Called after every op that changes group MEMBERSHIP (scan / merge) and
+    from ``ui.panels``'s ``material_override`` PointerProperty ``update``
+    callback — unlike Missing Textures' ``target``, that field can change
+    from a bare ``row.prop()`` edit with no operator involved at all, since it
+    changes which GROUP a family belongs under (and the mismatch flag/count),
+    not just one row's own display."""
+    from ..core import picker as picker_mod
+    from .report_store import get_expanded
+
+    coll = wm.assetdoctor_dup_families
+    if not len(coll):
+        wm.assetdoctor_duptex_picker_rows.clear()
+        return
+
+    expanded = get_expanded(wm, "assetdoctor_dup_expanded")
+    groups: dict[str, list[int]] = {}
+    for i, row in enumerate(coll):
+        groups.setdefault(effective_material(row), []).append(i)
+
+    specs = []
+    for key in sorted(groups, key=str.lower):
+        indices = groups[key]
+        members_rows = [coll[i] for i in indices]
+        removable_here = sum(r.removable for r in members_rows)
+        mism = sum(1 for r in members_rows if is_mismatch(r))
+        suffix = f", ⚠{mism} mismatch" if mism else ""
+        specs.append(picker_mod.GroupSpec(
+            key=key,
+            label=f"{key}  ({len(indices)} family, −{removable_here}{suffix})",
+            icon="ERROR" if mism else "MATERIAL",
+            members=[picker_mod.MemberRef(ref_index=i) for i in indices],
+            has_action=True,
+            alert=bool(mism),
+        ))
+    picker_rows = picker_mod.flatten_group_member_rows(
+        specs, expanded, ref_prop="assetdoctor_dup_families")
+
+    picker_coll = wm.assetdoctor_duptex_picker_rows
+    picker_coll.clear()
+    for pr in picker_rows:
+        item = picker_coll.add()
+        item.kind = pr.kind
+        item.key = pr.key
+        item.group_key = pr.group_key
+        item.ref_prop = pr.ref_prop
+        item.ref_index = pr.ref_index
+        item.indent = pr.indent
+        item.label = pr.label
+        item.icon = pr.icon
+        item.has_action = pr.has_action
+        item.alert = pr.alert
+        item.is_expanded = pr.is_expanded
+
+
 class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
     bl_idname = "assetdoctor.merge_dup_selected"
     bl_label = "Merge Selected Duplicates"
@@ -141,6 +222,7 @@ class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
         wm.assetdoctor_dup_removable = 0
         wm.assetdoctor_dup_conflicts = 0
         wm.assetdoctor_dup_conflicts_text = ""
+        rebuild_dup_tex_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"
@@ -367,6 +449,7 @@ class ASSETDOCTOR_OT_scan_content_dups(ModalProgressMixin, bpy.types.Operator):
             set_active=False)
         wm = context.window_manager
         wm.assetdoctor_dup_scanned = True
+        rebuild_dup_tex_picker_rows(wm)
         yield (1.0, "Done")
         n = imagededup.removable_count(plans)
         if plans:
@@ -406,9 +489,7 @@ class ASSETDOCTOR_OT_dup_material_keeper(bpy.types.Operator):
         coll = context.window_manager.assetdoctor_dup_families
         n = 0
         for row in coll:
-            eff = (row.material_override.name if row.material_override
-                   else (row.material or "(no material)"))
-            if eff != self.material:
+            if effective_material(row) != self.material:
                 continue
             members = [m for m in row.members.split("\n") if m]
             if not members:

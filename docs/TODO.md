@@ -1,12 +1,280 @@
 # AssetDoctor — TODO / backlog
 
-## ⏩ NEXT SESSION: Group 12 Phase 2 DONE @ v0.2.95 (2026-07-03) — NOT yet live-verified.
-## **RESTART Blender** (not Reload Scripts — structural registration change), run Find
-## Flattenable Links on a file with multiple characters, confirm the UIList scrolls and
-## checkboxes/triangles still respond. Phases 1 (v0.2.93) and 2 are both pending live-verify.
-## After verify: **Phase 3** = roll virtualization out to single-level interactive sections
-## (Missing Textures first → Duplicate Textures → Datablock Reconnect → Examine Library).
-## Flatten v2 is committed but still imperfect — not the priority, don't resume unless asked.
+## ✅ LIVE-VERIFIED 2026-07-03: Group 12 Phases 1 (v0.2.93), 2 (v0.2.95), and 3 item 1 /
+## Missing Textures (v0.2.96) — user ran the full checklist against a real production
+## file. Steps 0/1/2/4 all "everything seems to work". Step 3 (Missing Textures) worked
+## EXCEPT one real bug found (see Group 13 below). Two unrelated crashes also surfaced
+## this same session (Find All Duplicates, Find Orphans) — see Group 13, logs pending
+## from the user.
+##
+## ✅ Group 12 Phase 3 item 2 — Duplicate Textures virtualized, v0.2.97 (2026-07-03,
+## NOT committed, NOT live-verified). Built same session, right after item 1's
+## live-verify came back clean. See "Group 12 Phase 3 item 2" digest below for detail.
+##
+## ✅ Group 12 Phase 3 item 3 — Datablock Reconnect virtualized, v0.2.99 (2026-07-03,
+## same session, user chose to keep stacking work rather than live-verify first). NOT
+## committed, NOT live-verified. See "Group 12 Phase 3 item 3" digest below for detail.
+##
+## ✅ Group 12 PHASE 3 COMPLETE — item 4, Examine Library virtualized, v0.2.100
+## (2026-07-03, same session). The simplest of the four: grouping is fixed at scan
+## time (by kind) and no group-header text depends on per-row state, so its rebuild
+## only fires after Examine/Apply Selected — every other edit (checkbox/Make Local/
+## target/a fresh per-row file pick) draws live off the real row. New
+## `ASSETDOCTOR_UL_examine_picker` (a FOURTH member-row family: checkbox + conditional
+## status + Make Local checkbox + two file-pick buttons). `ops/examine_library.py`
+## gained `rebuild_examine_picker_rows`. All four Phase 3 sections now share the SAME
+## `core/picker.py` shell (`GroupSpec`/`MemberRef`/`flatten_group_member_rows`), each
+## with its own UIList for its own widget family — Missing Textures
+## (target+file-picker), Duplicate Textures (keeper dropdown+eyedropper), Datablock
+## Reconnect (confidence+enum dropdown+per-group info line), Examine Library
+## (Make Local+2 file-pickers). Manifest 0.2.100, pytest still 515 (reused the
+## existing generic API, no new bpy-free surface), full `py_compile` clean. NOT
+## live-verified. Full digest below. Group 12 Phase 4 (retarget
+## `_draw_report_detail`'s inline disclosure onto `ASSETDOCTOR_UL_tree`) is next
+## whenever picked up — not started.
+##
+## User's call after Examine Library: commit + publish now, WITHOUT a live-Blender
+## confirm pass on any of Phase 3's four items (only Phases 1/2/item-1 got that back
+## on 2026-07-03 morning) — a deliberate departure from this project's own standing
+## "verify before publish" practice (see e.g. v0.2.81's hold), accepted explicitly
+## after being flagged. See the commit/publish digest further down for what shipped.
+##
+## Group 13's items are logged but explicitly PARKED pending the user's crash
+## logs/screenshots — don't guess-fix them without evidence. Flatten v2 is committed
+## but still imperfect — not the priority, don't resume unless asked.
+##
+## LIVE-VERIFY CHECKLIST — Duplicate Textures (v0.2.97, brand new, never tested). Run
+## "Find Content Duplicates" on a file with several materials' worth of duplicate/
+## renamed textures:
+## - New UIList scrolls smoothly with many rows; group (material) triangles expand/collapse
+## - Per-family checkbox ticks and PERSISTS; keeper dropdown still picks/persists per family
+## - A family whose material looks mis-attributed still shows the red/alert styling +
+##   ERROR icon + the material-override eyedropper; picking a DIFFERENT material via the
+##   eyedropper immediately moves that family to its new group (no rescan needed — this
+##   is the new update-callback wiring, the one genuinely new risk in this build)
+## - The group header's master-keeper button (DOWNARROW_HLT) still opens its
+##   Recommended/Un-suffixed-base popup and sets every family's keeper in that group
+## - Group header's "(N family, −R, ⚠M mismatch)" count stays correct after an
+##   eyedropper override moves a family between groups
+## - "Merge Selected (Backup)" still merges ticked families and clears the list
+##   (which should re-populate as empty, not error)
+## - Export button still exports the f6dup report
+
+## LIVE-VERIFY CHECKLIST — Datablock Reconnect (v0.2.99, brand new, never tested). Run
+## "Find Reconnectable Data-blocks" on a file with missing data-blocks from 2+ libraries:
+## - New UIList scrolls smoothly with many rows; group (library) triangles expand/collapse,
+##   sorted by group size (largest first) then name — same order as before
+## - The info/status line under an expanded group still shows the right one of the 3
+##   states: picked source filename (FILE_BLEND icon), "no source picked yet" (QUESTION),
+##   or "library not found anywhere" (ERROR) — this is the new generalized "rollup" row,
+##   first reuse of that shape outside Flattenable Overrides
+## - Group header's folder-icon "Pick Source .blend" button still opens the file picker
+##   and, after picking, re-suggests candidates + updates the group's matched/stuck/
+##   external counts in the header
+## - Per-row checkbox ticks and PERSISTS; the confidence icon/label (exact/renamed/fuzzy/
+##   missing-upstream/fix-at-source) still shows correctly; the "Reconnect to" dropdown
+##   still lists/picks candidates
+## - "Reconnect Selected" still links+remaps ticked rows, re-populates the list, and
+##   correctly re-flags any transitive/external rows in the fresh list
+
+## LIVE-VERIFY CHECKLIST — Examine Library (v0.2.100, brand new, never tested). Pick a
+## library that provides several datablocks across 2+ kinds and click Examine:
+## - New UIList scrolls smoothly with many rows; group (kind) triangles expand/collapse
+## - Per-row checkbox ticks and PERSISTS; Make Local checkbox toggles and, when ticked,
+##   hides the suggestion/dropdown text on that row (live, no rebuild)
+## - A row with an in-memory LOCAL suggestion shows "local: {name}" (+ node-graph
+##   "(identical)"/"(graph differs)" suffix for Materials); a row suggested from ANOTHER
+##   library shows "{library}: {name}" the same way
+## - A row with no suggestion shows "no in-memory match"; the folder-icon "Pick a
+##   Specific Item" and magnifier "Search a Folder" buttons still open their pickers and,
+##   once a source is chosen, the row switches to the manual target dropdown
+## - "Apply Selected (Backup)" still makes-local/remaps ticked rows, clears the list, and
+##   the top summary line ("N data-block(s)... M in-memory match(es), K staged") stays
+##   accurate throughout (it's still hand-drawn/live, not part of the virtualized rows)
+
+## ✅ Resolution Variants — "Standardizing is LOSSY" note now conditional, v0.2.98
+## (2026-07-03, user question same session). The warning used to show unconditionally,
+## but the mechanic is direction-dependent: keeping a group's HIGHEST resolution isn't
+## a quality loss (lower-res users just get re-pointed at the bigger file — wasteful,
+## not lossy); only keeping a LOWER resolution than another available one actually
+## discards data. New `core.imageres.selection_loses_resolution(groups)` (bpy-free, 6
+## tests, suite 511) — true if any group's ticked member isn't that group's highest.
+## `ui/panels.py::_draw_res_variants` now only shows the INFO line when this is true.
+## Tooltips (`ASSETDOCTOR_OT_scan_res_variants`/`remove_excess_variants`'s static
+## `bl_description`) deliberately left as-is — general disclaimers, not per-selection,
+## out of scope for this ask. Manifest 0.2.98, NOT live-verified yet (needs a file with
+## resolution variants, tick a LOW one, confirm the note appears; tick HIGH, confirm
+## it disappears).
+
+### Group 13 — 2026-07-03 live-test findings (Group 12 Phases 1-3 verification pass).
+### All items here are logged, NOT investigated yet — the crashes especially need real
+### evidence before touching code (this project's own hard-won lesson from the v0.2.94
+### Find Duplicates crash: guessing at a native access-violation wastes time).
+
+41. **Find Duplicates / Find All Duplicates has no interruptable progress on large
+    files** (user, 2026-07-03): a big file's duplicate scan runs for a long time with
+    no opportunity to update the UI or cancel. Needs breaking into smaller, chunked,
+    yieldable steps (the ``ModalProgressMixin``/``run_steps`` generator pattern this
+    project already uses everywhere else) so progress shows and ESC/Pause work mid-scan
+    instead of one long blocking call. Scope TBD — needs reading which of
+    `ops/datablock_dup.py` / `ops/material_dedup.py` / `ops/geometry_dedup.py` /
+    `ops/image_dedup.py` (and the `analyze_all` sequencer wrapping them) actually lacks
+    fine-grained yields today vs. just yields too coarsely on a huge `bpy.data`.
+
+42. **Two crashes, same session (2026-07-03): during "Find All Duplicates" and during
+    "Find Orphans."** User will upload crash logs + screenshots once files sync from
+    the remote machine. **DO NOT speculate or attempt a fix until the logs arrive** —
+    could be the same native-crash disease class as the v0.2.94 `extract_shape_key`
+    access-violation (see the "Find Duplicates CRASH" write-up above) recurring
+    elsewhere, could be related to item 41's long blocking scan, or could be unrelated.
+    Get the real backtrace first (same diagnostic standard as v0.2.94 — Python
+    backtrace from the crash log, not guessing from reading code).
+
+43. **Missing Textures — "Fix at Source" (the read-only Linked-missing-textures list)
+    doesn't list a source file for some rows** (user, 2026-07-03, live-verify step 3).
+    Everything else in Phase 3 item 1 (the newly-virtualized main list) worked;
+    this is in the OLD, untouched `_draw_linked_missing_textures` companion list.
+    Screenshot pending. Candidate cause (not confirmed): `_gather_linked_missing_images`
+    groups by `img.library.filepath or img.library.name` — if a library's `filepath` is
+    somehow empty this falls back to the internal datablock name, which could look like
+    "no source file" rather than a real path; needs the screenshot to confirm what's
+    actually displayed before touching code.
+
+## ✅ Group 12 Phase 3 (1 of 4) — Missing Textures virtualized, v0.2.96 (2026-07-03,
+## NOT committed, NOT live-verified). New shape-B (single-level group→member) picker,
+## generalizing the Phase 2 primitives rather than duplicating them:
+## - `core/picker.py`: originally shape-specific `TargetGroup`/`TargetMemberData`/
+##   `flatten_target_picker_rows` (bpy-free, 9 new tests, suite 505) — the live-data
+##   analogue of `flatten_picker_rows` for sections whose member rows are individually
+##   interactive (checkbox + target + picker button) rather than group-checkbox.
+##   `PickerRow` gained `ref_prop` (which WM collection `ref_index` points into — Flatten
+##   only ever pointed at one collection so never needed this) and `has_action` (group
+##   rows only). **Superseded same session by item 2's generic `GroupSpec`/`MemberRef`/
+##   `flatten_group_member_rows`** — see that digest below for why.
+## - `ASSETDOCTOR_PG_picker_row` (reused, not duplicated) gained the matching `ref_prop`
+##   field. New `ASSETDOCTOR_UL_missing_tex_picker` (`ui/panels.py`): group rows draw the
+##   pre-baked triangle+icon+label+count+optional "point at folder" button; member rows
+##   fetch the REAL `wm.assetdoctor_broken_imgs` row live via `ref_prop`/`ref_index` and
+##   draw checkbox+name+target-status+file-picker straight off it — ticking a checkbox or
+##   picking a file needs no rebuild (same live-data approach as `ASSETDOCTOR_UL_broken_libs`).
+## - `ops/image_relink.py`: new `rebuild_missing_tex_picker_rows(wm)`, called after every
+##   op that changes group membership (scan / relink selected) or a row's `target`
+##   (per-file pick, accept one/material/all matches, folder-search exact modes) — the
+##   group header's "N of M matched" count would otherwise go stale since it's no longer
+##   recomputed on every redraw like the old hand-drawn loop was. NOT called from the
+##   fuzzy folder-search or the two "suggest from…" ops — those only stage `.proposal`
+##   (Possible Matches, still hand-drawn), which doesn't change this list's counts.
+## - `ops/report_store.py`: `rebuild_rows_for_prop`/`focus_row` gained an
+##   `assetdoctor_tex_expanded` branch (shared harmlessly with Possible Matches/Linked-
+##   missing's still-manual, namespaced-key sections).
+## - `ui/panels.py::_draw_missing_textures`: the manual group/member loop (dict-build +
+##   sort + `_draw_group_header` + per-file row) replaced by one `template_list` over
+##   `wm.assetdoctor_missingtex_picker_rows`. Possible Matches and Linked-missing-textures
+##   sub-sections are DELIBERATELY NOT virtualized this pass (different member widgets —
+##   confidence+Accept vs read-only — left for a quick follow-up, not blocking).
+## - Manifest bumped to 0.2.96. pytest 505 green (496 + 9 new). LIVE-VERIFIED clean
+##   2026-07-03 (except the unrelated #43 "Fix at Source" bug in the OLD, untouched
+##   Linked-missing-textures list — see Group 13).
+
+## ✅ Group 12 Phase 3 item 2 — Duplicate Textures virtualized, v0.2.97 (2026-07-03,
+## same session as item 1's live-verify, NOT committed, NOT live-verified). Harder than
+## Missing Textures: a family's GROUP is keyed by `material_override` (an eyedropper
+## `PointerProperty`), which the user can change via a bare `row.prop()` edit with no
+## operator at all — unlike every other per-row edit in this addon, that has no natural
+## place to hang a rebuild. Solved by giving `core/picker.py` ONE fully-generic
+## single-level shape instead of writing a second near-duplicate flatten function:
+## - `core/picker.py`: replaced item 1's shape-specific `TargetGroup`/`TargetMemberData`/
+##   `flatten_target_picker_rows` with `GroupSpec`/`MemberRef`/`flatten_group_member_rows`
+##   — the caller now supplies each group's FULLY-FORMED `label`/`icon`/`has_action`/
+##   `alert` (moved the "(N of M matched)" text-building into
+##   `ops.image_relink.rebuild_missing_tex_picker_rows`, mechanical, no behavior change);
+##   the flatten helper's only job is order + expand-state + member `ref_index`/`ref_prop`
+##   stamping, the truly-shared "shell." `PickerRow` gained `alert` (red group-label
+##   styling). 9 of the original Target* tests renamed/kept (same coverage, generic API);
+##   suite still 505 (no net new — same shape, less code).
+## - `ops/image_dedup.py`: new shared `effective_material(row)`/`is_mismatch(row)` (moved
+##   out of two pre-existing, independently-duplicated copies — `_draw_duplicate_textures`'s
+##   closures AND `ASSETDOCTOR_OT_dup_material_keeper`'s inline computation — a real
+##   duplication that predates this session, now one source of truth) + `_DUP_MISMATCH_AFFINITY`
+##   (moved from `ui/panels.py`). New `rebuild_dup_tex_picker_rows(wm)`, wired into
+##   `scan_content_dups` (after `_fill_families`) and `merge_dup_selected` (after clearing
+##   families).
+## - `ui/panels.py`: `ASSETDOCTOR_PG_dup_family.material_override` gained an `update=`
+##   callback (`_dup_override_updated`) — THE piece that makes this safe: every eyedropper
+##   edit now rebuilds the picker rows immediately, so a re-homed family shows under its
+##   NEW group instantly, no rescan needed. New `ASSETDOCTOR_UL_dup_tex_picker` (the
+##   "keeper dropdown" row family — checkbox + alert-styled label + conditional
+##   material-override eyedropper + keeper `EnumProperty`, vs. Missing Textures' checkbox +
+##   target-status + file-picker-button family); group rows draw the master-keeper
+##   (DOWNARROW_HLT) action button + alert styling when the group has a mismatch.
+##   `_draw_duplicate_textures`'s manual loop replaced by one `template_list` over
+##   `wm.assetdoctor_duptex_picker_rows`.
+## - `ops/report_store.py`: `rebuild_rows_for_prop`/`focus_row` gained an
+##   `assetdoctor_dup_expanded` branch.
+## - Manifest bumped to 0.2.97. pytest 505 green, full `py_compile` clean. NOT
+##   live-verified yet — see the checklist at the top of this file.
+
+## ✅ Group 12 Phase 3 item 3 — Datablock Reconnect virtualized, v0.2.99 (2026-07-03,
+## same session, immediately after item 2; user explicitly chose to keep stacking
+## unverified work rather than live-test first). NOT committed, NOT live-verified.
+## Simpler than Duplicate Textures — same "no natural rebuild hook" risk class doesn't
+## apply here (Reconnect's `target` is a plain dynamic-enum pick that never changes
+## group membership or counts, unlike Duplicate Textures' `material_override`), but
+## introduced one genuinely NEW piece to the shared shell: a per-group STATUS LINE
+## (which source .blend is picked / not picked yet / library not found) that used to
+## draw as a plain label between the group header and its members.
+## - `core/picker.py`: `GroupSpec` gained `info`/`info_icon` (default `"INFO"`) and
+##   `flatten_group_member_rows` now emits a `"rollup"` row right after an expanded
+##   group's header when `info` is set — the SAME row kind Flattenable Overrides
+##   already draws for its property-summary line, just generalized with a caller-
+##   chosen icon instead of hardcoded `"INFO"`. +4 tests, suite 515.
+## - `ops/datablock_reconnect.py`: new `_group_info_line(source, lib_found)` (the
+##   3-way status text+icon, moved out of the old hand-drawn version verbatim) +
+##   `rebuild_reconnect_picker_rows(wm)` — groups by library (sorted by size desc.
+##   then name, same order as before), wired into `scan_reconnect_targets` (after
+##   `_populate_missing_blocks`), `reconnect_pick_source` (after `_enumerate_group`
+##   — both `source_blend` and confidence change here), and `reconnect_selected`
+##   (after both `_populate_missing_blocks` AND the transitive/external re-flagging
+##   loop, since that also changes group counts).
+## - `ui/panels.py`: new `ASSETDOCTOR_UL_reconnect_picker` — a THIRD member-row
+##   family (checkbox + label + confidence icon/label + a bare `target` enum
+##   dropdown, no file-picker or keeper) reusing `_RECONNECT_CONF`. Group rows always
+##   carry the "Pick Source .blend" action button (no "ungrouped" exemption like
+##   Missing Textures had). `_draw_reconnect`'s manual loop replaced by one
+##   `template_list` over `wm.assetdoctor_reconnect_picker_rows`.
+## - `ops/report_store.py`: `rebuild_rows_for_prop`/`focus_row` gained an
+##   `assetdoctor_missing_expanded` branch.
+## - Manifest bumped to 0.2.99. pytest 515 green, full `py_compile` clean. NOT
+##   live-verified — see the checklist at the top of this file.
+
+## ✅ Group 12 Phase 3 item 4 — Examine Library virtualized, v0.2.100 (2026-07-03,
+## same session, immediately after item 3) — **Phase 3 COMPLETE, all 4 sections done.**
+## The simplest of the four: unlike Reconnect/Duplicate Textures, grouping (by `kind`)
+## never changes without a rescan and NO group-header text depends on per-row state —
+## so `rebuild_examine_picker_rows` only needs to fire after Examine/Apply Selected;
+## every other per-row edit (`selected`/`make_local`/`target`, or a fresh
+## `source_blend` from Pick a Specific Item/Search a Folder) draws live off the real
+## row, same principle as the other three, just with an even smaller rebuild surface.
+## - `ops/examine_library.py`: new `rebuild_examine_picker_rows(wm)`, wired into
+##   `examine_library` (after `_populate_examine_rows`) and `examine_apply_selected`
+##   (after clearing rows).
+## - `ui/panels.py`: new `ASSETDOCTOR_UL_examine_picker` — a FOURTH member-row family
+##   (checkbox + label + a conditional middle status reusing `_graph_match_suffix` +
+##   a Make Local checkbox + 2 per-row file-pick buttons — the busiest row of the four
+##   sections). `_draw_examine_library`'s manual loop replaced by one `template_list`
+##   over `wm.assetdoctor_examine_picker_rows`; the top summary line (data-block
+##   count/matches/staged) stays hand-drawn, unaffected.
+## - `ops/report_store.py`: `rebuild_rows_for_prop`/`focus_row` gained an
+##   `assetdoctor_examine_expanded` branch.
+## - Manifest bumped to 0.2.100 (not 0.3.0 — [[feedback-versioning]]: patch-only unless
+##   the user flags a major-version bump; completing an initiative isn't that on its
+##   own). pytest still 515 (reused the existing generic flatten API, no new bpy-free
+##   surface needed). NOT live-verified — see the checklist at the top of this file.
+## **All four Phase 3 sections now share ONE `core/picker.py` shell — the thing Group
+## 12 originally set out to prove was possible.** Phase 4 (retarget
+## `_draw_report_detail`'s inline Analyze disclosure onto the existing
+## `ASSETDOCTOR_UL_tree`/`rebuild_report_rows` mechanism, closing the THIRD independent
+## tree-renderer) is next whenever picked up — not started, not scoped in detail yet.
 
 ## ✅ Datablock Reconnect "2 skipped" bug — ROOT-CAUSED + FIXED 2026-06-28 (uncommitted)
 
@@ -350,9 +618,9 @@ Zero visual/behavioral change intended throughout — verified by pytest (475 pa
 this phase) + a full-repo `py_compile` pass; **NEEDS a live-Blender registration + visual spot-check
 before Phase 2 starts** (deferred this session per the user's call).
 
-**NEXT SESSION: live-Blender confirm Phase 1, THEN Phase 2** (build the virtualization primitives,
-prove on Flattenable Overrides itself). Full detail in the plan file above — don't re-derive from
-scratch, read it first.
+**Phase 2 DONE @ v0.2.95, Phase 3 (1 of 4, Missing Textures) DONE @ v0.2.96 — see the
+"NEXT SESSION"/"Group 12 Phase 3" digest at the top of this file for current status and
+what's still unverified; don't re-derive from scratch, read it first.**
 
 ### Group 4 — Phase 4 Flatten UI polish (`ui/panels.py` + `ops/linkchain.py`)
 13. ~~Per-character checkboxes... "make local instead" checkbox...~~ **SUPERSEDED by Group 11

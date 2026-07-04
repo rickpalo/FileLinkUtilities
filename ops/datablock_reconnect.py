@@ -164,6 +164,90 @@ def _enumerate_group(context, library: str) -> str:
     return ""
 
 
+def _group_info_line(source: str, lib_found: bool) -> tuple[str, str]:
+    """The status line shown under an expanded group (source basename / no
+    source yet / library not found) + its icon — the same 3-way message
+    ``ui.panels._draw_reconnect`` used to draw by hand."""
+    if source:
+        return os.path.basename(source), "FILE_BLEND"
+    if lib_found:
+        return "no source picked yet — click the folder icon above", "QUESTION"
+    return ("library not found anywhere in this session — pick a source "
+            ".blend manually", "ERROR")
+
+
+def rebuild_reconnect_picker_rows(wm) -> None:
+    """Rebuild ``wm.assetdoctor_reconnect_picker_rows`` (Group 12 Phase 3,
+    item 3) from the current ``assetdoctor_missing_blocks`` + expand state.
+
+    Called after every op that changes group membership (scan / reconnect
+    selected) or a group's ``source_blend``/candidates/confidence (pick
+    source) — the header's matched/stuck/external counts and the info line
+    would otherwise go stale. A bare ``selected``/``target`` edit needs no
+    rebuild (drawn live by ``ASSETDOCTOR_UL_reconnect_picker`` straight off
+    the real row, same as Missing Textures)."""
+    from ..core import picker as picker_mod
+    from .report_store import get_expanded
+
+    coll = wm.assetdoctor_missing_blocks
+    if not len(coll):
+        wm.assetdoctor_reconnect_picker_rows.clear()
+        return
+
+    expanded = get_expanded(wm, "assetdoctor_missing_expanded")
+    groups: dict[str, list[int]] = {}
+    for i, item in enumerate(coll):
+        groups.setdefault(item.library, []).append(i)
+
+    specs = []
+    for library in sorted(groups, key=lambda lib: (-len(groups[lib]), lib.lower())):
+        indices = groups[library]
+        members_rows = [coll[i] for i in indices]
+        matched = sum(1 for m in members_rows
+                     if m.confidence not in ("none", "transitive", "external"))
+        stuck = sum(1 for m in members_rows if m.confidence == "transitive")
+        external = sum(1 for m in members_rows if m.confidence == "external")
+        lib_found = members_rows[0].library_found
+        has_source = bool(members_rows[0].source_blend)
+        disp = library or "(unknown library)"
+        bits = []
+        if matched:
+            bits.append(f"{matched} suggested")
+        if stuck:
+            bits.append(f"{stuck} stuck (missing upstream too)")
+        if external:
+            bits.append(f"{external} fix at the source library")
+        label = f"{disp}  ({', '.join(bits)})" if bits else f"{disp}  ({len(members_rows)})"
+        info, info_icon = _group_info_line(members_rows[0].source_blend, lib_found)
+        specs.append(picker_mod.GroupSpec(
+            key=library,
+            label=label,
+            icon="LIBRARY_DATA_BROKEN" if (lib_found or has_source) else "ERROR",
+            members=[picker_mod.MemberRef(ref_index=i) for i in indices],
+            has_action=True,
+            info=info,
+            info_icon=info_icon,
+        ))
+    picker_rows = picker_mod.flatten_group_member_rows(
+        specs, expanded, ref_prop="assetdoctor_missing_blocks")
+
+    picker_coll = wm.assetdoctor_reconnect_picker_rows
+    picker_coll.clear()
+    for pr in picker_rows:
+        item = picker_coll.add()
+        item.kind = pr.kind
+        item.key = pr.key
+        item.group_key = pr.group_key
+        item.ref_prop = pr.ref_prop
+        item.ref_index = pr.ref_index
+        item.indent = pr.indent
+        item.label = pr.label
+        item.icon = pr.icon
+        item.has_action = pr.has_action
+        item.alert = pr.alert
+        item.is_expanded = pr.is_expanded
+
+
 class ASSETDOCTOR_OT_scan_reconnect_targets(bpy.types.Operator):
     bl_idname = "assetdoctor.scan_reconnect_targets"
     bl_label = "Find Reconnectable Data-blocks"
@@ -177,6 +261,7 @@ class ASSETDOCTOR_OT_scan_reconnect_targets(bpy.types.Operator):
 
     def execute(self, context):
         blocks = _populate_missing_blocks(context)
+        rebuild_reconnect_picker_rows(context.window_manager)
         if context.area:
             context.area.tag_redraw()
         if blocks:
@@ -218,6 +303,7 @@ class ASSETDOCTOR_OT_reconnect_pick_source(FilePickerMixin, bpy.types.Operator):
             if item.library == self.library:
                 item.source_blend = path
         error = _enumerate_group(context, self.library)
+        rebuild_reconnect_picker_rows(context.window_manager)
         if context.area:
             context.area.tag_redraw()
         if error:
@@ -396,6 +482,7 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
                 elif key in external_keys:
                     item.confidence = "external"
                     item.selected = False
+        rebuild_reconnect_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

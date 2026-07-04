@@ -58,6 +58,40 @@ def test_highest_and_lowest_member():
     assert imageres.lowest_member(v) == "Wood_1K_col.png"
 
 
+# --- selection_loses_resolution (live-test follow-up, 2026-07-03) ----------
+
+def test_no_groups_does_not_lose_resolution():
+    assert imageres.selection_loses_resolution([]) is False
+
+
+def test_no_ticked_member_does_not_lose_resolution():
+    assert imageres.selection_loses_resolution([[("1k", False), ("2k", False)]]) is False
+
+
+def test_keeping_highest_does_not_lose_resolution():
+    assert imageres.selection_loses_resolution([[("1k", False), ("2k", True)]]) is False
+
+
+def test_keeping_lowest_loses_resolution():
+    assert imageres.selection_loses_resolution([[("1k", True), ("2k", False)]]) is True
+
+
+def test_one_lossy_group_among_several_is_enough():
+    groups = [
+        [("2k", True), ("1k", False)],   # keeping highest here -> fine
+        [("1k", True), ("4k", False)],   # keeping lowest here -> lossy
+    ]
+    assert imageres.selection_loses_resolution(groups) is True
+
+
+def test_all_groups_keep_highest_is_not_lossy():
+    groups = [
+        [("2k", True), ("1k", False)],
+        [("4k", True), ("1k", False), ("2k", False)],
+    ]
+    assert imageres.selection_loses_resolution(groups) is False
+
+
 def test_report_clean_and_populated():
     assert imageres.build_res_report([]).findings[0].category == "clean"
     variants = imageres.plan_res_variants(["Wood_2K_col.png", "Wood_1K_col.png"])

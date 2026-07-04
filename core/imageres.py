@@ -73,6 +73,26 @@ def lowest_member(variant: ResVariant) -> str:
     return min(variant.members, key=lambda m: res_value(m[1]))[0]
 
 
+def selection_loses_resolution(groups: list[list[tuple[str, bool]]]) -> bool:
+    """True if any group's TICKED member is not that group's highest-resolution
+    one — i.e. Remove Excess Variants would actually discard a higher-
+    resolution option somewhere, the only case that's genuinely lossy (keeping
+    the highest just re-points lower-res users at a bigger file, wasteful but
+    not a quality loss). A group with nothing ticked yet doesn't count —
+    Remove Excess Variants skips groups with no keeper. ``groups`` is a list of
+    per-group ``[(resolution token, is_ticked), ...]`` member lists."""
+    for members in groups:
+        if not members:
+            continue
+        ticked = next((tag for tag, sel in members if sel), None)
+        if ticked is None:
+            continue
+        best = max(res_value(tag) for tag, _sel in members)
+        if res_value(ticked) < best:
+            return True
+    return False
+
+
 def build_res_report(variants: list[ResVariant], blend_name: str = "current file") -> Report:
     """Report the multi-resolution texture sets (info); empty -> a ✓ clean finding."""
     report = Report(title=f"Resolution variants: {blend_name}", feature="f6res")
@@ -101,4 +121,4 @@ def build_res_report(variants: list[ResVariant], blend_name: str = "current file
 
 
 __all__ = ["ResVariant", "plan_res_variants", "build_res_report",
-           "res_value", "highest_member", "lowest_member"]
+           "res_value", "highest_member", "lowest_member", "selection_loses_resolution"]

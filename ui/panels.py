@@ -219,6 +219,12 @@ class ASSETDOCTOR_PG_picker_row(bpy.types.PropertyGroup):
     - "member" — one individual flatten candidate; ``ref_index`` points into the
                  real ``wm.assetdoctor_flatten_candidates`` collection so edits land
                  on live data with no sync step.
+    Also reused (Group 12 Phase 3) by ``ASSETDOCTOR_UL_target_picker`` for
+    single-level "checkbox + label + target widget + picker button" sections
+    (Missing Textures first): "group"/"member" only there, and ``ref_prop``
+    names WHICH WM collection ``ref_index`` points into (member rows only) —
+    ``draw_item`` reads/writes that real row directly, same live-data
+    approach, generalized since different sections use different collections.
     ``checkbox_state`` is pre-computed at rebuild time so ``draw_item`` never has
     to parse the full newline-joined deselected/done string-sets on every redraw."""
 
@@ -226,11 +232,13 @@ class ASSETDOCTOR_PG_picker_row(bpy.types.PropertyGroup):
     key: bpy.props.StringProperty()            # toggle/action key  # type: ignore[valid-type]
     group_key: bpy.props.StringProperty()      # parent group (member + nested-group rows)  # type: ignore[valid-type]
     children_keys: bpy.props.StringProperty()  # newline-joined child rig keys (outer rows)  # type: ignore[valid-type]
+    ref_prop: bpy.props.StringProperty()       # WM collection name ref_index points into (member rows only)  # type: ignore[valid-type]
     ref_index: bpy.props.IntProperty(default=-1)  # index into real candidates collection  # type: ignore[valid-type]
     indent: bpy.props.IntProperty(default=0)   # type: ignore[valid-type]
     label: bpy.props.StringProperty()          # type: ignore[valid-type]
     icon: bpy.props.StringProperty()           # type: ignore[valid-type]
     checkbox_state: bpy.props.StringProperty()  # "none"|"checked"|"unchecked"|"done"  # type: ignore[valid-type]
+    has_action: bpy.props.BoolProperty()       # group rows only: show the header's action button  # type: ignore[valid-type]
     is_expanded: bpy.props.BoolProperty()      # type: ignore[valid-type]
 
 
@@ -296,6 +304,20 @@ def _keeper_enum_items(self, context):
     return items or [("", "", "")]
 
 
+def _dup_override_updated(self, context) -> None:
+    """``material_override``'s ``update`` callback (Group 12 Phase 3, item 2):
+    unlike every other per-row edit in this section (``selected``/``keeper``),
+    picking a different material here changes which GROUP the family belongs
+    under (and the group's mismatch flag/count) — a plain ``row.prop()`` edit
+    with no operator to hang a rebuild off, so the virtualized picker rows
+    would otherwise show the family under its OLD group until the next scan."""
+    from ..ops.image_dedup import rebuild_dup_tex_picker_rows
+
+    rebuild_dup_tex_picker_rows(context.window_manager)
+    if context.area:
+        context.area.tag_redraw()
+
+
 class ASSETDOCTOR_PG_dup_family(bpy.types.PropertyGroup):
     """One content-identical ``.NNN`` duplicate family, for the redesigned Duplicate
     Materials/Textures list. ``members`` (newline-joined, canonical first) feeds the
@@ -314,7 +336,8 @@ class ASSETDOCTOR_PG_dup_family(bpy.types.PropertyGroup):
     # Eyedropper override: when the auto-attributed material looks wrong (its name
     # doesn't match the texture's), point this at the correct material to re-group
     # the family under it. Organizational only — it does NOT rewire node trees.
-    material_override: bpy.props.PointerProperty(type=bpy.types.Material)  # type: ignore[valid-type]
+    material_override: bpy.props.PointerProperty(
+        type=bpy.types.Material, update=_dup_override_updated)  # type: ignore[valid-type]
     removable: bpy.props.IntProperty()  # type: ignore[valid-type]
 
 
@@ -603,6 +626,250 @@ class ASSETDOCTOR_UL_flatten_picker(bpy.types.UIList):
 
         elif item.kind == "member":
             row.label(text=item.label, icon=item.icon)
+
+
+class ASSETDOCTOR_UL_missing_tex_picker(bpy.types.UIList):
+    """Virtualized picker for the Missing Textures section (Group 12 Phase 3,
+    first single-level "checkbox + label + target widget + picker button"
+    section). Renders from ``wm.assetdoctor_missingtex_picker_rows`` (rebuilt
+    by ``ops.image_relink.rebuild_missing_tex_picker_rows`` after every scan/
+    toggle/pick/accept/relink). Group rows draw the pre-baked triangle+icon+
+    label+count (and an optional "point at folder" action button); member
+    rows read/write the REAL ``wm.assetdoctor_broken_imgs`` row directly via
+    ``item.ref_prop``/``item.ref_index`` — same live-data approach as
+    ``ASSETDOCTOR_UL_broken_libs`` — so ticking a checkbox or picking a file
+    needs no rebuild, only a target/membership change does."""
+
+    bl_idname = "ASSETDOCTOR_UL_missing_tex_picker"
+
+    def draw_item(self, context, layout, data, item, icon,
+                  active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.label or "—")
+            return
+
+        row = layout.row(align=True)
+        if item.indent:
+            row.separator(factor=float(item.indent) * 1.5)
+
+        if item.kind == "group":
+            tog = row.operator("assetdoctor.row_toggle", text="",
+                               icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
+                               emboss=False)
+            tog.key, tog.prop = item.key, "assetdoctor_tex_expanded"
+            row.label(text=item.label, icon=item.icon)
+            if item.has_action:
+                fop = row.operator("assetdoctor.point_group_at_folder", text="",
+                                   icon="FILE_FOLDER")
+                fop.group_key, fop.by = item.key, "MATERIAL"
+            return
+
+        # kind == "member": draw straight from the real row, nothing copied here.
+        coll = getattr(context.window_manager, item.ref_prop, None)
+        if coll is None or not (0 <= item.ref_index < len(coll)):
+            return
+        real = coll[item.ref_index]
+        row.prop(real, "selected", text="")
+        row.label(text=real.name, icon="IMAGE_DATA")
+        tgt = row.row()
+        tgt.alignment = "RIGHT"
+        if real.target:
+            tgt.label(text=os.path.basename(real.target) or real.target, icon="CHECKMARK")
+        elif real.ambiguous_count > 1:
+            tgt.label(text=f"{real.ambiguous_count} found elsewhere — pick one", icon="ERROR")
+        else:
+            tgt.label(text="no match", icon="QUESTION")
+        row.operator("assetdoctor.relink_pick_texture", text="",
+                    icon="FILEBROWSER").index = item.ref_index
+
+
+class ASSETDOCTOR_UL_dup_tex_picker(bpy.types.UIList):
+    """Virtualized picker for the Duplicate Textures section (Group 12 Phase 3,
+    item 2) — the "keeper dropdown" member shape, a DIFFERENT row family from
+    Missing Textures' target+picker shape (every member row carries a keeper
+    ``EnumProperty`` + a conditional material-override eyedropper instead of a
+    file-picker button). Renders from ``wm.assetdoctor_duptex_picker_rows``
+    (rebuilt by ``ops.image_dedup.rebuild_dup_tex_picker_rows`` after scan/
+    merge/toggle, AND by ``material_override``'s own ``update`` callback since
+    that field can change a family's group with no operator involved). Member
+    rows read/write the REAL ``wm.assetdoctor_dup_families`` row directly, same
+    live-data approach as ``ASSETDOCTOR_UL_missing_tex_picker``."""
+
+    bl_idname = "ASSETDOCTOR_UL_dup_tex_picker"
+
+    def draw_item(self, context, layout, data, item, icon,
+                  active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.label or "—")
+            return
+
+        row = layout.row(align=True)
+        if item.indent:
+            row.separator(factor=float(item.indent) * 1.5)
+
+        if item.kind == "group":
+            tog = row.operator("assetdoctor.row_toggle", text="",
+                               icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
+                               emboss=False)
+            tog.key, tog.prop = item.key, "assetdoctor_dup_expanded"
+            lab = row.row()
+            lab.alert = item.alert
+            lab.label(text=item.label, icon=item.icon)
+            if item.has_action:
+                kop = row.operator("assetdoctor.dup_material_keeper", text="",
+                                   icon="DOWNARROW_HLT")
+                kop.material = item.key
+            return
+
+        # kind == "member": draw straight from the real row, nothing copied here.
+        from ..ops.image_dedup import is_mismatch
+
+        coll = getattr(context.window_manager, item.ref_prop, None)
+        if coll is None or not (0 <= item.ref_index < len(coll)):
+            return
+        real = coll[item.ref_index]
+        row.prop(real, "selected", text="")
+        bad = is_mismatch(real)
+        name = row.row()
+        name.alert = bad
+        name.label(text=f"{real.name}  (−{real.removable})", icon="ERROR" if bad else "IMAGE_DATA")
+        # Alternate material picker (eyedropper): re-home a mis-attributed family
+        # under the correct material. Shown when it looks wrong (or was already
+        # overridden). Organizational only — doesn't rewire nodes.
+        if bad or real.material_override:
+            row.prop(real, "material_override", text="")
+        keep = row.row()
+        keep.alignment = "RIGHT"
+        keep.label(text="keep", icon="PINNED")
+        keep.prop(real, "keeper", text="")
+
+
+class ASSETDOCTOR_UL_reconnect_picker(bpy.types.UIList):
+    """Virtualized picker for the Datablock Reconnect section (Group 12 Phase
+    3, item 3) — a THIRD member-row family (checkbox + label + a confidence
+    icon/label + a "Reconnect to" ``EnumProperty`` dropdown, no file-picker or
+    keeper). Renders from ``wm.assetdoctor_reconnect_picker_rows`` (rebuilt by
+    ``ops.datablock_reconnect.rebuild_reconnect_picker_rows`` after scan/pick-
+    source/reconnect-selected). Group rows always carry the "Pick Source
+    .blend" action button; the source-status line (which .blend is picked, or
+    why not) draws as a "rollup" row — the same INFO-line shape Flattenable
+    Overrides already uses, generalized (Group 12 Phase 3's ``GroupSpec.info``)
+    so this section didn't need its own kind. Member rows read/write the REAL
+    ``wm.assetdoctor_missing_blocks`` row directly, same live-data approach as
+    ``ASSETDOCTOR_UL_missing_tex_picker``."""
+
+    bl_idname = "ASSETDOCTOR_UL_reconnect_picker"
+
+    def draw_item(self, context, layout, data, item, icon,
+                  active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.label or "—")
+            return
+
+        row = layout.row(align=True)
+        if item.indent:
+            row.separator(factor=float(item.indent) * 1.5)
+
+        if item.kind == "group":
+            tog = row.operator("assetdoctor.row_toggle", text="",
+                               icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
+                               emboss=False)
+            tog.key, tog.prop = item.key, "assetdoctor_missing_expanded"
+            row.label(text=item.label, icon=item.icon)
+            if item.has_action:
+                pop = row.operator("assetdoctor.reconnect_pick_source", text="",
+                                   icon="FILEBROWSER")
+                pop.library = item.key
+            return
+
+        if item.kind == "rollup":
+            row.label(text=item.label, icon=item.icon or "INFO")
+            return
+
+        # kind == "member": draw straight from the real row, nothing copied here.
+        coll = getattr(context.window_manager, item.ref_prop, None)
+        if coll is None or not (0 <= item.ref_index < len(coll)):
+            return
+        real = coll[item.ref_index]
+        row.prop(real, "selected", text="")
+        row.label(text=f"{real.kind}: {real.name}", icon="LIBRARY_DATA_BROKEN")
+        conf_icon, conf_label = _RECONNECT_CONF.get(real.confidence, ("BLANK1", ""))
+        if conf_label:
+            cf = row.row()
+            cf.alignment = "RIGHT"
+            cf.label(text=conf_label, icon=conf_icon)
+        row.prop(real, "target", text="")
+
+
+class ASSETDOCTOR_UL_examine_picker(bpy.types.UIList):
+    """Virtualized picker for the Examine Library section (Group 12 Phase 3,
+    item 4 — the last single-level section) — a FOURTH member-row family:
+    checkbox + label + a conditional middle status (Make Local / in-memory
+    suggestion / manual target dropdown / "no in-memory match") + a Make
+    Local checkbox + two per-row file-pick buttons. The simplest rebuild story
+    of the four: grouping is fixed at scan time (by ``kind``) and no group
+    header text depends on per-row state, so ``ops.examine_library.
+    rebuild_examine_picker_rows`` only runs after Examine/Apply Selected —
+    every per-row edit here (``selected``/``make_local``/``target``, or a
+    fresh ``source_blend`` from Pick a Specific Item/Search a Folder) draws
+    live off the real ``wm.assetdoctor_examine_rows`` row, same as the other
+    three pickers."""
+
+    bl_idname = "ASSETDOCTOR_UL_examine_picker"
+
+    def draw_item(self, context, layout, data, item, icon,
+                  active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.label or "—")
+            return
+
+        row = layout.row(align=True)
+        if item.indent:
+            row.separator(factor=float(item.indent) * 1.5)
+
+        if item.kind == "group":
+            tog = row.operator("assetdoctor.row_toggle", text="",
+                               icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
+                               emboss=False)
+            tog.key, tog.prop = item.key, "assetdoctor_examine_expanded"
+            row.label(text=item.label, icon=item.icon)
+            return
+
+        # kind == "member": draw straight from the real row, nothing copied here.
+        coll = getattr(context.window_manager, item.ref_prop, None)
+        if coll is None or not (0 <= item.ref_index < len(coll)):
+            return
+        real = coll[item.ref_index]
+        row.prop(real, "selected", text="")
+        row.label(text=real.name, icon="LIBRARY_DATA_DIRECT")
+        if real.make_local:
+            pass  # the Make Local checkbox below already says it all
+        elif real.use_suggested and real.suggested_kind == "local":
+            s = row.row()
+            s.alignment = "RIGHT"
+            text, sicon = _graph_match_suffix(f"local: {real.suggested_name}", real.graph_match)
+            s.label(text=text, icon=sicon)
+        elif real.use_suggested and real.suggested_kind == "library":
+            s = row.row()
+            s.alignment = "RIGHT"
+            base = f"{os.path.basename(real.suggested_library)}: {real.suggested_name}"
+            text, sicon = _graph_match_suffix(base, real.graph_match)
+            s.label(text=text, icon=sicon)
+        elif real.source_blend:
+            row.prop(real, "target", text="")
+        else:
+            s = row.row()
+            s.alignment = "RIGHT"
+            s.label(text="no in-memory match", icon="QUESTION")
+        row.prop(real, "make_local", text="", icon="FILE_TICK")
+        row.operator("assetdoctor.examine_pick_source", text="",
+                    icon="FILEBROWSER").index = item.ref_index
+        row.operator("assetdoctor.examine_search_folder", text="",
+                    icon="VIEWZOOM").index = item.ref_index
 
 
 class _SceneFeaturePanel:
@@ -1446,7 +1713,9 @@ class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         (working) library and offer to re-source it from memory first — local,
         then another already-loaded library — falling back to Make Local or a
         per-row manual file+item pick. Grouped by KIND, mirrors the Duplicate
-        Data-blocks section's shape."""
+        Data-blocks section's shape. Virtualized (Group 12 Phase 3 item 4,
+        2026-07-03) via ASSETDOCTOR_UL_examine_picker over
+        wm.assetdoctor_examine_picker_rows."""
         rows = wm.assetdoctor_examine_rows
         scanned = wm.assetdoctor_examine_scanned
 
@@ -1471,48 +1740,14 @@ class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         if not (scanned and len(rows)):
             return
 
-        expanded = set(filter(None, wm.assetdoctor_examine_expanded.split("\n")))
-        groups: dict[str, list] = {}
-        for idx, item in enumerate(rows):
-            groups.setdefault(item.kind, []).append((idx, item))
-
-        for kind in sorted(groups, key=str.lower):
-            members = groups[kind]
-            is_exp = kind in expanded
-            _draw_group_header(box, key=kind, prop="assetdoctor_examine_expanded", is_exp=is_exp,
-                               label=f"{kind}  ({len(members)})", icon="LIBRARY_DATA_DIRECT")
-            if not is_exp:
-                continue
-            for idx, item in members:
-                frow = box.row(align=True)
-                frow.separator(factor=2.0)
-                frow.prop(item, "selected", text="")
-                frow.label(text=item.name, icon="LIBRARY_DATA_DIRECT")
-                if item.make_local:
-                    pass  # the Make Local checkbox below already says it all
-                elif item.use_suggested and item.suggested_kind == "local":
-                    s = frow.row()
-                    s.alignment = "RIGHT"
-                    text, icon = _graph_match_suffix(f"local: {item.suggested_name}", item.graph_match)
-                    s.label(text=text, icon=icon)
-                elif item.use_suggested and item.suggested_kind == "library":
-                    s = frow.row()
-                    s.alignment = "RIGHT"
-                    base = (f"{os.path.basename(item.suggested_library)}: "
-                            f"{item.suggested_name}")
-                    text, icon = _graph_match_suffix(base, item.graph_match)
-                    s.label(text=text, icon=icon)
-                elif item.source_blend:
-                    frow.prop(item, "target", text="")
-                else:
-                    s = frow.row()
-                    s.alignment = "RIGHT"
-                    s.label(text="no in-memory match", icon="QUESTION")
-                frow.prop(item, "make_local", text="", icon="FILE_TICK")
-                frow.operator("assetdoctor.examine_pick_source", text="",
-                              icon="FILEBROWSER").index = idx
-                frow.operator("assetdoctor.examine_search_folder", text="",
-                              icon="VIEWZOOM").index = idx
+        n = len(wm.assetdoctor_examine_picker_rows)
+        if n:
+            box.template_list(
+                "ASSETDOCTOR_UL_examine_picker", "",
+                wm, "assetdoctor_examine_picker_rows",
+                wm, "assetdoctor_examine_picker_active",
+                rows=min(12, max(3, n)),
+            )
 
 
 def _libraries_at_a_glance():
@@ -1746,7 +1981,12 @@ def _draw_res_variants(layout, wm) -> None:
     (radio per group; no default, since picking which resolution to keep is
     a real decision, unlike items 6/7's safe normalizations) plus 3 buttons
     (Select High/Low Resolution, Remove Excess Variants). Its own headline
-    is dropped — the Analyze row right above already shows it."""
+    is dropped — the Analyze row right above already shows it. The LOSSY
+    warning (2026-07-03 follow-up) only shows when at least one group's
+    current tick would actually discard a higher-resolution option — keeping
+    every group's HIGHEST resolution isn't a quality loss (just wastes memory
+    re-pointing lower-res users at a bigger file), so the warning would be
+    misleading there."""
     coll = wm.assetdoctor_res_variant_members
     if not len(coll):
         return
@@ -1760,8 +2000,13 @@ def _draw_res_variants(layout, wm) -> None:
         groups[item.group].append((i, item))
 
     box = layout.box().column(align=True)
-    box.label(text="Standardizing is LOSSY — the removed resolution's users "
-              "switch to the kept one.", icon="INFO")
+    from ..core import imageres
+
+    loses_res = imageres.selection_loses_resolution(
+        [[(item.tag, item.selected) for _i, item in members] for members in groups.values()])
+    if loses_res:
+        box.label(text="Standardizing is LOSSY — the removed resolution's users "
+                  "switch to the kept one.", icon="INFO")
     brow = box.row(align=True)
     brow.operator("assetdoctor.res_variant_select", text="Select High Resolution").which = "HIGH"
     brow.operator("assetdoctor.res_variant_select", text="Select Low Resolution").which = "LOW"
@@ -1893,11 +2138,6 @@ def _draw_geo_dups(layout, wm) -> None:
     _draw_kept_separate(layout, wm, "dupgeo:conflicts", conflict_lines)
 
 
-# Below this name-token overlap, a duplicate family's material looks mis-attributed
-# (e.g. a lightBlue texture under a brown material) → flag it + offer the eyedropper.
-_DUP_MISMATCH_AFFINITY = 0.5
-
-
 def _draw_duplicate_textures(layout, wm, narrow: bool) -> None:
     """F6 Layer 2/3 — the redesigned Image Content section: an inline summary
     header, top Find/Merge/Export, then collapsible material groups whose
@@ -1908,7 +2148,11 @@ def _draw_duplicate_textures(layout, wm, narrow: bool) -> None:
     #16, 2026-06-27) — no longer its own standalone box. (History: a separate
     fast/name-only "Find .NNN" scan was removed 2026-06-24 — confirmed
     redundant with Find Content Dups, which uses the identical fingerprint
-    over a strict superset of images.)"""
+    over a strict superset of images.) The group/member list itself is
+    virtualized (Group 12 Phase 3 item 2, 2026-07-03) via
+    ASSETDOCTOR_UL_dup_tex_picker over wm.assetdoctor_duptex_picker_rows —
+    the "keeper dropdown" row shape, mismatch/effective-material logic now
+    lives in ops.image_dedup (shared with ASSETDOCTOR_OT_dup_material_keeper)."""
     families = wm.assetdoctor_dup_families
     if not wm.assetdoctor_dup_scanned:
         return
@@ -1924,62 +2168,14 @@ def _draw_duplicate_textures(layout, wm, narrow: bool) -> None:
         brow.operator("assetdoctor.export_report", text="",
                       icon="EXPORT").feature = "f6dup"
 
-        from ..core.imagematch import name_affinity
-
-        def _eff_mat(row):
-            return (row.material_override.name if row.material_override
-                    else (row.material or "(no material)"))
-
-        def _mismatch(row):
-            # An "apparent mismatch" = the (effective) material's name barely overlaps
-            # the texture's name, e.g. a lightBlue texture under a brown material.
-            eff = _eff_mat(row)
-            return eff != "(no material)" and name_affinity(row.name, eff) < _DUP_MISMATCH_AFFINITY
-
-        expanded = set(filter(None, wm.assetdoctor_dup_expanded.split("\n")))
-        groups: dict[str, list] = {}
-        for row in families:
-            groups.setdefault(_eff_mat(row), []).append(row)
-
-        def _master_keeper_action(material):
-            # Master keeper for the whole material (sets every family's keeper by a
-            # policy) — the material-level counterpart to the per-family dropdowns.
-            def draw(row):
-                row.operator("assetdoctor.dup_material_keeper", text="",
-                             icon="DOWNARROW_HLT").material = material
-            return draw
-
-        for key in sorted(groups, key=str.lower):
-            members = groups[key]
-            removable_here = sum(r.removable for r in members)
-            mism = [r for r in members if _mismatch(r)]
-            is_exp = key in expanded
-            suffix = f", ⚠{len(mism)} mismatch" if mism else ""
-            _draw_group_header(
-                layout, key=key, prop="assetdoctor_dup_expanded", is_exp=is_exp,
-                label=f"{key}  ({len(members)} family, −{removable_here}{suffix})",
-                icon="ERROR" if mism else "MATERIAL", alert=bool(mism),
-                action=_master_keeper_action(key))
-            if not is_exp:
-                continue
-            for row in members:
-                bad = _mismatch(row)
-                frow = layout.row(align=True)
-                frow.separator(factor=2.0)
-                frow.prop(row, "selected", text="")
-                name = frow.row()
-                name.alert = bad
-                name.label(text=f"{row.name}  (−{row.removable})",
-                           icon="ERROR" if bad else "IMAGE_DATA")
-                # Alternate material picker (eyedropper): re-home a mis-attributed
-                # family under the correct material. Shown when it looks wrong (or was
-                # already overridden). Organizational only — doesn't rewire nodes.
-                if bad or row.material_override:
-                    frow.prop(row, "material_override", text="")
-                keep = frow.row()
-                keep.alignment = "RIGHT"
-                keep.label(text="keep", icon="PINNED")
-                keep.prop(row, "keeper", text="")
+        n = len(wm.assetdoctor_duptex_picker_rows)
+        if n:
+            layout.template_list(
+                "ASSETDOCTOR_UL_dup_tex_picker", "",
+                wm, "assetdoctor_duptex_picker_rows",
+                wm, "assetdoctor_duptex_picker_active",
+                rows=min(12, max(3, n)),
+            )
 
     conflict_lines = [ln for ln in wm.assetdoctor_dup_conflicts_text.split("\n") if ln]
     _draw_kept_separate(layout, wm, "dupimg:conflicts", conflict_lines)
@@ -2114,76 +2310,23 @@ def _draw_reconnect(layout, wm) -> None:
     row (core.reconnect). Relocated under its Analyze row (Group 11 #43,
     2026-06-26) — Reconnect Selected now lives on that row's right side
     (``_normalize_action_button``-style, wired at the call site), so this
-    just keeps the grouped list."""
+    just keeps the grouped list. Virtualized (Group 12 Phase 3 item 3,
+    2026-07-03) via ASSETDOCTOR_UL_reconnect_picker over
+    wm.assetdoctor_reconnect_picker_rows."""
     rows = wm.assetdoctor_missing_blocks
     if not (wm.assetdoctor_missing_scanned and len(rows)):
         return
 
+    n = len(wm.assetdoctor_reconnect_picker_rows)
+    if not n:
+        return
     box = layout.box().column(align=True)
-    expanded = set(filter(None, wm.assetdoctor_missing_expanded.split("\n")))
-    groups: dict[str, list] = {}
-    order: list[str] = []
-    for item in rows:
-        if item.library not in groups:
-            groups[item.library] = []
-            order.append(item.library)
-        groups[item.library].append(item)
-
-    for library in sorted(order, key=lambda lib: (-len(groups[lib]), lib.lower())):
-        members = groups[library]
-        matched = sum(1 for m in members
-                     if m.confidence not in ("none", "transitive", "external"))
-        stuck = sum(1 for m in members if m.confidence == "transitive")
-        external = sum(1 for m in members if m.confidence == "external")
-        lib_found = members[0].library_found
-        has_source = bool(members[0].source_blend)
-        is_exp = library in expanded
-        disp = library or "(unknown library)"
-        bits = []
-        if matched:
-            bits.append(f"{matched} suggested")
-        if stuck:
-            bits.append(f"{stuck} stuck (missing upstream too)")
-        if external:
-            bits.append(f"{external} fix at the source library")
-        label = f"{disp}  ({', '.join(bits)})" if bits else f"{disp}  ({len(members)})"
-
-        def _pick_source_action(row):
-            row.operator("assetdoctor.reconnect_pick_source", text="",
-                         icon="FILEBROWSER").library = library
-
-        # ERROR icon when the group's OWN library can't be found anywhere in
-        # this session AND no source has been picked yet — distinguishes
-        # "genuinely needs a manual file pick" from the normal broken-link
-        # icon (user report 2026-06-24: these looked identical before).
-        _draw_group_header(box, key=library, prop="assetdoctor_missing_expanded", is_exp=is_exp,
-                           label=label,
-                           icon="LIBRARY_DATA_BROKEN" if (lib_found or has_source) else "ERROR",
-                           action=_pick_source_action)
-        if not is_exp:
-            continue
-        source = members[0].source_blend
-        srow = box.row(align=True)
-        srow.separator(factor=2.0)
-        if source:
-            srow.label(text=os.path.basename(source), icon="FILE_BLEND")
-        elif lib_found:
-            srow.label(text="no source picked yet — click the folder icon above",
-                      icon="QUESTION")
-        else:
-            srow.label(text="library not found anywhere in this session — pick a "
-                      "source .blend manually", icon="ERROR")
-        for item in members:
-            frow = box.row(align=True)
-            frow.separator(factor=2.0)
-            frow.prop(item, "selected", text="")
-            frow.label(text=f"{item.kind}: {item.name}", icon="LIBRARY_DATA_BROKEN")
-            icon, conf_label = _RECONNECT_CONF.get(item.confidence, ("BLANK1", ""))
-            if conf_label:
-                cf = frow.row()
-                cf.alignment = "RIGHT"
-                cf.label(text=conf_label, icon=icon)
-            frow.prop(item, "target", text="")
+    box.template_list(
+        "ASSETDOCTOR_UL_reconnect_picker", "",
+        wm, "assetdoctor_reconnect_picker_rows",
+        wm, "assetdoctor_reconnect_picker_active",
+        rows=min(12, max(3, n)),
+    )
 
 
 def _draw_broken_links(layout, wm) -> None:
@@ -2314,12 +2457,14 @@ def _draw_path_normalization(layout, wm) -> None:
 
 def _draw_missing_textures(layout, wm, narrow: bool) -> None:
     """The unified Missing Textures section: a header summary, then collapsible
-    material/folder categories whose members are per-file rows. All three relink
+    material categories whose members are per-file rows. All three relink
     paths STAGE a target (folder-search / category-folder / per-file pick); the
     single Relink Selected then applies. Relocated into Analyze (Group 11 #46,
     2026-06-26) — was the last section still stuck in the old Results holding
     pen, right after its own trigger via the existing _missing_textures_headline
-    helper that already fed the Analyze row's summary."""
+    helper that already fed the Analyze row's summary. The category/member list
+    itself is virtualized (Group 12 Phase 3, 2026-07-03) via
+    ASSETDOCTOR_UL_missing_tex_picker over wm.assetdoctor_missingtex_picker_rows."""
     n_missing = len(wm.assetdoctor_broken_imgs)
     scanned = wm.assetdoctor_tex_scanned
 
@@ -2358,64 +2503,17 @@ def _draw_missing_textures(layout, wm, narrow: bool) -> None:
     hrow.operator("assetdoctor.relink_textures_selected", text="Relink Selected",
                   icon="FILE_REFRESH")
 
-    # Group by MATERIAL only (the folder view was dropped — user, 2026-06-22).
-    mode = "MATERIAL"
-    expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
-    # Sentinel for items with no folder/material (no group button). NOT "\x00" —
-    # a real bug: Blender's StringProperty round-trips through a C string, which
-    # truncates at the first NUL byte, so storing a lone "\x00" in
-    # assetdoctor_tex_expanded silently came back empty and the "(no material)"
-    # triangle could never stay expanded.
-    UNGROUPED = "\x02"
-    groups: dict[str, list] = {}
-    order: list[str] = []
-    for idx, item in enumerate(wm.assetdoctor_broken_imgs):
-        raw = (item.group if mode == "DIR" else item.material) or UNGROUPED
-        if raw not in groups:
-            groups[raw] = []
-            order.append(raw)
-        groups[raw].append((idx, item))
-
-    for raw in sorted(order):
-        members = groups[raw]
-        total = len(members)
-        matched = sum(1 for _i, it in members if it.target)
-        if raw == UNGROUPED:
-            disp = "(no material)" if mode == "MATERIAL" else "(no folder)"
-        else:
-            disp = (os.path.basename(raw.rstrip("/")) or raw) if mode == "DIR" else raw
-        is_exp = raw in expanded
-        label = f"{disp}  ({matched} of {total} matched)" if matched else f"{disp}  ({total})"
-
-        def _point_at_folder_action(row):
-            # Category-level "point at a folder" (stages targets for the whole group).
-            cop = row.operator("assetdoctor.point_group_at_folder", text="", icon="FILE_FOLDER")
-            cop.group_key, cop.by = raw, mode
-
-        _draw_group_header(
-            tex, key=raw, prop="assetdoctor_tex_expanded", is_exp=is_exp, label=label,
-            icon="CHECKMARK" if matched and matched == total else
-            ("FILE_FOLDER" if mode == "DIR" else "MATERIAL"),
-            action=_point_at_folder_action if raw != UNGROUPED else None)
-        if not is_exp:
-            continue
-        # Individual files: checkbox + name + staged target + per-file file picker.
-        for idx, item in members:
-            frow = tex.row(align=True)
-            frow.separator(factor=2.0)
-            frow.prop(item, "selected", text="")
-            frow.label(text=item.name, icon="IMAGE_DATA")
-            tgt = frow.row()
-            tgt.alignment = "RIGHT"
-            if item.target:
-                tgt.label(text=os.path.basename(item.target) or item.target, icon="CHECKMARK")
-            elif item.ambiguous_count > 1:
-                tgt.label(text=f"{item.ambiguous_count} found elsewhere — pick one",
-                         icon="ERROR")
-            else:
-                tgt.label(text="no match", icon="QUESTION")
-            frow.operator("assetdoctor.relink_pick_texture", text="",
-                          icon="FILEBROWSER").index = idx
+    # Virtualized (Group 12 Phase 3): grouped by MATERIAL, rebuilt by
+    # ops.image_relink.rebuild_missing_tex_picker_rows after every scan/pick/
+    # accept/relink — never recomputed here on each redraw.
+    n = len(wm.assetdoctor_missingtex_picker_rows)
+    if n:
+        tex.template_list(
+            "ASSETDOCTOR_UL_missing_tex_picker", "",
+            wm, "assetdoctor_missingtex_picker_rows",
+            wm, "assetdoctor_missingtex_picker_active",
+            rows=min(12, max(3, n)),
+        )
 
     _draw_possible_matches(tex, wm)
     _draw_linked_missing_textures(tex, wm)

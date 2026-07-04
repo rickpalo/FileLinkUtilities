@@ -1,9 +1,14 @@
-"""Flatten picker-row flattener for virtualized group-checkbox UILists.
+"""Flatten picker-row flatteners for virtualized results-section UILists.
 
-Converts nested {group_key: [MemberData]} groupings into a flat ordered list
-of PickerRow specs — the visible-rows analogue of core.tree.flatten_visible,
-for the Flattenable Overrides picker (and, in Phase 3, other group-checkbox
-sections). bpy-free — testable with plain Python, no Blender import needed.
+Converts a section's live grouping into a flat ordered list of PickerRow specs
+— the visible-rows analogue of core.tree.flatten_visible. Two shapes so far
+(Group 12): flatten_picker_rows (two-level, group-level checkbox — Flattenable
+Overrides, Phase 2) and flatten_group_member_rows (single-level, member rows
+each drawing their own widgets — Missing Textures, Duplicate Textures, and
+later Reconnect/Examine Library, Phase 3; the group's label/icon/alert/
+has_action are pre-computed by the caller, since that's genuinely different
+per section, while the flatten/expand shell is shared). bpy-free — testable
+with plain Python, no Blender import needed.
 """
 from __future__ import annotations
 
@@ -30,11 +35,14 @@ class PickerRow:
     key: str = ""              # toggle/action key (group/outer rows)
     group_key: str = ""        # parent group key (member + nested-group rows)
     children_keys: str = ""    # newline-joined child rig keys (outer rows only)
+    ref_prop: str = ""         # WM collection name ref_index points into (member rows only)
     ref_index: int = -1        # index into real collection (member rows only)
     indent: int = 0
     label: str = ""
     icon: str = ""
     checkbox_state: str = "none"  # "none" | "checked" | "unchecked" | "done"
+    has_action: bool = False   # group rows only: show the header's action button
+    alert: bool = False        # group rows only: show the header's label in alert/red styling
     is_expanded: bool = False
 
 
@@ -164,5 +172,75 @@ def flatten_picker_rows(
                         label=f"{m.name}  —  {m.status}",
                         icon=_member_icon(m),
                     ))
+
+    return rows
+
+
+@dataclass
+class MemberRef:
+    """A single-level-shape member row's live-data pointer — nothing else.
+    The member row itself is drawn straight from the real PropertyGroup item
+    (checkbox, label, target/keeper widgets — all section-specific), so this
+    flatten layer only needs to know WHERE it lives; identical live-data
+    approach to ASSETDOCTOR_UL_broken_libs's flat case."""
+    ref_index: int
+
+
+@dataclass
+class GroupSpec:
+    """One single-level section's fully-formed group row. Label/icon/alert/
+    has_action are computed by the CALLER (each section's grouping semantics —
+    "matched" counts for Missing Textures, "mismatch" counts for Duplicate
+    Textures, etc. — are section-specific and deliberately kept out of this
+    bpy-free shell, same "shell vs flexibility" split as ``_draw_group_header``).
+    ``groups`` passed to ``flatten_group_member_rows`` must already be in the
+    desired display order."""
+    key: str            # raw grouping key (toggle/expand identity)
+    label: str          # full display text, count suffix included
+    icon: str
+    members: list[MemberRef]
+    has_action: bool = False  # show the header's action button
+    alert: bool = False       # show the header's label in Blender's alert/red styling
+    info: str = ""      # optional one-line status shown right under an expanded group
+    info_icon: str = "INFO"  # icon for the info line (e.g. an error/question state)
+
+
+def flatten_group_member_rows(
+    groups: list[GroupSpec],
+    expanded: set[str],
+    ref_prop: str,
+) -> list[PickerRow]:
+    """Return the flat ordered list of visible rows for a single-level
+    group->member section (Group 12 Phase 3 — Missing Textures, Duplicate
+    Textures, Datablock Reconnect, and later Examine Library all share this
+    shell) given current expand state. ``ref_prop`` is the WM collection name
+    every member row's ``ref_index`` points into."""
+    rows: list[PickerRow] = []
+    for g in groups:
+        is_exp = g.key in expanded
+        rows.append(PickerRow(
+            kind="group",
+            key=g.key,
+            indent=0,
+            label=g.label,
+            icon=g.icon,
+            has_action=g.has_action,
+            alert=g.alert,
+            is_expanded=is_exp,
+        ))
+        if is_exp and g.info:
+            rows.append(PickerRow(kind="rollup", group_key=g.key, indent=2,
+                                  label=g.info, icon=g.info_icon))
+        if not is_exp:
+            continue
+        for m in g.members:
+            rows.append(PickerRow(
+                kind="member",
+                key=g.key,
+                group_key=g.key,
+                ref_prop=ref_prop,
+                ref_index=m.ref_index,
+                indent=2,
+            ))
 
     return rows

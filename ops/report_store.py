@@ -197,6 +197,21 @@ def rebuild_rows_for_prop(wm, prop: str) -> None:
     elif prop in ("assetdoctor_flatten_expanded", "assetdoctor_flatten_deselected"):
         from .linkchain import rebuild_flatten_picker_rows  # lazy — avoids circular import
         rebuild_flatten_picker_rows(wm)
+    elif prop == "assetdoctor_tex_expanded":
+        # Shared with Possible Matches/Linked-missing's namespaced ("\x01"/"\x03")
+        # keys, which still draw manually — a rebuild here is harmless for those
+        # (Missing Textures' own picker rows just don't contain that key).
+        from .image_relink import rebuild_missing_tex_picker_rows  # lazy — avoids circular import
+        rebuild_missing_tex_picker_rows(wm)
+    elif prop == "assetdoctor_dup_expanded":
+        from .image_dedup import rebuild_dup_tex_picker_rows  # lazy — avoids circular import
+        rebuild_dup_tex_picker_rows(wm)
+    elif prop == "assetdoctor_missing_expanded":
+        from .datablock_reconnect import rebuild_reconnect_picker_rows  # lazy — avoids circular import
+        rebuild_reconnect_picker_rows(wm)
+    elif prop == "assetdoctor_examine_expanded":
+        from .examine_library import rebuild_examine_picker_rows  # lazy — avoids circular import
+        rebuild_examine_picker_rows(wm)
 
 
 def _index_prop_for(prop: str) -> str:
@@ -223,6 +238,26 @@ def focus_row(wm, prop: str, key: str) -> None:
         for i, item in enumerate(wm.assetdoctor_flatten_picker_rows):
             if item.key == key:
                 wm.assetdoctor_flatten_picker_active = i
+                return
+    elif prop == "assetdoctor_tex_expanded":
+        for i, item in enumerate(wm.assetdoctor_missingtex_picker_rows):
+            if item.key == key:
+                wm.assetdoctor_missingtex_picker_active = i
+                return
+    elif prop == "assetdoctor_dup_expanded":
+        for i, item in enumerate(wm.assetdoctor_duptex_picker_rows):
+            if item.key == key:
+                wm.assetdoctor_duptex_picker_active = i
+                return
+    elif prop == "assetdoctor_missing_expanded":
+        for i, item in enumerate(wm.assetdoctor_reconnect_picker_rows):
+            if item.key == key:
+                wm.assetdoctor_reconnect_picker_active = i
+                return
+    elif prop == "assetdoctor_examine_expanded":
+        for i, item in enumerate(wm.assetdoctor_examine_picker_rows):
+            if item.key == key:
+                wm.assetdoctor_examine_picker_active = i
                 return
 
 

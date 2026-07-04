@@ -130,6 +130,62 @@ def _populate_examine_rows(context, library) -> int:
     return len(coll)
 
 
+def rebuild_examine_picker_rows(wm) -> None:
+    """Rebuild ``wm.assetdoctor_examine_picker_rows`` (Group 12 Phase 3, item
+    4) from the current ``assetdoctor_examine_rows`` + expand state.
+
+    The simplest of the four Phase 3 sections: unlike Missing Textures/
+    Duplicate Textures/Reconnect, NOTHING in a group's header text depends on
+    per-row state here (no "N matched"/mismatch/confidence counts — just a
+    bare member count), and no field changes which GROUP a row belongs to
+    (grouping is by ``kind``, fixed at scan time). So only membership-
+    changing ops (Examine / Apply Selected) need to call this — every other
+    per-row edit (``selected``/``make_local``/``target``/a fresh
+    ``source_blend`` from Pick a Specific Item or Search a Folder) is drawn
+    live by ``ASSETDOCTOR_UL_examine_picker`` straight off the real row, no
+    rebuild needed."""
+    from ..core import picker as picker_mod
+    from .report_store import get_expanded
+
+    coll = wm.assetdoctor_examine_rows
+    if not len(coll):
+        wm.assetdoctor_examine_picker_rows.clear()
+        return
+
+    expanded = get_expanded(wm, "assetdoctor_examine_expanded")
+    groups: dict[str, list[int]] = {}
+    for i, item in enumerate(coll):
+        groups.setdefault(item.kind, []).append(i)
+
+    specs = [
+        picker_mod.GroupSpec(
+            key=kind,
+            label=f"{kind}  ({len(groups[kind])})",
+            icon="LIBRARY_DATA_DIRECT",
+            members=[picker_mod.MemberRef(ref_index=i) for i in groups[kind]],
+        )
+        for kind in sorted(groups, key=str.lower)
+    ]
+    picker_rows = picker_mod.flatten_group_member_rows(
+        specs, expanded, ref_prop="assetdoctor_examine_rows")
+
+    picker_coll = wm.assetdoctor_examine_picker_rows
+    picker_coll.clear()
+    for pr in picker_rows:
+        item = picker_coll.add()
+        item.kind = pr.kind
+        item.key = pr.key
+        item.group_key = pr.group_key
+        item.ref_prop = pr.ref_prop
+        item.ref_index = pr.ref_index
+        item.indent = pr.indent
+        item.label = pr.label
+        item.icon = pr.icon
+        item.has_action = pr.has_action
+        item.alert = pr.alert
+        item.is_expanded = pr.is_expanded
+
+
 class ASSETDOCTOR_OT_examine_library(bpy.types.Operator):
     bl_idname = "assetdoctor.examine_library"
     bl_label = "Examine Library"
@@ -148,6 +204,7 @@ class ASSETDOCTOR_OT_examine_library(bpy.types.Operator):
             self.report({"ERROR"}, "Pick a library to examine")
             return {"CANCELLED"}
         n = _populate_examine_rows(context, library)
+        rebuild_examine_picker_rows(context.window_manager)
         if context.area:
             context.area.tag_redraw()
         if n:
@@ -370,6 +427,7 @@ class ASSETDOCTOR_OT_examine_apply_selected(bpy.types.Operator):
 
         wm.assetdoctor_examine_rows.clear()
         wm.assetdoctor_examine_scanned = False
+        rebuild_examine_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

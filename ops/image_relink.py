@@ -155,6 +155,75 @@ def _populate_broken_images(context) -> tuple[int, int]:
     return len(missing), len(targets)
 
 
+# Sentinel for a texture with no attributed material — matches the one the
+# panel used before virtualization. NOT "\x00": Blender's StringProperty
+# round-trips through a C string, which truncates at the first NUL byte, so
+# a lone "\x00" silently vanished from assetdoctor_tex_expanded on write.
+_UNGROUPED = "\x02"
+
+
+def rebuild_missing_tex_picker_rows(wm) -> None:
+    """Rebuild ``wm.assetdoctor_missingtex_picker_rows`` (Group 12 Phase 3)
+    from the current ``assetdoctor_broken_imgs`` + expand state.
+
+    Called after every op that changes GROUP MEMBERSHIP (scan / relink
+    selected) or a row's ``target`` (pick / accept / folder-search) — the
+    group header's "N of M matched" count would otherwise go stale between
+    scans, since (unlike the old hand-drawn loop) it's no longer recomputed
+    on every redraw. A bare checkbox tick needs no rebuild (drawn live by
+    ``ASSETDOCTOR_UL_missing_tex_picker`` straight off the real row)."""
+    from ..core import picker as picker_mod
+    from .report_store import get_expanded
+
+    coll = wm.assetdoctor_broken_imgs
+    if not len(coll):
+        wm.assetdoctor_missingtex_picker_rows.clear()
+        return
+
+    expanded = get_expanded(wm, "assetdoctor_tex_expanded")
+    groups: dict[str, list[int]] = {}
+    order: list[str] = []
+    for i, item in enumerate(coll):
+        key = item.material or _UNGROUPED
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(i)
+
+    specs = []
+    for key in sorted(order):
+        indices = groups[key]
+        total = len(indices)
+        matched = sum(1 for i in indices if coll[i].target)
+        disp = "(no material)" if key == _UNGROUPED else key
+        label = f"{disp}  ({matched} of {total} matched)" if matched else f"{disp}  ({total})"
+        specs.append(picker_mod.GroupSpec(
+            key=key,
+            label=label,
+            icon="CHECKMARK" if matched and matched == total else "MATERIAL",
+            members=[picker_mod.MemberRef(ref_index=i) for i in indices],
+            has_action=key != _UNGROUPED,
+        ))
+    picker_rows = picker_mod.flatten_group_member_rows(
+        specs, expanded, ref_prop="assetdoctor_broken_imgs")
+
+    picker_coll = wm.assetdoctor_missingtex_picker_rows
+    picker_coll.clear()
+    for pr in picker_rows:
+        item = picker_coll.add()
+        item.kind = pr.kind
+        item.key = pr.key
+        item.group_key = pr.group_key
+        item.ref_prop = pr.ref_prop
+        item.ref_index = pr.ref_index
+        item.indent = pr.indent
+        item.label = pr.label
+        item.icon = pr.icon
+        item.has_action = pr.has_action
+        item.alert = pr.alert
+        item.is_expanded = pr.is_expanded
+
+
 class ASSETDOCTOR_OT_scan_broken_textures(bpy.types.Operator):
     bl_idname = "assetdoctor.scan_broken_textures"
     bl_label = "List Missing Textures"
@@ -171,6 +240,7 @@ class ASSETDOCTOR_OT_scan_broken_textures(bpy.types.Operator):
         wm = context.window_manager
         wm.assetdoctor_tex_scanned = True
         wm.assetdoctor_tex_initial_missing = missing  # "found" later = initial − still-missing
+        rebuild_missing_tex_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()
         linked = len(wm.assetdoctor_linked_missing_imgs)
@@ -329,6 +399,7 @@ class ASSETDOCTOR_OT_relink_folder_search(ModalProgressMixin, bpy.types.Operator
                 it.ambiguous_count = 0
             else:
                 it.ambiguous_count = len(ambiguous.get(_wanted_basename(it), []))
+        rebuild_missing_tex_picker_rows(context.window_manager)
         if context.area:
             context.area.tag_redraw()
         yield (1.0, "Done")
@@ -566,6 +637,7 @@ class ASSETDOCTOR_OT_accept_match(bpy.types.Operator):
         item.has_candidate = os.path.isfile(item.proposal)
         item.selected = True
         item.proposal = ""
+        rebuild_missing_tex_picker_rows(context.window_manager)
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}
@@ -596,6 +668,7 @@ class ASSETDOCTOR_OT_accept_material_matches(bpy.types.Operator):
             item.selected = True
             item.proposal = ""
             accepted += 1
+        rebuild_missing_tex_picker_rows(context.window_manager)
         if context.area:
             context.area.tag_redraw()
         self.report({"INFO"}, f"Accepted {accepted} match(es) for {self.material}.")
@@ -626,6 +699,7 @@ class ASSETDOCTOR_OT_accept_all_matches(bpy.types.Operator):
             item.selected = True
             item.proposal = ""
             accepted += 1
+        rebuild_missing_tex_picker_rows(context.window_manager)
         if context.area:
             context.area.tag_redraw()
         if accepted:
@@ -710,6 +784,7 @@ class ASSETDOCTOR_OT_relink_pick_texture(bpy.types.Operator):
             item.target = target
             item.has_candidate = os.path.isfile(target)
             item.selected = True
+            rebuild_missing_tex_picker_rows(context.window_manager)
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}
@@ -767,6 +842,7 @@ class ASSETDOCTOR_OT_relink_textures_selected(bpy.types.Operator):
             pass
 
         _populate_broken_images(context)
+        rebuild_missing_tex_picker_rows(context.window_manager)
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

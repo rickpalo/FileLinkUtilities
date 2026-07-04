@@ -1,6 +1,7 @@
 """Tests for core.picker.flatten_picker_rows."""
 import pytest
-from core.picker import MemberData, PickerRow, flatten_picker_rows
+from core.picker import (MemberData, PickerRow, GroupSpec, MemberRef,
+                         flatten_picker_rows, flatten_group_member_rows)
 
 
 def _m(name, *, ready=True, done=False, is_remote=False, is_rig=True, ref_index=0, status="ok"):
@@ -195,3 +196,105 @@ def test_member_indent_in_nested_remote_group():
                                {"Remote: f1", "f1 :: Rig_A"}, set())
     member = next(r for r in rows if r.kind == "member")
     assert member.indent == 3
+
+
+# --- flatten_group_member_rows (Group 12 Phase 3, single-level shape) ---
+
+def test_group_member_empty_input():
+    assert flatten_group_member_rows([], set(), "assetdoctor_broken_imgs") == []
+
+
+def test_group_member_collapsed_hides_members():
+    g = GroupSpec(key="Wood", label="Wood  (1)", icon="MATERIAL",
+                 members=[MemberRef(ref_index=0)])
+    rows = flatten_group_member_rows([g], set(), "assetdoctor_broken_imgs")
+    assert len(rows) == 1
+    assert rows[0].kind == "group"
+    assert rows[0].is_expanded is False
+
+
+def test_group_member_expanded_shows_members_with_ref_prop():
+    g = GroupSpec(key="Wood", label="Wood  (2)", icon="MATERIAL",
+                 members=[MemberRef(ref_index=3), MemberRef(ref_index=7)])
+    rows = flatten_group_member_rows([g], {"Wood"}, "assetdoctor_broken_imgs")
+    kinds = [r.kind for r in rows]
+    assert kinds == ["group", "member", "member"]
+    assert rows[1].ref_index == 3 and rows[1].ref_prop == "assetdoctor_broken_imgs"
+    assert rows[2].ref_index == 7 and rows[2].group_key == "Wood"
+
+
+def test_group_member_label_icon_passed_through():
+    g = GroupSpec(key="Wood", label="Wood  (2 of 2 matched)", icon="CHECKMARK",
+                 members=[MemberRef(ref_index=0)])
+    rows = flatten_group_member_rows([g], set(), "x")
+    assert rows[0].label == "Wood  (2 of 2 matched)"
+    assert rows[0].icon == "CHECKMARK"
+
+
+def test_group_member_has_action_propagated():
+    g = GroupSpec(key="Wood", label="Wood", icon="MATERIAL",
+                 members=[MemberRef(ref_index=0)], has_action=True)
+    rows = flatten_group_member_rows([g], set(), "x")
+    assert rows[0].has_action is True
+
+
+def test_group_member_has_action_defaults_false():
+    g = GroupSpec(key="\x02", label="(no material)  (1)", icon="MATERIAL",
+                 members=[MemberRef(ref_index=0)])
+    rows = flatten_group_member_rows([g], set(), "x")
+    assert rows[0].has_action is False
+
+
+def test_group_member_alert_propagated():
+    g = GroupSpec(key="Wood", label="Wood  (⚠1 mismatch)", icon="ERROR",
+                 members=[MemberRef(ref_index=0)], alert=True)
+    rows = flatten_group_member_rows([g], set(), "x")
+    assert rows[0].alert is True
+
+
+def test_group_member_alert_defaults_false():
+    g = GroupSpec(key="Wood", label="Wood", icon="MATERIAL",
+                 members=[MemberRef(ref_index=0)])
+    rows = flatten_group_member_rows([g], set(), "x")
+    assert rows[0].alert is False
+
+
+def test_group_member_order_is_respected():
+    a = GroupSpec(key="B", label="B", icon="MATERIAL", members=[MemberRef(ref_index=0)])
+    b = GroupSpec(key="A", label="A", icon="MATERIAL", members=[MemberRef(ref_index=1)])
+    rows = flatten_group_member_rows([a, b], set(), "x")
+    assert [r.key for r in rows] == ["B", "A"]
+
+
+def test_group_member_info_rollup_shown_when_expanded():
+    g = GroupSpec(key="Wood", label="Wood", icon="MATERIAL",
+                 members=[MemberRef(ref_index=0)], info="no source picked yet")
+    rows = flatten_group_member_rows([g], {"Wood"}, "x")
+    kinds = [r.kind for r in rows]
+    assert kinds == ["group", "rollup", "member"]
+    assert rows[1].label == "no source picked yet"
+    assert rows[1].group_key == "Wood"
+    assert rows[1].icon == "INFO"
+
+
+def test_group_member_info_rollup_custom_icon():
+    g = GroupSpec(key="Wood", label="Wood", icon="MATERIAL",
+                 members=[MemberRef(ref_index=0)], info="library not found",
+                 info_icon="ERROR")
+    rows = flatten_group_member_rows([g], {"Wood"}, "x")
+    rollup = next(r for r in rows if r.kind == "rollup")
+    assert rollup.icon == "ERROR"
+
+
+def test_group_member_info_rollup_hidden_when_collapsed():
+    g = GroupSpec(key="Wood", label="Wood", icon="MATERIAL",
+                 members=[MemberRef(ref_index=0)], info="no source picked yet")
+    rows = flatten_group_member_rows([g], set(), "x")
+    assert all(r.kind != "rollup" for r in rows)
+
+
+def test_group_member_no_rollup_when_info_empty():
+    g = GroupSpec(key="Wood", label="Wood", icon="MATERIAL",
+                 members=[MemberRef(ref_index=0)])
+    rows = flatten_group_member_rows([g], {"Wood"}, "x")
+    assert all(r.kind != "rollup" for r in rows)
