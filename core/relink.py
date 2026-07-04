@@ -25,6 +25,14 @@ class LibDesc:
     stored: str  # library.filepath as stored ("//…" or absolute)
     resolved: str  # absolute, resolved path
     exists: bool
+    # Referenced by at least one LOCAL datablock, vs. only reachable
+    # transitively through another linked library (docs/TODO.md Group 1 item
+    # 5, 2026-07-04) — `bpy.data.libraries` includes both, which is why a
+    # library your OWN linked library links (not visible in this file's own
+    # Outliner) can confusingly show up in Find Broken Links. Defaults True
+    # (direct) so every existing caller/test that doesn't compute this stays
+    # correct-by-default rather than silently wrong.
+    is_direct: bool = True
 
 
 def has_backslash(stored: str) -> bool:

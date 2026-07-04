@@ -7,6 +7,7 @@ select-the-datablock (with the agreed non-intrusive behaviour), row labels (whic
 carry the full text as a tooltip), clear, and export.
 """
 
+import json
 import os
 
 import bpy
@@ -41,12 +42,20 @@ FEATURES = [
     ("f6dup", "Duplicate Textures"),
     ("f6res", "Resolution Variants"),
     ("f9", "Dry-Run Render Warnings"),
+    ("matdiag", "Material Diagnostics"),
 ]
 
 
 # Features whose stored JSON is a TreeNode list (not a flat Report). The F7
 # dependency view needs arbitrary hierarchy (the file map), which Report can't hold.
 TREE_FEATURES = {"f7"}
+
+# Features with their OWN inline Analyze-button disclosure (ui.panels.
+# _draw_report_detail), Group 12 Phase 4 — a fixed, small set (one per call
+# site), each needing its OWN virtualized rows collection since several of
+# these can be expanded SIMULTANEOUSLY in the same Analyze panel (unlike the
+# Reports tab, which only ever shows one active feature at a time).
+INLINE_DETAIL_FEATURES = ("f1", "f2", "f7", "f7chain", "f7flatten", "f7live", "f9", "matdiag")
 
 
 def data_prop(feature: str) -> str:
@@ -158,6 +167,32 @@ def rebuild_report_rows(wm) -> None:
         return
     rows = flatten_visible(nodes, get_expanded(wm, exp_prop(active)))
     _fill_rows(coll, rows, exp_prop(active))
+
+
+def inline_rows_prop(feature: str) -> str:
+    return f"assetdoctor_inline_rows_{feature}"
+
+
+def inline_active_prop(feature: str) -> str:
+    return f"assetdoctor_inline_active_{feature}"
+
+
+def rebuild_inline_detail_rows(wm, feature: str, nodes: list, expanded: set[str]) -> None:
+    """Refill one feature's OWN inline-disclosure rows collection (Group 12
+    Phase 4) — the per-feature analogue of ``rebuild_report_rows``, needed
+    because several features' inline disclosures can be open simultaneously
+    in the Analyze panel. ``nodes`` is already headline-filtered (the node
+    ``ui.panels._report_headline`` says is quoted verbatim already removed)
+    by the caller — this function has no UI-layer knowledge of headlines.
+    Refilled on every ``_draw_report_detail`` call (cheap: the SAME
+    nodes+flatten work the old manual loop already redid every draw; the win
+    here is `template_list` only instantiating on-screen rows, not a
+    fill-avoidance trick — see that function's docstring)."""
+    coll = getattr(wm, inline_rows_prop(feature), None)
+    if coll is None:
+        return
+    rows = flatten_visible(nodes, expanded)
+    _fill_rows(coll, rows, "assetdoctor_detail_expanded")
 
 
 def rebuild_resource_rows(wm) -> None:
@@ -402,6 +437,40 @@ def resolve_datablock(type_name: str, name: str):
     return None
 
 
+# Click-to-select outcome -> icon, for a STICKY per-row indicator (docs/TODO.md
+# Group 10 #37, 2026-07-04) instead of relying solely on a one-shot status
+# message that's easy to miss or misattribute once you've scrolled past it.
+SELECT_OUTCOME_ICON = {
+    "found": "CHECKMARK",
+    "no_user": "QUESTION",
+    "unresolved": "ERROR",
+}
+
+
+def _load_select_outcomes(wm) -> dict:
+    raw = wm.assetdoctor_select_outcomes
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def _save_select_outcome(wm, type_: str, name: str, outcome: str) -> None:
+    outcomes = _load_select_outcomes(wm)
+    outcomes[f"{type_}/{name}"] = outcome
+    wm.assetdoctor_select_outcomes = json.dumps(outcomes)
+
+
+def get_select_outcome(wm, type_: str, name: str) -> str:
+    """Persistent last-known click-to-select outcome for one datablock —
+    ``"found"``/``"no_user"``/``"unresolved"``, or ``""`` if it's never been
+    clicked. Rows draw ``SELECT_OUTCOME_ICON[outcome]`` next to themselves
+    when this is non-empty."""
+    return _load_select_outcomes(wm).get(f"{type_}/{name}", "")
+
+
 class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
     bl_idname = "assetdoctor.select_datablock"
     bl_label = "Select"
@@ -412,6 +481,20 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
     name: bpy.props.StringProperty()  # type: ignore[valid-type]
 
     def execute(self, context):
+        wm = context.window_manager
+        if self._resolve_target() is None:
+            # The datablock itself couldn't be found at all (renamed/removed
+            # since this report was generated) — distinct from "found, but no
+            # live user" below (docs/TODO.md Group 10 #37's "unresolved" case).
+            msg = (f"{self.type}/{self.name}: could not resolve this datablock — it "
+                   "may have been renamed or removed since this report was generated")
+            _save_select_outcome(wm, self.type, self.name, "unresolved")
+            self.report({"WARNING"}, msg)
+            set_result(context, msg, ok=False)
+            if context.area:
+                context.area.tag_redraw()
+            return {"CANCELLED"}
+
         targets, materials = self._find_objects(context)
         if not targets:
             # Non-intrusive: don't open/rearrange editors; hint where to look.
@@ -422,13 +505,20 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
             # real user). Also covers the case where a real user exists but
             # its collection is excluded from the current view layer, which
             # "has no users in the scene" technically doesn't distinguish.
+            # 2026-07-04: ALSO now recorded per-row (`_save_select_outcome`)
+            # so the row itself keeps showing this outcome after you've
+            # scrolled past the message, not just this one-shot toast.
             msg = (f"{self.type}/{self.name}: no user found in the current view "
                    "layer (it may be unused, or its collection is excluded) — "
                    "check Outliner → Display Mode → Blender File / Orphan Data")
+            _save_select_outcome(wm, self.type, self.name, "no_user")
             self.report({"INFO"}, msg)
             set_result(context, msg, ok=False)
+            if context.area:
+                context.area.tag_redraw()
             return {"CANCELLED"}
 
+        _save_select_outcome(wm, self.type, self.name, "found")
         for obj in context.view_layer.objects:
             obj.select_set(False)
         for obj in targets:
@@ -457,6 +547,8 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
         _reveal_in_outliner(context, filter_name)
         tail = f" — Outliner filtered to '{filter_name}'" if filter_name else ""
         self.report({"INFO"}, f"Selected {len(targets)} object(s) using {self.name}{tail}")
+        if context.area:
+            context.area.tag_redraw()
         return {"FINISHED"}
 
     def _resolve_target(self):

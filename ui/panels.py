@@ -141,6 +141,15 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
         if item.ref_type:
             op.ref_type = item.ref_type
             op.ref_name = item.ref_name
+            # Sticky click-to-select outcome icon (docs/TODO.md Group 10 #37,
+            # 2026-07-04) — shows the LAST result for this specific datablock
+            # (found-and-selected / no live user / unresolved) so it stays
+            # visible after you've scrolled past the one-shot status message.
+            from ..ops.report_store import SELECT_OUTCOME_ICON, get_select_outcome
+
+            outcome = get_select_outcome(context.window_manager, item.ref_type, item.ref_name)
+            if outcome:
+                row.label(text="", icon=SELECT_OUTCOME_ICON.get(outcome, "NONE"))
         if item.popup_parent:
             op.popup_parent = item.popup_parent
             op.popup_basename = item.popup_basename
@@ -562,6 +571,15 @@ class ASSETDOCTOR_UL_broken_libs(bpy.types.UIList):
         row = layout.row(align=True)
         row.prop(item, "selected", text="")
         row.label(text=item.name, icon="LIBRARY_DATA_BROKEN")
+        # "indirect" (docs/TODO.md Group 1 item 5, 2026-07-04): this library
+        # isn't linked by the current file directly, only by ANOTHER linked
+        # library — not visible in this file's own Outliner, so callers used
+        # to be confused why it showed up here at all. Only the surprising
+        # case gets a visible flag; "direct" is the expected default, no noise.
+        if item.tag == "indirect":
+            ind = row.row()
+            ind.alignment = "RIGHT"
+            ind.label(text="indirect", icon="INFO")
         target = row.row()
         target.alignment = "RIGHT"
         if item.target:
@@ -854,9 +872,11 @@ class ASSETDOCTOR_UL_examine_picker(bpy.types.UIList):
             text, sicon = _graph_match_suffix(f"local: {real.suggested_name}", real.graph_match)
             s.label(text=text, icon=sicon)
         elif real.use_suggested and real.suggested_kind == "library":
+            from ..core.datablock_links import basename as _lib_basename
+
             s = row.row()
             s.alignment = "RIGHT"
-            base = f"{os.path.basename(real.suggested_library)}: {real.suggested_name}"
+            base = f"{_lib_basename(real.suggested_library)}: {real.suggested_name}"
             text, sicon = _graph_match_suffix(base, real.graph_match)
             s.label(text=text, icon=sicon)
         elif real.source_blend:
@@ -1089,22 +1109,31 @@ def _report_headline(nodes, feature: str, wm) -> tuple[str, object | None]:
 def _draw_report_detail(layout, wm, feature: str) -> None:
     """One Analyze button's report result: a single row carrying BOTH the
     one-line headline AND its own expand arrow — no separate "Details" row
-    (item a, 2026-06-25). When expanded, every remaining category draws as
-    its OWN collapsible row, collapsed by default (item c), via the inline-
-    only ``assetdoctor_detail_expanded`` key set (independent of each
-    feature's own ``exp_prop`` — the dedicated Reports tab pre-seeds THAT one
-    expanded, which would defeat "starts collapsed" here). Plain depth
-    indentation only, no tree-connector glyphs (item b). The one node the
-    headline already quotes verbatim is left out of the body so it isn't
-    shown twice (item e); when nothing remains beyond the headline, no arrow
-    is drawn at all — there's nothing left to disclose (item f).
+    (item a, 2026-06-25). When expanded, every remaining category draws via
+    the SAME ``ASSETDOCTOR_UL_tree``/``ASSETDOCTOR_PG_tree_row`` machinery the
+    Reports tab uses (Group 12 Phase 4, 2026-07-03) — closes the third
+    independent manual tree-renderer this project had accumulated, and its own
+    "blank rows on a deeply-expanded tree" exposure along with it. Collapsed
+    by default via the inline-only ``assetdoctor_detail_expanded`` key set
+    (independent of each feature's own ``exp_prop`` — the dedicated Reports
+    tab pre-seeds THAT one expanded, which would defeat "starts collapsed"
+    here). The one node the headline already quotes verbatim is left out of
+    the body so it isn't shown twice (item e); when nothing remains beyond the
+    headline, no arrow is drawn at all — there's nothing left to disclose
+    (item f).
 
-    All rows draw inside one ``column(align=True)`` (user feedback,
-    2026-06-25 item 4: vertical spacing between rows was "inconsistent and
-    too large") — a bare sequence of top-level ``layout.row()`` calls each
-    carries Blender's normal inter-widget margin; an aligned column packs
-    them tightly, matching the Missing Textures section's spacing."""
-    from ..core.tree import flatten_visible
+    Each of the ~7 features calling this gets its OWN small rows collection
+    (``ops.report_store.inline_rows_prop``), since several can be expanded
+    SIMULTANEOUSLY in the same Analyze panel — unlike the Reports tab, which
+    only ever shows one active feature. Refilled UNCONDITIONALLY on every
+    draw (cheap: the exact same nodes-fetch + ``flatten_visible`` work the old
+    manual loop already redid every draw, just filling a small
+    ``CollectionProperty`` instead of instantiating N ``layout.row()``
+    widgets) — this sidesteps needing a rebuild-on-toggle hook for a prop
+    that's shared, namespaced-by-feature-prefix, across all 7 features; every
+    toggle already triggers a redraw, and the next draw call reads current
+    state fresh regardless of which row anywhere caused it."""
+    from ..ops import report_store
 
     has_run, nodes = _feature_tree_nodes(wm, feature)
     if not has_run:
@@ -1132,37 +1161,16 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
     if not is_open:
         return
 
-    for r in flatten_visible(remaining, expanded):
-        drow = col.row(align=True)
-        # N unit separators per level, not one separator scaled by r.indent —
-        # the same non-linear-breakage fix already applied to the dedicated
-        # Reports-tab UIList (ASSETDOCTOR_UL_tree.draw_item) at v0.2.67; this
-        # second tree-drawing call site never got it (docs/TODO.md #35).
-        drow.separator(factor=2.8)
-        for _ in range(r.indent):
-            drow.separator(factor=1.4)
-        if r.has_children:
-            top = drow.operator("assetdoctor.row_toggle", text="",
-                                icon="TRIA_DOWN" if r.expanded else "TRIA_RIGHT", emboss=False)
-            top.key = r.key
-        else:
-            drow.label(text="", icon="BLANK1")
-        if r.icon:
-            drow.label(text="", icon=r.icon)
-        if r.popup:
-            pop = drow.operator("assetdoctor.show_linked_from", text=r.label,
-                                icon="NONE", emboss=False)
-            pop.parent, pop.basename = r.popup["parent"], r.popup["basename"]
-        elif r.ref:
-            bop = drow.operator("assetdoctor.select_datablock", text=r.label,
-                                 icon="NONE", emboss=False)
-            bop.type, bop.name = r.ref["type"], r.ref["name"]
-        else:
-            drow.label(text=r.label)
-        if r.detail:
-            sub = drow.row()
-            sub.alignment = "RIGHT"
-            sub.label(text=r.detail)
+    report_store.rebuild_inline_detail_rows(wm, feature, remaining, expanded)
+    rows_prop = report_store.inline_rows_prop(feature)
+    n = len(getattr(wm, rows_prop))
+    if n:
+        col.template_list(
+            "ASSETDOCTOR_UL_tree", f"inline_{feature}",
+            wm, rows_prop,
+            wm, report_store.inline_active_prop(feature),
+            rows=min(12, max(3, n)),
+        )
 
 
 def _missing_textures_headline(wm, narrow: bool) -> str:
@@ -1598,6 +1606,15 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         _analyze_row(layout, wm, "find_orphans", "assetdoctor.scan_orphans",
                      "Find Orphans", "NONE", _orphans_headline(wm)).purge_orphans = False
         _draw_orphans(layout, wm)
+
+        # Scene Debug-style material diagnostics (docs/TODO.md Group 9 #33,
+        # scoped 2026-07-04) — read-only, no bulk-fix action (unlike the
+        # other Find-a-problem buttons above): groups materials by shader
+        # type, flags dangling node links / broken Image Texture nodes, and
+        # empty material slots.
+        _analyze_row(layout, wm, "", "assetdoctor.check_materials",
+                     "Check Materials", "MATERIAL", has_run=_feature_has_run(wm, "matdiag"))
+        _draw_report_detail(layout, wm, "matdiag")
 
         # Footprint/impact analyses — a different KIND of analysis (not "is
         # something broken") — separated from the find-a-problem buttons above
@@ -2212,7 +2229,7 @@ def _draw_orphans(layout, wm) -> None:
     or merging identical datablocks "reflects intent, not just cleanup", so
     no checkbox/bulk-action for those here), drawn straight from the report."""
     from ..core.report import Report
-    from ..ops.report_store import data_prop
+    from ..ops.report_store import SELECT_OUTCOME_ICON, data_prop, get_select_outcome
 
     if not _feature_has_run(wm, "f4"):
         return
@@ -2224,7 +2241,8 @@ def _draw_orphans(layout, wm) -> None:
     rows = wm.assetdoctor_orphan_rows
     fakes = next((f for f in report.findings if f.category == "fake_only"), None)
     identical = [f for f in report.findings if f.category == "identical"]
-    if not (len(rows) or (fakes and fakes.items) or identical):
+    skipped_lines = [ln for ln in wm.assetdoctor_orphan_skipped_text.split("\n") if ln]
+    if not (len(rows) or (fakes and fakes.items) or identical or skipped_lines):
         return
 
     box = layout.box().column(align=True)
@@ -2238,6 +2256,9 @@ def _draw_orphans(layout, wm) -> None:
             op = frow.operator("assetdoctor.select_datablock", text=name,
                                icon="NONE", emboss=False)
             op.type, op.name = type_name, name
+            outcome = get_select_outcome(wm, type_name, name)
+            if outcome:
+                frow.label(text="", icon=SELECT_OUTCOME_ICON.get(outcome, "NONE"))
 
     expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
 
@@ -2254,6 +2275,9 @@ def _draw_orphans(layout, wm) -> None:
                 op = frow.operator("assetdoctor.select_datablock", text=name,
                                    icon="NONE", emboss=False)
                 op.type, op.name = type_name, name
+                outcome = get_select_outcome(wm, type_name, name)
+                if outcome:
+                    frow.label(text="", icon=SELECT_OUTCOME_ICON.get(outcome, "NONE"))
 
     if identical:
         ckey = "orphans:identical"
@@ -2276,6 +2300,12 @@ def _draw_orphans(layout, wm) -> None:
                     op = mrow.operator("assetdoctor.select_datablock", text=name,
                                        icon="NONE", emboss=False)
                     op.type, op.name = type_name, name
+                    outcome = get_select_outcome(wm, type_name, name)
+                    if outcome:
+                        mrow.label(text="", icon=SELECT_OUTCOME_ICON.get(outcome, "NONE"))
+
+    _draw_kept_separate(box, wm, "orphans:skipped", skipped_lines,
+                        label=f"Skipped — unsafe to read ({len(skipped_lines)})", icon="ERROR")
 
 
 # Reconnect confidence -> (icon, short label). "none" shows neither — the row
@@ -2532,6 +2562,8 @@ def _draw_linked_missing_textures(tex, wm) -> None:
     tex.label(text=f"Linked — fix at the source library ({len(rows)})",
              icon="LIBRARY_DATA_BROKEN")
 
+    from ..core.datablock_links import basename as _lib_basename
+
     LM = "\x03"  # namespaced so these keys don't collide with the lists above
     expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
     groups: dict[str, list] = {}
@@ -2543,7 +2575,7 @@ def _draw_linked_missing_textures(tex, wm) -> None:
         ckey = LM + lib
         is_exp = ckey in expanded
         _draw_group_header(tex, key=ckey, prop="assetdoctor_tex_expanded", is_exp=is_exp,
-                           label=f"{os.path.basename(lib)}  ({len(members)})", icon="FILE_BLEND")
+                           label=f"{_lib_basename(lib)}  ({len(members)})", icon="FILE_BLEND")
         if not is_exp:
             continue
         for item in members:

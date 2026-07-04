@@ -33,12 +33,20 @@ def _collections():
 
 def _gather_steps(context):
     """Collect datablock info dicts across the common asset collections, yielding
-    ``(fraction, status)`` every ``_FP_CHUNK``. Returns the ``items`` list.
+    ``(fraction, status)`` every ``_FP_CHUNK``. Returns ``(items, skipped)`` —
+    ``skipped`` is every ``(label, reason)`` a fingerprintable datablock was
+    deliberately NOT read because doing so risks a native crash (see
+    ``extract.datablock_risk_reason`` — a missing placeholder or Library
+    Override's geometry/node-tree/image data can be incomplete or dangling on
+    a file with known override/dependency loops; real crash,
+    EXCEPTION_ACCESS_VIOLATION, 2026-07-03/04, `fingerprint_mesh` via this
+    exact scan). Mirrors ``ops.datablock_dup``'s shape-key skip pattern:
+    report by name instead of silently dropping into "unverified."
 
     Materials/meshes/images get a content fingerprint (for identity grouping);
     other types are still classified as orphan/fake-only but not clustered.
     """
-    from .extract import extract_image, extract_material, extract_mesh
+    from .extract import datablock_risk_reason, extract_image, extract_material, extract_mesh
     from ..core.fingerprint import (
         fingerprint_image,
         fingerprint_material,
@@ -54,6 +62,7 @@ def _gather_steps(context):
     total = sum(len(coll) for _, coll in collections) or 1
 
     items = []
+    skipped: list[tuple[str, str]] = []
     done = 0
     for type_name, coll in collections:
         maker = fp_for.get(type_name)
@@ -61,10 +70,14 @@ def _gather_steps(context):
             linked = db.library is not None
             fingerprint = None
             if maker is not None and not linked:
-                try:
-                    fingerprint = maker(db)
-                except Exception:
-                    fingerprint = None  # never let extraction break the scan
+                reason = datablock_risk_reason(db)
+                if reason:
+                    skipped.append((f"{type_name}: {db.name}", reason))
+                else:
+                    try:
+                        fingerprint = maker(db)
+                    except Exception:
+                        fingerprint = None  # never let extraction break the scan
             items.append({
                 "type": type_name,
                 "name": db.name,
@@ -76,7 +89,7 @@ def _gather_steps(context):
             done += 1
             if done % _FP_CHUNK == 0:
                 yield (0.85 * done / total, f"Scanning datablocks {done}/{total}…")
-    return items
+    return items, skipped
 
 
 def _gather(context):
@@ -135,16 +148,23 @@ class ASSETDOCTOR_OT_scan_orphans(ModalProgressMixin, bpy.types.Operator):
         from .report_store import stash_report
 
         log = get_logger()
-        items = yield from _gather_steps(context)
+        items, skipped = yield from _gather_steps(context)
 
         yield (0.9, "Building report…")
         report = build_orphan_report(items)
         stash_report(context, report, "f4")
         _populate_orphan_rows(context, report)
+        wm = context.window_manager
+        wm.assetdoctor_orphan_skipped_text = "\n".join(
+            f"{label} — not read, {reason}" for label, reason in skipped)
         for f in report.findings:
             log.info("F4 [%s] %s: %s", f.severity, f.category, f.message)
+        for label, reason in skipped:
+            log.warning("F4 skipped %s: %s", label, reason)
         summary = next((f for f in report.findings if f.category == "summary"), None)
         msg = summary.message if summary else "scan complete"
+        if skipped:
+            msg += f" ({len(skipped)} skipped — unsafe to read, see the list below)"
 
         if not self.purge_orphans:
             level = "WARNING" if report.count("warning") else "INFO"

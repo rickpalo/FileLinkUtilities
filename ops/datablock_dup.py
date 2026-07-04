@@ -76,24 +76,43 @@ def _fingerprint_for(attr: str, block, skipped: list[tuple[str, str]]) -> str:
     return ""
 
 
+_FP_CHUNK = 32  # members fingerprinted between progress yields — matches
+                # ops.material_dedup/instance_dedup's own established pattern
+
+
 def _gather_steps(context):
     """Fingerprint every LOCAL ``.NNN``-family member across the in-scope
-    collections, yielding ``(fraction, status)`` per collection. Returns
-    ``(members, id_by_key, skipped)`` (via the generator's value) — ``members``
-    use ``"{attr}:{name}"`` as their :class:`core.datablock_dedup.MemberInfo`
-    name so one ``plan_merges`` call naturally keeps each type's families
-    separate (the attr prefix survives ``.NNN``-suffix stripping); ``skipped``
-    is every ``(name, reason)`` a type's fingerprinter refused to read
-    safely (currently only shape keys)."""
+    collections, yielding ``(fraction, status)`` every ``_FP_CHUNK`` members
+    (2026-07-04 follow-up: this used to yield only ONCE PER COLLECTION TYPE,
+    so a single huge collection — e.g. thousands of Actions in one family
+    sweep, the real-world case that motivated this — blocked the whole modal
+    tick with no progress update or ESC/Pause opportunity in between; matches
+    the finer per-item chunking `ops.material_dedup`/`ops.instance_dedup`
+    already use). Returns ``(members, id_by_key, skipped)`` (via the
+    generator's value) — ``members`` use ``"{attr}:{name}"`` as their
+    :class:`core.datablock_dedup.MemberInfo` name so one ``plan_merges`` call
+    naturally keeps each type's families separate (the attr prefix survives
+    ``.NNN``-suffix stripping); ``skipped`` is every ``(name, reason)`` a
+    type's fingerprinter refused to read safely (currently only shape keys)."""
     members: list[dd.MemberInfo] = []
     id_by_key: dict[tuple[str, str], object] = {}
     skipped: list[tuple[str, str]] = []
-    total = len(_GENERIC_COLLECTIONS) or 1
-    for i, (label, attr) in enumerate(_GENERIC_COLLECTIONS):
+
+    # Pre-scan every collection's family membership first (cheap — just names,
+    # no fingerprinting yet) so the total item count is known up front and the
+    # fingerprinting loop below can yield on a flat per-item cadence instead
+    # of per collection-type.
+    per_collection = []
+    for label, attr in _GENERIC_COLLECTIONS:
         coll = getattr(bpy.data, attr, None)
         blocks = [b for b in coll if b.library is None] if coll is not None else []
         fams = dg.duplicate_families([b.name for b in blocks])
         family_names = {n for ms in fams.values() for n in ms}
+        per_collection.append((label, attr, blocks, family_names))
+    total = sum(len(family_names) for _l, _a, _b, family_names in per_collection) or 1
+
+    done = 0
+    for label, attr, blocks, family_names in per_collection:
         for block in blocks:
             if block.name not in family_names:
                 continue
@@ -101,7 +120,9 @@ def _gather_steps(context):
             members.append(dd.MemberInfo(name=f"{attr}:{block.name}",
                                          fingerprint=_fingerprint_for(attr, block, skipped),
                                          users=block.users))
-        yield ((i + 1) / total, f"Scanning {label} ({len(family_names)} in families)…")
+            done += 1
+            if done % _FP_CHUNK == 0:
+                yield (done / total, f"Fingerprinting {label} ({done}/{total})…")
     return members, id_by_key, skipped
 
 

@@ -74,6 +74,7 @@ from .image_dedup import (
 from .progress import ASSETDOCTOR_OT_toggle_pause, ASSETDOCTOR_OT_request_cancel
 from .make_local import ASSETDOCTOR_OT_make_local
 from .material_dedup import ASSETDOCTOR_OT_material_dedup, ASSETDOCTOR_OT_merge_material_selected
+from .material_diagnostics import ASSETDOCTOR_OT_check_materials
 from .orphans import ASSETDOCTOR_OT_purge_orphans_selected, ASSETDOCTOR_OT_scan_orphans
 from .instance_dedup import (
     ASSETDOCTOR_OT_instance_geometry, ASSETDOCTOR_OT_instance_geometry_selected,
@@ -147,6 +148,7 @@ REGISTER_CLASSES = (
     ASSETDOCTOR_OT_make_local,
     ASSETDOCTOR_OT_material_dedup,
     ASSETDOCTOR_OT_merge_material_selected,
+    ASSETDOCTOR_OT_check_materials,
     ASSETDOCTOR_OT_scan_orphans,
     ASSETDOCTOR_OT_purge_orphans_selected,
     ASSETDOCTOR_OT_instance_geometry,

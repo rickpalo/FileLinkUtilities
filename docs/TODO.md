@@ -33,16 +33,146 @@
 ## `_draw_report_detail`'s inline disclosure onto `ASSETDOCTOR_UL_tree`) is next
 ## whenever picked up — not started.
 ##
-## User's call after Examine Library: commit + publish now, WITHOUT a live-Blender
-## confirm pass on any of Phase 3's four items (only Phases 1/2/item-1 got that back
-## on 2026-07-03 morning) — a deliberate departure from this project's own standing
-## "verify before publish" practice (see e.g. v0.2.81's hold), accepted explicitly
-## after being flagged. See the commit/publish digest further down for what shipped.
+## ✅ COMMITTED as `4a4fb4d` (2026-07-03) — bundles v0.2.96 through v0.2.100 (all of
+## Group 12 Phase 3 + the Resolution Variants fix) in one commit. **Publish
+## deliberately HELD**: asked the user whether to publish everything now given items
+## 2-4 have had ZERO Blender testing (not even headless) vs. committing locally and
+## holding publish until live-verified — user chose to hold. NOT pushed, NOT tagged,
+## NOT released, gh-pages channel still only advertises through v0.2.95's published
+## state (check CHANGELOG/last actual publish, this repo's local version numbering
+## has run ahead of the published channel for a while now — verify before assuming).
 ##
-## Group 13's items are logged but explicitly PARKED pending the user's crash
-## logs/screenshots — don't guess-fix them without evidence. Flatten v2 is committed
-## but still imperfect — not the priority, don't resume unless asked.
+## ✅ LIVE-VERIFIED 2026-07-03 (same day, later): user confirmed the whole Phase 3
+## stack (items 1-4 + the Resolution Variants fix) — "Live verify looks good," no
+## issues reported. **Publish still deliberately HELD** — user's explicit call:
+## build Group 12 Phase 4 first and publish everything together as one combined
+## release, rather than publish Phase 3 now and Phase 4 separately later.
 ##
+## ✅ GROUP 12 COMPLETE — Phase 4, v0.2.101 (2026-07-03, same session, immediately
+## after the publish-timing decision). Retargeted `_draw_report_detail`'s inline
+## Analyze-button disclosure (File Map, Circular references, Multi-hop chains,
+## Flattenable overrides' rollup preview, Make Local, Dry-Run Render warnings — the 7
+## call sites: f1/f2/f7/f7chain/f7flatten/f7live/f9) onto the SAME
+## `ASSETDOCTOR_UL_tree`/`ASSETDOCTOR_PG_tree_row` machinery the Reports tab already
+## uses, closing the third independent manual tree-renderer this project had
+## accumulated. **Design choice worth knowing:** rather than threading a rebuild-on-
+## toggle hook through the shared `assetdoctor_detail_expanded` prop (awkward — it's
+## shared/namespaced across all 7 features, so a toggle can't tell which feature's
+## collection to refill), each feature's rows collection is refilled UNCONDITIONALLY
+## on every `_draw_report_detail` draw call — cheap, since it's the exact same
+## nodes-fetch + `flatten_visible` work the old manual loop already redid every draw;
+## the actual virtualization win is `template_list` only instantiating on-screen rows,
+## not a fill-avoidance trick. New `ops/report_store.INLINE_DETAIL_FEATURES` (the 7
+## keys) + `inline_rows_prop`/`inline_active_prop`/`rebuild_inline_detail_rows`; 7 new
+## WM `CollectionProperty`/`IntProperty` pairs registered in a loop (mirrors the
+## existing per-feature `assetdoctor_rep_*`/`assetdoctor_repx_*` pattern). NO new
+## UIList needed — reused `ASSETDOCTOR_UL_tree` as-is, including its already-correct
+## click-to-select/click-to-reveal-popup handling via `ASSETDOCTOR_OT_row_label`
+## (the old manual loop had its own, now-deleted, reimplementation of that). Manifest
+## 0.2.101, pytest still 515 (no new bpy-free surface), full `py_compile` clean. NOT
+## live-verified — every one of the 7 call sites needs a spot-check (expand/collapse,
+## scrolling on a deep tree, click-to-select, the File Map's popup).
+##
+## **This closes Group 12 entirely** — all 4 phases done
+## (`C:\Users\Rick\.claude\plans\graceful-wondering-steele.md`). NOT committed yet.
+##
+## ✅ FULL-BACKLOG PLAN ADOPTED 2026-07-04 — plan file at
+## `C:\Users\Rick\.claude\plans\delightful-singing-tome.md`: Phase 1 (ready fixes) →
+## Phase 2 (one combined live-verify + commit + publish) → Phase R (full addon rename
+## to "File & Link Utilities" — package id, class prefixes, operator category, WM
+## props, GitHub repo, gh-pages URL) → Phase 3 (quick decisions) → Phase 4 (6 roadmap
+## features + the new file-load-warnings capability, sequenced). Also scoped: a full
+## rename to "File & Link Utilities" (package id `file_link_utilities`, operators
+## `filelink.*`, classes `FILELINK_*`, repo `rickpalo/FileLinkUtilities`) — NOT
+## started yet, comes right after Phase 2 per the plan.
+##
+## ✅ PHASE 1 COMPLETE, v0.2.102 (2026-07-04) — all 5 items built + verified:
+## 1) Fix-at-Source blank-library-name bug fixed (+5 pytest).
+## 2) Find Orphans mesh-fingerprint crash (Crash B) — extended the missing/override
+##    guard to all 3 fingerprint types; smoke-tested for real, all 3 checks passed.
+## 3) Find Duplicates shape-key crash (Crash A) — diagnostic probe run against the
+##    REAL PSM_Stage_v5.2.blend; **did NOT reproduce** (all 759 shape keys read fine).
+##    User's explicit call: don't guess a new risk condition, CLOSED for now, revisit
+##    only if it recurs with a fresh crash log.
+## 4) Find Duplicates chunking — `datablock_dup.py`'s coarse per-collection-type
+##    yields fixed to per-item (32-chunk, matching the other 3 scanners). Separate,
+##    NOT-yet-fixed architectural gap found and documented: running any dedup tool
+##    THROUGH "Find All Duplicates"/"Analyze All" still shows zero progress regardless
+##    of internal chunking, because the sequencer's `_call` uses a blocking
+##    `EXEC_DEFAULT` invocation that discards nested generators' yields entirely —
+##    needs a design decision, flagged as a follow-up, not fixed blind.
+## 5) Broken Library Links direct/indirect labeling — built + smoke-tested for real,
+##    all 5 checks passed.
+## pytest 520 green throughout. NOT committed yet (bundles with Phase 3/4's existing
+## uncommitted stack — commit happens at Phase 2's live-verify step, all together).
+##
+## ✅ PHASE 3 (quick decisions), in progress 2026-07-04 — user's drive failure paused
+## live-verify, so work continued on Blender-independent Phase 3 items instead:
+## - Group 9 #30 F8 hierarchical layout — reverted back to root-at-top (`core/
+##   linkmap_html.py::assign_depths`), per the user's explicit re-confirm.
+## - #37 click-to-select outcome icon — FIXED @ v0.2.103. Sticky per-row icon
+##   (found/no-user/unresolved) replaces the one-shot toast; wired into
+##   `ASSETDOCTOR_UL_tree` (covers every report row) + `_draw_orphans`'s 3 direct
+##   select buttons. See item #37 below for the full digest.
+## - #38 heading/summary audit sweep — SWEPT, closed, no fixes needed (every heading
+##   already carries a live summary, just some via a separate line below the title
+##   rather than merged in). See item #38 below.
+## - Group 9 #33, 3 "Scene Debug"-style features — confirmed missing, scoped with the
+##   user (fold into Analyze tab; dangling-links-only + broken-image-node for the
+##   node-link check; read-only, no fix action), BUILT @ v0.2.104 as "Check Materials."
+##   Real Blender 5.1 smoke test, all 6 checks passed. See item #33 below.
+## Also decided this session, NOT yet built: #40 Multi-hop Link Chains — user chose
+## "just repoint to the existing direct link" (the smaller-scope `has_direct` fork,
+## not full chain-flattening UI) and separately confirmed proxy/tiered link chains are
+## fine on their own (efficient, even) — only CIRCULAR references are the real risk;
+## see item #40 below, still needs actual code. Group 9 #32 (Resolution Variants
+## auto-standardize) and #29 (crash-stack names re-check) remain unanswered/unactioned
+## — not part of this batch.
+##
+## ⏩ NEXT SESSION: **Phase 2** — one combined live-verify session covering
+## EVERYTHING still uncommitted (Group 12 Phase 4's 7 call sites, all 5 of Phase 1's
+## fixes, this session's Phase 3 batch — F8 revert/#37/#33 all need a live click-
+## through — and the older still-open confirms listed in the plan file) — then
+## commit, then publish per docs/RELEASING.md. **After that: Phase R, the full addon
+## rename** (see the plan file for the exact scope/sequence) — do this BEFORE any
+## further new backlog work so it's written under the new name from the start.
+##
+## Group 13's remaining items (the sequencer progress gap, item 4 above) are logged
+## but need a design decision, not guesswork. Flatten v2 is committed but still
+## imperfect — not the priority, don't resume unless asked.
+##
+## LIVE-VERIFY CHECKLIST — Phase 1 fixes (v0.2.102, 2026-07-04). Items 2/3/5 already
+## have a real headless/smoke-test confirm (see above) but never a live-UI click
+## through; item 1/4 have neither yet:
+## - Missing Textures' "Linked — fix at the source library" list: library names that
+##   used to show blank (materialMaster.blend, ThePiazzaSanMarco - People.blend) now
+##   show correctly. Examine Library's suggested-library display too, if reachable.
+## - Find Orphans on a file with an override mesh: still runs to completion (no
+##   crash), and any skipped mesh appears by name in a new "Skipped — unsafe to read"
+##   collapsible list under the Orphans section.
+## - Find Duplicate Data-blocks (standalone button, not through Analyze All) on a file
+##   with a large single-type family (e.g. hundreds of Actions): progress bar now
+##   advances smoothly and ESC/Pause work mid-scan, instead of one long freeze.
+## - Find Broken Links on a file with an indirect library (one only reachable through
+##   another linked library, not directly): that row now shows an "indirect" flag —
+##   confirm a normal directly-linked broken library does NOT show the flag (no noise
+##   on the common case).
+## LIVE-VERIFY CHECKLIST — Group 12 Phase 4 (v0.2.101, brand new, never tested). This
+## touches 7 DIFFERENT buttons across 3+ panels — check each:
+## - Analyze This File: Check Link Chain ("f7"), Audit This File ("f7live"), Find
+##   Flattenable Links' multi-hop-routes preview ("f7chain") — expand each, confirm
+##   the tree scrolls (try a file with a deep/wide result), triangles expand/collapse,
+##   clicking a leaf row still selects the datablock, and the File Map's "show what
+##   links from here" popup (click a File Map row) still opens
+## - Find Flattenable Links' OWN rollup preview under the picker ("f7flatten")
+## - Make Local's result ("f2"), Project Link Map's Find Broken Links result ("f1"),
+##   Utilities' Dry-Run Render warnings ("f9")
+## - Two of these can plausibly be expanded on screen AT ONCE (e.g. Check Link Chain +
+##   Audit This File both open) — confirm expanding/collapsing ONE doesn't affect the
+##   other's rows or scroll position
+## - Confirm the headline row (arrow + one-line summary) still looks identical to
+##   before — this part didn't change, only what's BELOW it when expanded
+
 ## LIVE-VERIFY CHECKLIST — Duplicate Textures (v0.2.97, brand new, never tested). Run
 ## "Find Content Duplicates" on a file with several materials' worth of duplicate/
 ## renamed textures:
@@ -112,33 +242,107 @@
 ### Find Duplicates crash: guessing at a native access-violation wastes time).
 
 41. **Find Duplicates / Find All Duplicates has no interruptable progress on large
-    files** (user, 2026-07-03): a big file's duplicate scan runs for a long time with
-    no opportunity to update the UI or cancel. Needs breaking into smaller, chunked,
-    yieldable steps (the ``ModalProgressMixin``/``run_steps`` generator pattern this
-    project already uses everywhere else) so progress shows and ESC/Pause work mid-scan
-    instead of one long blocking call. Scope TBD — needs reading which of
-    `ops/datablock_dup.py` / `ops/material_dedup.py` / `ops/geometry_dedup.py` /
-    `ops/image_dedup.py` (and the `analyze_all` sequencer wrapping them) actually lacks
-    fine-grained yields today vs. just yields too coarsely on a huge `bpy.data`.
+    files** (user, 2026-07-03). **Scoped + partially fixed 2026-07-04.** Of the 4
+    dedup sub-scanners, 3 already chunk finely (`ops/material_dedup.py`/
+    `ops/instance_dedup.py` both yield every 32 items via their own `_FP_CHUNK`;
+    `ops/image_dedup.py::scan_content_dups` yields per-item). Only
+    `ops/datablock_dup.py::_gather_steps` was coarse — it used to yield ONCE PER
+    COLLECTION TYPE (e.g. once after finishing ALL Actions), so a single huge
+    collection blocked the whole modal tick with no progress/ESC opportunity in
+    between. **FIXED**: rewritten to pre-scan every collection's family membership
+    first (cheap, just names) so the total item count is known up front, then
+    fingerprint in one flat per-item loop yielding every `_FP_CHUNK=32` (matching
+    the other 3 scanners' own pattern) regardless of which collection type it's in.
+    **Separate, NOT YET FIXED architectural gap found while scoping**: when any of
+    these 4 run THROUGH "Find All Duplicates"/"Analyze All" (not their own standalone
+    button), `ops/analyze_all.py::_AnalyzeSequencerMixin._call` invokes the sub-
+    operator via a plain `bpy.ops.category.name(**kwargs)` call — implicitly
+    `EXEC_DEFAULT`, which runs `ModalProgressMixin.execute()` (`for _ in self.
+    run_steps(context): pass`) — a tight Python loop that drains the ENTIRE nested
+    generator with NO progress-bar update and NO ESC/cancel check at all, no matter
+    how finely that sub-operator chunks internally. So even after this fix, running
+    the big scan via "Find All Duplicates" specifically will still show no progress
+    and can't be cancelled mid-step — only running each dedup tool via its OWN
+    button (already fixed) gets the responsive progress bar. Fixing the sequencer
+    itself would mean interleaving the sub-operator's own `run_steps` generator into
+    the outer sequencer's yields (scaling its fraction into the current step's
+    range) instead of a black-box `_call` — a real design decision (how much of the
+    sub-step's progress to surface, whether ESC should cancel just that step or the
+    whole sequence), not a pure mechanical fix. Flagged for a follow-up design pass,
+    not attempted yet.
 
 42. **Two crashes, same session (2026-07-03): during "Find All Duplicates" and during
-    "Find Orphans."** User will upload crash logs + screenshots once files sync from
-    the remote machine. **DO NOT speculate or attempt a fix until the logs arrive** —
-    could be the same native-crash disease class as the v0.2.94 `extract_shape_key`
-    access-violation (see the "Find Duplicates CRASH" write-up above) recurring
-    elsewhere, could be related to item 41's long blocking scan, or could be unrelated.
-    Get the real backtrace first (same diagnostic standard as v0.2.94 — Python
-    backtrace from the crash log, not guessing from reading code).
+    "Find Orphans."** Logs synced 2026-07-04 (`PSM_Stage_v5.2.crash.txt` /
+    `PSM_Stage_v5.2.crash_orphans.txt`), both analyzed via their Python backtraces.
+    **Crash A (Find All Duplicates):** `progress.py:137 modal → analyze_all.py:65
+    run_steps → analyze_all.py:27 _call → progress.py:86 execute →
+    datablock_dup.py:153 run_steps → _gather_steps:102 → _fingerprint_for:73 →
+    extract.py extract_shape_key`. Same disease class as the v0.2.94 mitigation, but
+    THIS shape key's owner mesh is neither missing nor a Library Override — the
+    existing 2-condition `shape_key_risk_reason` filter is confirmed INCOMPLETE, a
+    third risk pattern exists that it doesn't catch. Exact trigger unknown — no
+    local-variable data survives in a Windows crash dump; needs a live diagnostic
+    probe against the real file to identify which shape key/mesh it is before
+    designing the broader filter. **Crash B (Find Orphans):** `progress.py:137 modal
+    → orphans.py:138 run_steps → orphans.py:65 _gather_steps → orphans.py:50 <lambda>
+    → fingerprint.py:169 fingerprint_mesh → _sha → _canon → _round` (4-deep
+    recursion, matches the expected dict→list→list→float mesh-payload shape) — odd
+    because this crashes INSIDE pure-Python recursion over data `extract_mesh` had
+    already finished extracting, not while reading raw bpy data directly. Most likely:
+    `ops/orphans.py::_gather_steps`'s mesh-fingerprint path has **zero risk
+    filtering** (only checks `db.library is not None`, never missing/override —
+    unlike the shape-key path), so a corrupted override mesh's geometry silently
+    passes through and detonates later; alternative explanation is heap corruption
+    from elsewhere manifesting late.
+    **Crash B: FIXED 2026-07-04.** `ops/extract.py::shape_key_risk_reason` refactored
+    into a shared `datablock_risk_reason(block)` (missing/override check on ANY
+    datablock, not just a shape key's owner) + a thin shape-key-specific wrapper.
+    Applied in `ops/orphans.py::_gather_steps` before ALL THREE fingerprint types
+    (Material/Mesh/Image, not just Mesh) with a new "Skipped — unsafe to read" list
+    (`assetdoctor_orphan_skipped_text`, reusing the existing `_draw_kept_separate`
+    UI helper — no new widget). New `tests/smoke_orphans_skip.py` (real override-mesh
+    round trip) — **ran for real against Blender 5.1, all 3 checks passed.**
+    **Crash A: probed 2026-07-04, DID NOT REPRODUCE — CLOSED for now, documented not
+    guessed.** Ran a clean single-pass probe against the real `PSM_Stage_v5.2.blend`
+    (open file, iterate every shape key, print owner state, call `extract_shape_key`
+    on any not already flagged). Result: **all 759 shape keys read successfully, zero
+    crashed, zero were even flagged by the risk check.** So the crash is NOT a
+    property of any specific shape key in isolation — a fresh background open+scan
+    doesn't hit it. The real crash happened via the LIVE session after a specific
+    sequence (Find Flattenable Links → toggle Make Local → Scan Broken Links → THEN
+    the duplicate scan, per that session's own info log) — leading hypotheses:
+    order/state-dependent corruction from that exact sequence, or something tied to
+    viewport/depsgraph activity that `--background` mode never triggers at all (no
+    viewport draws happen headlessly). **User's explicit call: do NOT guess a new
+    `shape_key_risk_reason` condition without evidence — stop here, leave the filter
+    as-is, revisit only if the crash recurs with a fresh crash log** (replicating the
+    exact live sequence would be the next diagnostic step, ~20-30 min of headless
+    Blender time, deferred).
 
-43. **Missing Textures — "Fix at Source" (the read-only Linked-missing-textures list)
-    doesn't list a source file for some rows** (user, 2026-07-03, live-verify step 3).
-    Everything else in Phase 3 item 1 (the newly-virtualized main list) worked;
-    this is in the OLD, untouched `_draw_linked_missing_textures` companion list.
-    Screenshot pending. Candidate cause (not confirmed): `_gather_linked_missing_images`
-    groups by `img.library.filepath or img.library.name` — if a library's `filepath` is
-    somehow empty this falls back to the internal datablock name, which could look like
-    "no source file" rather than a real path; needs the screenshot to confirm what's
-    actually displayed before touching code.
+43. ~~**Missing Textures — "Fix at Source" (the read-only Linked-missing-textures list)
+    doesn't list a source file for some rows.**~~ **FIXED 2026-07-04.** ROOT-CAUSED via
+    screenshot (`overviewAndFixAtSourceMissingSource.png`, synced 2026-07-04) + a direct
+    test: `os.path.basename("//materialMaster.blend")` returns `''` on Windows — `ntpath`
+    misreads Blender's leading `//` (same-folder-relative marker) as the start of a
+    UNC path. Confirmed against the crash log's own library list: `materialMaster.blend`
+    and `ThePiazzaSanMarco - People.blend` are linked as bare `//Name.blend` (breaks);
+    `human_bundle.blend`/`Asset_bundle.blend` are linked via multi-hop
+    `//..\..\..\libraries\Name.blend` (works fine) — matches exactly which groups
+    showed blank vs. correct in the screenshot. Same lesson already fixed once in
+    `core/datablock_links.py::_basename` (2026-06-16) — promoted from module-private
+    to a public `basename()` and reused at both broken `ui/panels.py` call sites
+    (`_draw_linked_missing_textures` and `_draw_examine_library`'s suggested-library
+    display). +5 pytest (suite 520). NEEDS the user's live-Blender confirm (fold into
+    the next live-verify pass).
+
+44. ~~**NEW, 2026-07-04 (screenshot `FindFlatLinksUpperArrowNotResponsive.png`):
+    the top-level toggle arrow on `_draw_report_detail`'s "2 multi-hop route(s) · …"
+    row (Find Flattenable Links' f7chain inline disclosure) doesn't expand when
+    clicked.**~~ **NOT REPRODUCIBLE, CLOSED (2026-07-04).** User re-tested the same
+    addon version against a DIFFERENT file and the drill-down was responsive there —
+    so this looks like a one-off/file-specific state on the original file, not a
+    general code bug. Documented only, per the user's explicit call — no further
+    investigation or fix planned.
 
 ## ✅ Group 12 Phase 3 (1 of 4) — Missing Textures virtualized, v0.2.96 (2026-07-03,
 ## NOT committed, NOT live-verified). New shape-B (single-level group→member) picker,
@@ -504,14 +708,21 @@ never in question once verified three ways.
 4. ~~Cross-reference `linked_datablocks(blend)` to downgrade a library with ZERO real referencing
    placeholders from "missing/error" to "stale, not actually used" — closes the "is everything in
    the chain actually relevant" gap.~~
-5. **INVESTIGATED, does NOT share the fix — deferred as its own item.** `ops/relink.py::
-   _gather_libs` is a flat one-level read of the CURRENT file's own `bpy.data.libraries` (no
-   recursion at all — different in kind from `depscan`'s offline BFS, which is what items 1-4's
-   `depths`/`parents` came from for free). A live direct/indirect signal for THIS tool would need
-   a different computation entirely: for each `Library`, walk `bpy.data.user_map()` from every ID
-   it provides and check whether any user is LOCAL (`id.library is None`) vs only reachable through
-   ANOTHER linked library — genuinely new bpy-dependent logic, not reachable from pytest, needing
-   its own design + live verification pass. Not started.
+5. ~~**INVESTIGATED, does NOT share the fix — deferred as its own item.** `ops/relink.py::
+   _gather_libs` is a flat one-level read...~~ **BUILT 2026-07-04.** New
+   `ops/relink.py::_direct_libraries(libs)`: for each `Library`, walk `bpy.data.user_map(subset=
+   <that library's own linked IDs>)` (restricts which IDs appear as dict KEYS but still scans the
+   WHOLE file for their users — cheaper than a full-file map, same technique
+   `ops.datablock_inspect` already uses for its own loop detection) and check whether any user is
+   LOCAL (`id.library is None`) — if not, the library is only reachable transitively through
+   ANOTHER linked library. Capped at 60000 linked datablocks (mirrors `ops.datablock_inspect.
+   _LOOP_NODE_CAP`'s own "too heavy" guard — assumes direct rather than hang on a giant file).
+   `core/relink.py::LibDesc` gained `is_direct: bool = True`; `_populate_broken_links` stores it in
+   the existing generic `tag` field (unused for this list); `ASSETDOCTOR_UL_broken_libs` shows an
+   "indirect" flag (INFO icon) only for the surprising case — direct is the expected default, no
+   added noise. New `tests/smoke_relink_direct_indirect.py` (real 3-file link chain, root→libA→libB,
+   where libB is only reachable through libA's own data) — closes the original "ThePiazzaSanMarco.
+   blend not in Libraries" confusion from v0.2.27 item #8. NEEDS the user's live-Blender confirm.
 
 ### Group 2 — Duplicate data-blocks report shape (`core/datablock_graph.py` + `core/tree.py`)
 6. **MOOT @ v0.2.76 (2026-06-26) — the category this referred to no longer exists.** Was: group
@@ -672,6 +883,21 @@ what's still unverified; don't re-derive from scratch, read it first.**
 22. **Automated Cleanup pipeline** — unlike the others below, the FULL design is already locked
     (nested panels, run order, backup-once, savings metrics) — implementation-ready once the
     individual modal sections it depends on are live-verified, not a "needs discussion" item.
+48. **NEW (2026-07-04) — Categorized file-load warnings.** User's ask: capture Blender's own
+    load-time errors/warnings (missing library datablocks, silent node-link repairs, disabled
+    embedded scripts, dependency-relation-build failures, etc.), categorize/prioritize them, and
+    surface suggested fixes — an EXTENSIBLE parameter list, grown over time as new patterns are
+    found. Feasibility researched same day: these messages have NO clean bpy API (raw console
+    output from Blender's low-level file reader, not the operator-report system) — the right
+    primitive is `core/remote_harvest.py`'s existing disposable-background-subprocess pattern
+    (built for Flatten v2): open the target file in a throwaway subprocess, capture its console
+    text, parse into structured findings. Real example patterns already gathered from
+    `PSM_Stage_v5.2.blend`'s own load log this session: "LIB: <kind> 'X' missing from <lib>" (maps
+    to existing Datablock Reconnect), missing-library warnings (maps to existing Broken Library
+    Links), "Repairing invalid state in node link..." (informational, Blender already self-healed),
+    "scripts disabled for..." (informational), "Failed to add relation X -> Y" / depsgraph
+    `ComponentKey` errors (NEW territory, severity/fix not yet designed). User's explicit call:
+    add to this roadmap group in priority order, do NOT jump the queue ahead of item 22.
 23. Texture-channel synonym table + inverse-pairs (gloss↔roughness) — root-caused, needs a
     design decision on 3 sub-parts (editable prefs list; suggest-but-flag-inverted; an actual
     invert/convert action as separate future work).
@@ -691,16 +917,44 @@ what's still unverified; don't re-derive from scratch, read it first.**
     every session digest as the single biggest backlog item.
 29. Confirm the literal crash-stack names (`character1_cs.012`/`cs_grp.012`/`Mesh_006_001` etc.)
     were actually resolved by the broader Reconnect fixes, or reconnect them specifically.
-30. Confirm/re-confirm the F8 hierarchical-layout direction (leaf-at-top vs root-at-top) — was
-    inverted once, ambiguous whether the user ever explicitly re-confirmed it stuck.
+30. ~~Confirm/re-confirm the F8 hierarchical-layout direction (leaf-at-top vs root-at-top)~~
+    **RE-CONFIRMED + REVERTED 2026-07-04.** User's explicit answer: root-at-top, not
+    leaf-at-top. `core/linkmap_html.py::assign_depths` now returns the mirror of its
+    internal leaf-based longest-outgoing-chain computation (`max_depth - depth`) —
+    same cycle-safe algorithm, just flipped top/bottom; the JS `applyTree()` comment
+    ("roots at the top") was actually stale since the 2026-06-25 inversion and is now
+    accurate again with no JS changes needed (it just renders whatever depth Python
+    assigns). `tests/test_linkmap_html.py`'s depth-layering test updated to match.
+    Suite still 520. NEEDS the user's live-Blender confirm (can't render the actual
+    HTML graph headlessly).
 31. Reproduce (or rule out) the Batch 2 relink/merge crash theory (Solid vs Material viewport
     shading) — mitigation code is in place but never proven necessary or sufficient.
 32. Confirm with the user whether "Remove Excess Variants" (already built) fully closes the old
     ROADMAP "footprint reduction — Layer 2 resolution-standardize" line, or whether a separate
     global/per-family auto-standardize mode is still wanted on top of per-group manual picking.
-33. Check whether 3 specific "Scene Debug"-style features named in a 2026-06-16 design session
-    (list materials by shader, missing node links, empty material slots) were ever built anywhere
-    else under a different name, or are still genuinely missing.
+33. **3 "Scene Debug"-style features (list materials by shader, missing node links, empty
+    material slots) — confirmed nowhere else in the codebase, BUILT @ v0.2.104 (2026-07-04) as
+    "Check Materials."** User's design decisions: fold into the existing Analyze tab (not a
+    separate Properties-editor panel); "missing node links" scoped to dangling links only
+    (`NodeLink.is_valid` False — real socket-type-mismatch breaks, not "artistically unlinked by
+    choice") plus broken Image Texture nodes (image file missing on disk, same check as Find
+    Missing Textures, deliberately overlapping); read-only, no bulk-fix action (removing a slot
+    remaps polygon material indices — riskier to automate than it looks). New `core/
+    material_diagnostics.py` (bpy-free, `classify_shader_label`/`build_*_findings`/
+    `build_material_diagnostics_report`, 10 unit tests) + `ops/material_diagnostics.py`
+    (`ASSETDOCTOR_OT_check_materials`, chunked scan of every material's node tree + every
+    object's material_slots). Reuses the fully generic report/tree machinery end-to-end — new
+    `"matdiag"` key in `report_store.FEATURES` + `INLINE_DETAIL_FEATURES`, 3 new categories in
+    `core/tree.py::_CATEGORY_TITLES` (shader_type/node_link_issue/empty_slot) — no new
+    PropertyGroup, UIList, or WM collection needed. Button placed in the Analyze tab right after
+    Find Orphans. `tests/smoke_material_diagnostics.py` — real Blender 5.1 run, all 6 checks
+    passed (Principled/Emission/Mixed-Shader grouping, missing-image-node flag, empty-slot flag).
+    **NOT covered even by the smoke test:** a genuinely dangling/invalid `NodeLink` — Blender's
+    Python API only ever creates valid links, so there's no simple way to fabricate the real
+    "socket type changed after a version upgrade" case; that path's report-building logic is
+    unit-tested with synthetic data instead, but the bpy-side extraction (`_material_node_issues`
+    in `ops/material_diagnostics.py`) is unverified against a real invalid link. **NEEDS the
+    user's live-Blender confirm** on a real production file if one happens to have this issue.
 
 ### Group 10 — v0.2.72 live-test feedback (2026-06-26, real production file; #34 FIXED @ v0.2.73,
 ### #35 FIXED @ v0.2.74, #39 PARTIALLY fixed @ v0.2.75, all below — #36 checked/not-a-bug, #37/#38/
@@ -749,21 +1003,34 @@ what's still unverified; don't re-derive from scratch, read it first.**
     (`LS`/`human_bundle`/`materialMaster`) and Circular-references screenshots that reported this.
 36. **Progress-bar-over-current-file-data — CHECKED, not a bug.** User confirmed it's a transient
     artifact while the UI is frozen mid-heavy-scan; once unfrozen the layout is correct. No action.
-37. **Click-to-select feedback is too easy to miss, and its message can mislead.** Clicking
-    `Camera: Camera` under a Circular references' nested datablock list resolved to "no user
-    found... check Outliner → Display Mode → Blender File / Orphan Data" — shown only as a
-    status-bar/sticky toast (`ops/report_store.py::ASSETDOCTOR_OT_select_datablock`, the
-    `set_result`/`self.report` path; see [[feedback-negative-output]], the original reasoning for
-    making this sticky doesn't seem to be reading as visible enough in practice) and the suggested
-    Orphan Data location didn't actually have the camera. **Design ask:** some combination of
-    icons/columns on the row itself to show resolution outcome (found-and-selected / no live user /
-    unresolved), not relying on a one-shot status message after the click. Also re-check whether
-    the "check Orphan Data" wording fits every case (a Camera with zero users isn't necessarily
-    surfaced there the same way a Material would be) — may need outcome-specific message text.
-38. **Audit ALL headings/sub-headings for a one-line summary.** Standing item — every category a
-    user expands should read a short "what is this" line before the list, the way Resolution
-    Variants/Materials already do; Multi-hop link chains and Flattenable overrides (items #40/#41
-    below) are the two concrete examples that prompted this, but sweep every Analyze category.
+37. **Click-to-select feedback is too easy to miss, and its message can mislead — FIXED @ v0.2.103
+    (2026-07-04).** User's decision: an outcome icon on the row itself (found-and-selected /
+    no live user / unresolved), not relying on a one-shot status message after the click.
+    `ops/report_store.py` gained `SELECT_OUTCOME_ICON` (CHECKMARK/QUESTION/ERROR),
+    `_load_select_outcomes`/`_save_select_outcome`/`get_select_outcome` (JSON dict, keyed
+    `"Type/Name"`, persisted in the new WM `assetdoctor_select_outcomes` StringProperty so it
+    survives redraws) and `ASSETDOCTOR_OT_select_datablock.execute()` now records an outcome +
+    `tag_redraw()`s at every exit path (unresolved / no-user / found), checking "unresolved" FIRST
+    (previously only the no-targets case was distinguished). Wired into
+    `ASSETDOCTOR_UL_tree.draw_item` (covers every report row, Reports tab, Resource Usage, and
+    every inline Analyze disclosure since Phase 4) and all 3 direct
+    `assetdoctor.select_datablock` buttons in `_draw_orphans`. Did NOT touch the "check Orphan
+    Data" wording sub-ask — the new icon replaces the need to parse that message at all, so it's
+    now moot. **NEEDS the user's live-Blender confirm** — click a few rows of each outcome type
+    and check the icon shows up and updates correctly.
+38. **Audit ALL headings/sub-headings for a one-line summary — SWEPT @ 2026-07-04, closed, no
+    fixes needed.** User asked for a dedicated sweep rather than closing this as done-by-osmosis.
+    Result: every `_draw_group_header` call site (11 of them) already passes a live, data-derived
+    label (counts, chosen-state, or a report finding's own message — none bare/static). Every
+    top-level Analyze-tab feature (all ~18 buttons, including the 4 Find-Duplicates children)
+    already shows a live headline via its own `_X_headline`/`_X_summary` helper or
+    `_draw_report_detail`'s generic `_report_headline`, with a "✓ nothing found" fallback per
+    [[feedback-negative-output]]. The only 4 spots with a static-looking title (Examine Library,
+    Map a Folder, Safe-to-delete?, and the inner "Missing Textures" sub-header) all already carry
+    their live count/status on a SEPARATE line directly below the title — the same established
+    "static button + summary line below" shape used everywhere else in this UI (e.g. Analyze
+    Memory/Disk) — so nothing there is actually missing a summary, just structured differently
+    than the merged-into-heading style. No code changes made; item closed.
 39. **Item 2's new "show what's linked from here" popup is unreliable in live use — do not trust
     it yet, contradicts the "DONE" mark above.** Couldn't get the popup to display reliably; not
     obvious what to click (the row looks like plain text — no visual cue that it's a button, unlike
@@ -784,20 +1051,23 @@ what's still unverified; don't re-derive from scratch, read it first.**
     repeatedly) — flagged for the user to decide rather than guessed at. **NEEDS the user's live
     re-test of the popup** (does it now feel responsive, was the busy cursor enough, is (a) still
     wanted) before relying on item 2 for anything.
-40. **Multi-hop Link Chains — redesign, needs a decision before any code.**
+40. **Multi-hop Link Chains — redesign. DECIDED 2026-07-04, NOT built yet.**
     `core/linkchain.py::build_chain_report`'s `multihop_route` Finding (~line 342) currently reads
     `"{root} reaches {target} via {N} hops: {chain}"`, repeating the root/current file's own name
     on every line. Asks: (a) drop the redundant root name — lead with the linked OBJECT/file
     itself (we're already scoped to the open file), keep the existing "(also linked directly)"
     suffix when present; (b) underneath each route, one row per hop with a link icon + that hop's
     filename (today the whole chain is one flat string); (c) a checkbox per chain (default
-    selected) + a "Link Directly" button. **(a)-i, a real design fork worth deciding FIRST:** when
-    `has_direct` is already true (the SAME target is reachable both via the multi-hop chain AND a
-    direct link — `len(p) == 2` in `paths`), the simplest fix may just be repointing the indirect
-    reference at the already-existing direct one, rather than building full chain-flattening UI for
-    that subset. Could substantially simplify scope — decide whether "Link Directly" (item c) IS
-    this simpler operation (only meaningful/available when `has_direct`) before designing it as a
-    generic multi-hop flattener.
+    selected) + a "Link Directly" button. **(a)-i decision:** user confirmed "Link Directly" (item
+    c) should be JUST the simpler `has_direct` repoint operation (when the SAME target is already
+    reachable both via the multi-hop chain AND a direct link — `len(p) == 2` in `paths`, repoint
+    the indirect reference at the already-existing direct one) — NOT a generic multi-hop
+    flattener. User also separately confirmed the underlying concern doesn't apply broadly:
+    proxy/tiered link chains (e.g. character library → low-res posing stage → high-res stage) are
+    fine on their own, even efficient (keeps file size down) — only CIRCULAR references are a real
+    problem. Scope for (c) is therefore: detect `has_direct` cases, offer the repoint action; (a)
+    and (b)'s display cleanup are independent and can be built regardless. Still needs actual
+    implementation — nothing built yet.
 41. ~~**Flattenable overrides — redesign, needs clarification of WHICH view this refers to before
     any code.**~~ **RESOLVED + BUILT @ v0.2.82 (2026-06-26).** Root cause of the original confusion:
     two near-identically-named buttons computing the SAME `OVERRIDE_WITH_TRANSFORM` data and

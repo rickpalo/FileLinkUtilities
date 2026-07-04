@@ -96,17 +96,18 @@ def test_build_graph_data_summary():
     assert all("count" in e and "cycle" in e for e in data["edges"])
 
 
-def test_assign_depths_layers_from_leaves():
+def test_assign_depths_layers_from_root():
     # scene -> chars -> missing ; lonely isolated ; materialMaster external leaf.
-    # Depth is measured FROM THE LEAVES: pure assets (link nothing) sit at the top
-    # (0); the top-level scene that pulls everything in sinks to the bottom.
+    # Depth is measured FROM THE ROOT (reverted 2026-07-04, Group 9 #30, back to
+    # this ORIGINAL direction): the top-level scene that pulls everything in
+    # sits at the top (0); pure assets (link nothing) sink to the bottom.
     data = lh.build_graph_data(_scan(), "/proj")
     depth = {n["id"]: n["depth"] for n in data["nodes"]}
-    assert depth["/proj/missing.blend"] == 0        # links nothing -> top
-    assert depth["/libs/materialMaster.blend"] == 0  # external leaf -> top
+    assert depth["/proj/scene.blend"] == 0          # root -> top
     assert depth["/proj/chars.blend"] == 1          # links missing
-    assert depth["/proj/scene.blend"] == 2          # links chars (+ materialMaster)
-    assert depth["/proj/lonely.blend"] == 0         # isolated -> top layer
+    assert depth["/proj/missing.blend"] == 2        # links nothing -> bottom
+    assert depth["/libs/materialMaster.blend"] == 2  # external leaf -> bottom
+    assert depth["/proj/lonely.blend"] == 2         # isolated -> bottom layer
 
 
 def test_assign_depths_cycle_terminates():

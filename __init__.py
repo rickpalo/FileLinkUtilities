@@ -98,6 +98,10 @@ def register() -> None:
     # happened. See ops.progress.set_result.
     bpy.types.WindowManager.assetdoctor_last_result = bpy.props.StringProperty(default="")
     bpy.types.WindowManager.assetdoctor_last_result_ok = bpy.props.BoolProperty(default=True)
+    # Persistent click-to-select outcome per datablock (JSON dict, "Type/Name" ->
+    # "found"/"no_user"/"unresolved"), docs/TODO.md Group 10 #37 (2026-07-04) — lets
+    # a row show a STICKY outcome icon instead of relying on a one-shot toast.
+    bpy.types.WindowManager.assetdoctor_select_outcomes = bpy.props.StringProperty(default="")
 
     # Persistent per-feature reports: data JSON + expanded keys per feature, plus
     # the currently-shown feature key. See ops/report_store.FEATURES.
@@ -143,6 +147,18 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_resource_rows = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_tree_row)
     bpy.types.WindowManager.assetdoctor_resource_index = bpy.props.IntProperty(default=0)
+
+    # Group 12 Phase 4: one small virtualized rows collection PER inline-detail
+    # feature (ops.report_store.INLINE_DETAIL_FEATURES) — several of these can
+    # be expanded simultaneously in the Analyze panel, unlike the Reports tab's
+    # single active-feature collection above.
+    from .ops.report_store import INLINE_DETAIL_FEATURES
+
+    for _feature in INLINE_DETAIL_FEATURES:
+        setattr(bpy.types.WindowManager, f"assetdoctor_inline_rows_{_feature}",
+                bpy.props.CollectionProperty(type=ASSETDOCTOR_PG_tree_row))
+        setattr(bpy.types.WindowManager, f"assetdoctor_inline_active_{_feature}",
+                bpy.props.IntProperty(default=0))
 
     # F7 per-link relink list: the current file's broken/missing library links,
     # each with a relink target + a per-row checkbox. See ops.relink.
@@ -283,6 +299,10 @@ def register() -> None:
     bpy.types.WindowManager.assetdoctor_orphan_rows = bpy.props.CollectionProperty(
         type=ASSETDOCTOR_PG_orphan_row)
     bpy.types.WindowManager.assetdoctor_orphan_index = bpy.props.IntProperty(default=0)
+    # 2026-07-04: datablocks skipped during fingerprinting because reading them
+    # risked a native crash (missing placeholder / Library Override) — see
+    # ops.orphans._gather_steps / extract.datablock_risk_reason.
+    bpy.types.WindowManager.assetdoctor_orphan_skipped_text = bpy.props.StringProperty(default="")
 
     # Examine Library: retarget AWAY from a chosen (working) library.
     bpy.types.WindowManager.assetdoctor_examine_library_pick = bpy.props.StringProperty(
@@ -379,11 +399,12 @@ def unregister() -> None:
     for attr in ("assetdoctor_scan_dir", "assetdoctor_dep_target", "assetdoctor_debug_log"):
         if hasattr(bpy.types.Scene, attr):
             delattr(bpy.types.Scene, attr)
-    from .ops.report_store import FEATURES
+    from .ops.report_store import FEATURES, INLINE_DETAIL_FEATURES
 
     wm_attrs = ["assetdoctor_op_active", "assetdoctor_op_progress", "assetdoctor_op_status",
                 "assetdoctor_op_paused", "assetdoctor_op_cancel",
                 "assetdoctor_last_result", "assetdoctor_last_result_ok",
+                "assetdoctor_select_outcomes",
                 "assetdoctor_active_report", "assetdoctor_resource_tree",
                 "assetdoctor_resource_expanded", "assetdoctor_resource_totals",
                 "assetdoctor_profiled_ram",
@@ -423,6 +444,7 @@ def unregister() -> None:
                 "assetdoctor_geo_linked",
                 "assetdoctor_geo_conflicts", "assetdoctor_geo_conflicts_text",
                 "assetdoctor_orphan_rows", "assetdoctor_orphan_index",
+                "assetdoctor_orphan_skipped_text",
                 "assetdoctor_examine_library_pick", "assetdoctor_examine_library",
                 "assetdoctor_examine_rows", "assetdoctor_examine_index",
                 "assetdoctor_examine_scanned", "assetdoctor_examine_expanded",
@@ -439,6 +461,8 @@ def unregister() -> None:
                 "assetdoctor_idle_seconds", "assetdoctor_idle_detected"]
     for key, _label in FEATURES:
         wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]
+    for feature in INLINE_DETAIL_FEATURES:
+        wm_attrs += [f"assetdoctor_inline_rows_{feature}", f"assetdoctor_inline_active_{feature}"]
     for attr in wm_attrs:
         if hasattr(bpy.types.WindowManager, attr):
             delattr(bpy.types.WindowManager, attr)

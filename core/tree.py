@@ -56,6 +56,9 @@ _CATEGORY_TITLES = {
     "driver_error": "Driver errors",
     "render_error": "Render errors",
     "render_warning": "Render warnings",
+    "shader_type": "Materials by shader type",
+    "node_link_issue": "Node link issues",
+    "empty_slot": "Empty material slots",
 }
 
 

@@ -15,9 +15,13 @@ import pathlib
 from collections import defaultdict
 
 
-def _basename(p: str) -> str:
+def basename(p: str) -> str:
     """Filename of a stored library path. Plain split (not ntpath, which misreads
-    Blender's ``//`` prefix as a UNC root)."""
+    Blender's ``//`` prefix as a UNC root — ``os.path.basename("//Name.blend")``
+    returns ``''`` on Windows, since ntpath treats a leading ``//`` as the start
+    of a UNC share). Public (not module-private) because ``ui/panels.py`` reuses
+    it too — the same disease was independently confirmed there (2026-07-04,
+    "Fix at Source" showing blank library names)."""
     return p.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 # DNA ID-block 2-char name prefix -> friendly kind (the prefix on id.name, e.g.
@@ -79,7 +83,7 @@ def datablocks_from_library(blend_path, library_basename: str) -> list[tuple[str
     target = library_basename.lower()
     hits: list[tuple[str, str]] = []
     for lib_path, items in linked_datablocks(blend_path).items():
-        if _basename(lib_path).lower() == target:
+        if basename(lib_path).lower() == target:
             hits.extend(items)
     return hits
 

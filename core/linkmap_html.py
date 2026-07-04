@@ -134,31 +134,36 @@ def cycle_edges(scan) -> set[tuple[str, str]]:
 
 
 def assign_depths(node_ids, edges_agg) -> dict[str, int]:
-    """Layer index per node for the hierarchical view, measured from the **leaves**:
-    a file that links nothing itself (a pure asset, only linked BY others) is depth 0
-    and sits at the top; a file sits one layer below the deepest thing it links, so
-    the top-level scenes that pull everything in sink to the bottom. depth(node) =
-    longest chain of OUTGOING links from it. Computed by bounded relaxation (capped at
-    one pass per node) so a library **cycle** can't loop forever — cycle members just
-    settle at a high layer (they're flagged red regardless)."""
+    """Layer index per node for the hierarchical view, measured from the
+    **root**: the top-level scene(s) that pull everything in sit at the top
+    (0); a file sits one layer below anything that links it, so pure assets
+    (linked by others, linking nothing themselves) sink to the bottom.
+    Reverted 2026-07-04 (Group 9 #30, user's explicit re-confirm) back to
+    this — its ORIGINAL direction — after a 2026-06-25 inversion to
+    leaf-at-top; computed as the mirror of the leaf-based longest-outgoing-
+    chain distance (same cycle-safe bounded relaxation as before, capped at
+    one pass per node so a library **cycle** can't loop forever — cycle
+    members still settle at a shared layer, flagged red regardless), just
+    flipped top/bottom rather than a different algorithm."""
     ids = list(node_ids)
     idset = set(ids)
     succ: dict[str, list[str]] = {n: [] for n in ids}  # outgoing targets
     for s, t, *_ in edges_agg:
         if s in idset and t in idset and s != t:
             succ[s].append(t)
-    depth = {n: 0 for n in ids}
+    depth_from_leaves = {n: 0 for n in ids}
     for _ in range(len(ids)):
         changed = False
         for n in ids:
             if succ[n]:
-                d = max(depth[t] for t in succ[n]) + 1
-                if d > depth[n]:
-                    depth[n] = d
+                d = max(depth_from_leaves[t] for t in succ[n]) + 1
+                if d > depth_from_leaves[n]:
+                    depth_from_leaves[n] = d
                     changed = True
         if not changed:
             break
-    return depth
+    max_depth = max(depth_from_leaves.values(), default=0)
+    return {n: max_depth - d for n, d in depth_from_leaves.items()}
 
 
 def build_graph_data(scan, root: pathlib.Path, title: str | None = None) -> dict:

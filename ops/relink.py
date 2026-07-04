@@ -22,19 +22,56 @@ import bpy
 
 from ..core import relink
 from ..core.relink import LibDesc
+from .datablock_inspect import _iter_all_blocks
 from .pickers import FilePickerMixin
+
+# Mirrors ops.datablock_inspect._LOOP_NODE_CAP's own "too heavy" guard — above
+# this many linked datablocks, skip the direct/indirect check (assume direct)
+# rather than let a giant file's user_map scan hang Find Broken Links.
+_DIRECT_NODE_CAP = 60000
+
+
+def _direct_libraries(libs: list) -> set:
+    """Which of ``libs`` (real ``bpy.types.Library`` datablocks) are
+    referenced by at least one LOCAL datablock, vs. only reachable
+    transitively through another linked library (docs/TODO.md Group 1 item 5,
+    2026-07-04 — the "ThePiazzaSanMarco.blend not in Libraries" confusion:
+    `bpy.data.libraries` includes libraries your OWN linked libraries link,
+    not just ones this file links directly). `bpy.data.user_map(subset=...)`
+    restricts which IDs appear as dict KEYS but still scans the whole file to
+    find their users, so passing just these libraries' own linked IDs as the
+    subset is enough — cheaper than a full-file map, same technique
+    `ops.datablock_inspect` already uses for its own loop detection."""
+    lib_set = set(libs)
+    linked_ids = [block for _attr, block in _iter_all_blocks() if block.library in lib_set]
+    if len(linked_ids) > _DIRECT_NODE_CAP:
+        return lib_set  # too expensive to check safely — don't mislabel, just skip
+    try:
+        umap = bpy.data.user_map(subset=linked_ids)
+    except Exception:
+        return lib_set  # never let a bpy quirk break the broken-links list
+
+    direct: set = set()
+    for block in linked_ids:
+        if block.library in direct:
+            continue
+        if any(user.library is None for user in umap.get(block, ())):
+            direct.add(block.library)
+    return direct
 
 
 def _gather_libs() -> list[LibDesc]:
-    libs: list[LibDesc] = []
-    for lib in bpy.data.libraries:
+    libs = list(bpy.data.libraries)
+    direct = _direct_libraries(libs)
+    out: list[LibDesc] = []
+    for lib in libs:
         stored = lib.filepath
         if not stored:
             continue
         resolved = os.path.normpath(bpy.path.abspath(stored))
-        libs.append(LibDesc(name=lib.name, stored=stored, resolved=resolved,
-                            exists=os.path.isfile(resolved)))
-    return libs
+        out.append(LibDesc(name=lib.name, stored=stored, resolved=resolved,
+                           exists=os.path.isfile(resolved), is_direct=lib in direct))
+    return out
 
 
 def _populate_broken_links(context) -> tuple[int, int]:
@@ -59,6 +96,9 @@ def _populate_broken_links(context) -> tuple[int, int]:
         item.target = cand
         item.has_candidate = bool(cand)
         item.selected = bool(cand)  # pre-tick only the confident auto-matches
+        # Reuses the generic per-row `tag` (unused elsewhere for this list) to
+        # carry "direct"/"indirect" — see core.relink.LibDesc.is_direct.
+        item.tag = "direct" if lib.is_direct else "indirect"
     wm.assetdoctor_broken_index = 0
     return len(missing), len(candidates)
 
