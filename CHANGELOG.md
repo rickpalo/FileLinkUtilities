@@ -1,7 +1,89 @@
 # Changelog
 
-All notable changes to AssetDoctor. Versioning is patch-only (0.1.x) until a change is
-flagged as major.
+All notable changes to AssetDoctor. Versioning is patch-only unless a change is flagged as
+major. From 0.2.x onward, entries below are grouped by feature area rather than one per
+version bump (the project moved to much more frequent small bumps) — see `docs/TODO.md` for
+the detailed session-by-session build history behind any entry.
+
+## [0.2.90 – 0.2.104] — UI virtualization + backlog cleanup
+
+### Changed
+- **Every report/picker list now virtualizes.** Reports tab, Resource Usage, every inline
+  Analyze-button disclosure, and the Missing Textures / Duplicate Textures / Datablock
+  Reconnect / Examine Library pickers all draw through the same `UIList`-backed renderer —
+  closes out the last few manually-drawn row lists, which could show blank rows once
+  deeply expanded on a large result.
+- **Click-to-select now leaves a sticky per-row icon** (found / no live user / unresolved)
+  instead of a one-shot status message that was easy to miss.
+- F8's hierarchical link-map layout is root-at-top (the file that pulls everything in sits
+  at the top; pure assets sink to the bottom).
+
+### Added
+- **Check Materials** — a new read-only diagnostic: lists materials grouped by shader type,
+  flags dangling node links and Image Texture nodes pointing at a missing file, and flags
+  empty material slots.
+- Broken Library Links rows flag whether a library is linked *directly* or only reachable
+  through another linked library.
+
+### Fixed
+- A blank library name could appear in "Fix at Source" / Examine Library suggestions on
+  Windows (a same-folder `//Name.blend` path was misread as a UNC path).
+- Find Orphans could crash scanning a mesh belonging to a Library Override or missing
+  placeholder; the same missing/override safety check Find Duplicates already used for
+  shape keys now applies to every fingerprinted datablock type.
+- Find Duplicate Data-blocks showed no progress/couldn't be cancelled on a file with one
+  very large collection (e.g. hundreds of Actions) — now chunks per-item like the other
+  duplicate scanners.
+
+## [0.2.29 – 0.2.89] — Properties-editor migration, Flatten, fuzzy texture matching
+
+### Changed
+- Migrated from the 3D-viewport N-panel to **Properties → Scene**, restructured into
+  **Analyze / Cleanup & Fixes / Utilities** panels as the feature set grew well past the
+  original 6.
+- Duplicate Textures redesigned around per-family keeper dropdowns + a material-mismatch
+  eyedropper override.
+
+### Added
+- **Flatten** — detect Library-Override-with-transform "posing" setups (e.g. posed
+  characters linked from a rig library) and flatten them to real local data, including a
+  grouped "Flattenable Links" view and a background-subprocess-based cross-file resolver
+  for more complex cases.
+- **Datablock Reconnect** — for a missing linked datablock, pick a source `.blend`,
+  auto-suggest the closest-matching name (exact / renamed / fuzzy), and relink + remap in
+  one step, grouped by source library.
+- Fuzzy texture-name matching (`core/imagematch.py`) with a confidence score and a
+  channel-synonym table, wired into Possible Matches; substitute-from-material and
+  substitute-from-another-`.blend` corpora.
+- Resolution Variants (multi-resolution texture footprint report, opt-in standardize).
+
+## [0.2.11 – 0.2.28] — F8 link-map graph, missing data-blocks, safe-to-delete
+
+### Added
+- **F8** — a self-contained interactive HTML dependency graph (force-directed, zoom/pan/
+  search, no external resources) as an alternative to the flat F1 report.
+- Missing **data-block** detection (`id.is_missing`, distinct from a missing *library*),
+  grouped by source library.
+- **Safe to delete?** — reverse-dependency check: given a file, list what would break if it
+  were removed, before you remove it.
+
+## [0.2.5 – 0.2.10] — F6 texture relink & dedup suite
+
+### Added
+- Missing-texture relink: doubled-path-prefix fix, cross-drive remap, folder search by
+  filename, and a group-by-directory-or-material "point group at folder" bulk action.
+- Duplicate-texture cleanup: `.NNN`-family lossless merge (content-verified first) and a
+  content-hash dedup pass across the whole file regardless of naming.
+
+## [0.2.0 – 0.2.4] — F7 Link & Dependency Doctor
+
+### Added
+- Recursive, offline (BAT-based) folder dependency scan: broken/absolute/circular links,
+  duplicate library blocks, inconsistent paths, most-linked libraries.
+- Live in-file analysis: `.NNN` duplicate-datablock census, override/dependency loops.
+- Library path fixes (normalize + relink missing) and datablock-level link inspection
+  (what one file links from another, in either direction — the basis for later cycle-
+  breaking and reconnect work).
 
 ## [0.1.10] — Report/Resource panels: virtualized UIList (fixes blank rows)
 
