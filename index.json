@@ -7,7 +7,7 @@
       "id": "file_link_utilities",
       "name": "File & Link Utilities",
       "tagline": "Map, clean and rewire linked assets, materials and orphan data",
-      "version": "0.2.106",
+      "version": "0.2.108",
       "type": "add-on",
       "maintainer": "rickpalo <rap2010@comcast.net>",
       "license": [
@@ -21,9 +21,9 @@
       "python_versions": [
         "3"
       ],
-      "archive_url": "./file_link_utilities-0.2.106.zip",
-      "archive_size": 380321,
-      "archive_hash": "sha256:6703a932aeae0df1ed03c36e4d32922d1b132c6da3fd20cb316cd1551632c018"
+      "archive_url": "./file_link_utilities-0.2.108.zip",
+      "archive_size": 392568,
+      "archive_hash": "sha256:ddcebbadf0b846c776b7aca39a2eef324157ad3a99bdbf3887e8ab7a7cc8b586"
     }
   ]
 }
