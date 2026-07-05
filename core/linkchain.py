@@ -534,14 +534,13 @@ def build_chain_report(graph: DepGraph, root: str, posing: list[ObjectPosingInfo
 
     for target, paths in sorted(routes.items()):
         longest = max(paths, key=len)
-        chain_str = " -> ".join(_name(n) for n in longest)
         has_direct = any(len(p) == 2 for p in paths)
-        msg = f"{_name(root)} reaches {_name(target)} via {len(longest) - 1} hops: {chain_str}"
+        msg = f"Reaches {_name(target)} via {len(longest) - 1} hop(s)"
         if has_direct:
             msg += " (also linked directly)"
         report.add(Finding(category="multihop_route", message=msg,
-                           severity="warning", items=[root, target],
-                           data={"paths": paths}))
+                           severity="warning", items=[_name(n) for n in longest[1:]],
+                           data={"paths": paths, "has_direct": has_direct}))
 
     route_basenames = {_basename(target): target for target in routes}
     for info, mech in classified:
@@ -699,14 +698,19 @@ def flatten_plan_from_dict(d: dict) -> FlattenPlan:
 def routes_from_report(report: Report) -> dict[str, list[list[str]]]:
     """Reconstruct the ``routes`` dict :func:`build_flatten_plan` needs from
     an already-built f7chain :class:`Report` (its ``multihop_route`` findings
-    carry ``items=[root, target]`` + ``data={"paths": paths}``) — reused
-    instead of re-running the slow offline multi-file scan a second time."""
+    carry ``data={"paths": paths, ...}``, each path's last element being the
+    raw target path) — reused instead of re-running the slow offline
+    multi-file scan a second time. Reads the target from ``data`` rather than
+    ``items`` since 2026-07-05 (docs/TODO.md #40) — ``items`` now holds
+    display-only hop names for the UI, not raw paths."""
     routes: dict[str, list[list[str]]] = {}
     for finding in report.findings:
-        if finding.category != "multihop_route" or len(finding.items) < 2:
+        if finding.category != "multihop_route":
             continue
-        target = finding.items[1]
         paths = finding.data.get("paths") or []
+        if not paths:
+            continue
+        target = paths[0][-1]
         routes.setdefault(target, []).extend(paths)
     return routes
 

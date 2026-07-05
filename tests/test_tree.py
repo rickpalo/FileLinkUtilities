@@ -53,6 +53,17 @@ def test_file_path_item_is_not_a_ref():
     assert leaf.ref is None  # file paths must not be treated as Type/Name
 
 
+def test_multihop_route_hop_items_get_a_link_icon():
+    """docs/TODO.md #40(b): each hop in a multi-hop route renders with a link
+    icon, unlike a plain item leaf (which defaults to no icon override)."""
+    r = Report(title="x", feature="f7chain")
+    r.add(Finding("multihop_route", "Reaches leaf via 2 hop(s)", severity="warning",
+                  items=["mid", "leaf"]))
+    hops = report_to_tree(r)[0].children[0].children
+    assert [c.label for c in hops] == ["mid", "leaf"]
+    assert all(c.icon == "LIBRARY_DATA_DIRECT" for c in hops)
+
+
 def test_flatten_collapsed_shows_only_roots():
     tree = report_to_tree(_report())
     rows = flatten_visible(tree, expanded=set())

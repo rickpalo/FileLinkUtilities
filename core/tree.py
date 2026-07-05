@@ -147,6 +147,12 @@ def _parse_ref(item: str) -> dict | None:
     return {"type": type_, "name": name}
 
 
+# Categories whose item children are file-hop names, not selectable datablock
+# refs (docs/TODO.md #40) -- shown with a link icon instead of the default
+# blank/ref-derived one.
+_HOP_ICON_CATEGORIES = {"multihop_route": "LIBRARY_DATA_DIRECT"}
+
+
 # Categories rendered as a flat top-level row (the message IS the whole content,
 # no items to drill into): "clean" (the all-clear status) and "overview" (a one-line
 # headline a feature wants read without expanding — e.g. the missing-data-block count).
@@ -193,10 +199,11 @@ def report_to_tree(report: Report) -> list[TreeNode]:
         for i, f in enumerate(findings):
             f_key = f"{cat_key}:{i}"
             f_node = TreeNode(key=f_key, label=f.message, severity=f.severity, detail=f.detail)
+            hop_icon = _HOP_ICON_CATEGORIES.get(cat, "")
             for j, item in enumerate(f.items):
                 f_node.children.append(
                     TreeNode(key=f"{f_key}:{j}", label=item, severity=f.severity,
-                             ref=_parse_ref(item))
+                             ref=_parse_ref(item), icon=hop_icon)
                 )
             cat_node.children.append(f_node)
         nodes.append(cat_node)

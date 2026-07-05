@@ -153,6 +153,33 @@ def test_build_chain_report_overview_and_categories():
     assert "1 flattenable" in overview.message
 
 
+def test_build_chain_report_multihop_route_message_and_items():
+    """docs/TODO.md #40 (a)/(b): the route message no longer repeats the
+    root's own name (we're already scoped to the open file), and no longer
+    inlines the whole chain as one string -- each hop is its own item instead,
+    for the UI to render as one row per hop."""
+    g = DepGraph()
+    g.add_edge("root.blend", "mid.blend")
+    g.add_edge("mid.blend", "leaf.blend")
+    report = linkchain.build_chain_report(g, "root.blend", [])
+    f = next(f for f in report.findings if f.category == "multihop_route")
+    assert "root" not in f.message
+    assert "leaf" in f.message
+    assert " -> " not in f.message
+    assert f.items == ["mid", "leaf"]
+
+
+def test_build_chain_report_multihop_route_notes_also_linked_directly():
+    g = DepGraph()
+    g.add_edge("root.blend", "leaf.blend")
+    g.add_edge("root.blend", "mid.blend")
+    g.add_edge("mid.blend", "leaf.blend")
+    report = linkchain.build_chain_report(g, "root.blend", [])
+    f = next(f for f in report.findings if f.category == "multihop_route")
+    assert "(also linked directly)" in f.message
+    assert f.data["has_direct"] is True
+
+
 def test_build_chain_report_clean_when_nothing_found():
     g = DepGraph()
     g.add_edge("root.blend", "leaf.blend")  # direct only, no multi-hop

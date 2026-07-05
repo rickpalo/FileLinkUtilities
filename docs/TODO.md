@@ -900,9 +900,11 @@ what's still unverified; don't re-derive from scratch, read it first.**
     HTML graph headlessly).
 31. Reproduce (or rule out) the Batch 2 relink/merge crash theory (Solid vs Material viewport
     shading) — mitigation code is in place but never proven necessary or sufficient.
-32. Confirm with the user whether "Remove Excess Variants" (already built) fully closes the old
+32. ~~Confirm with the user whether "Remove Excess Variants" (already built) fully closes the old
     ROADMAP "footprint reduction — Layer 2 resolution-standardize" line, or whether a separate
-    global/per-family auto-standardize mode is still wanted on top of per-group manual picking.
+    global/per-family auto-standardize mode is still wanted on top of per-group manual picking.~~
+    **CLOSED 2026-07-05.** User's call: per-group manual picking is enough — no auto-standardize
+    mode wanted. No code change.
 33. **3 "Scene Debug"-style features (list materials by shader, missing node links, empty
     material slots) — confirmed nowhere else in the codebase, BUILT @ v0.2.104 (2026-07-04) as
     "Check Materials."** User's design decisions: fold into the existing Analyze tab (not a
@@ -1022,23 +1024,26 @@ what's still unverified; don't re-derive from scratch, read it first.**
     repeatedly) — flagged for the user to decide rather than guessed at. **NEEDS the user's live
     re-test of the popup** (does it now feel responsive, was the busy cursor enough, is (a) still
     wanted) before relying on item 2 for anything.
-40. **Multi-hop Link Chains — redesign. DECIDED 2026-07-04, NOT built yet.**
-    `core/linkchain.py::build_chain_report`'s `multihop_route` Finding (~line 342) currently reads
-    `"{root} reaches {target} via {N} hops: {chain}"`, repeating the root/current file's own name
-    on every line. Asks: (a) drop the redundant root name — lead with the linked OBJECT/file
-    itself (we're already scoped to the open file), keep the existing "(also linked directly)"
-    suffix when present; (b) underneath each route, one row per hop with a link icon + that hop's
-    filename (today the whole chain is one flat string); (c) a checkbox per chain (default
-    selected) + a "Link Directly" button. **(a)-i decision:** user confirmed "Link Directly" (item
-    c) should be JUST the simpler `has_direct` repoint operation (when the SAME target is already
-    reachable both via the multi-hop chain AND a direct link — `len(p) == 2` in `paths`, repoint
-    the indirect reference at the already-existing direct one) — NOT a generic multi-hop
-    flattener. User also separately confirmed the underlying concern doesn't apply broadly:
-    proxy/tiered link chains (e.g. character library → low-res posing stage → high-res stage) are
-    fine on their own, even efficient (keeps file size down) — only CIRCULAR references are a real
-    problem. Scope for (c) is therefore: detect `has_direct` cases, offer the repoint action; (a)
-    and (b)'s display cleanup are independent and can be built regardless. Still needs actual
-    implementation — nothing built yet.
+40. ~~**Multi-hop Link Chains — redesign. DECIDED 2026-07-04, NOT built yet.**~~ **(a)/(b) BUILT
+    2026-07-05, (c) DROPPED.** `core/linkchain.py::build_chain_report`'s `multihop_route` Finding
+    used to read `"{root} reaches {target} via {N} hops: {chain}"`, repeating the root/current
+    file's own name on every line. **(a) done:** message is now `"Reaches {target} via {N}
+    hop(s)"` (+ the existing "(also linked directly)" suffix when `has_direct`), root name dropped.
+    **(b) done:** `items` now holds one display-name entry per hop (`longest[1:]`, root excluded)
+    instead of the old flat `" -> "`-joined chain string; `core/tree.py` gained
+    `_HOP_ICON_CATEGORIES` so every `multihop_route` item child renders with a
+    `LIBRARY_DATA_DIRECT` icon (no new UI code needed — `report_to_tree`'s existing
+    `items`→children machinery + `FILELINK_UL_tree.draw_item`'s existing `item.icon` draw already
+    plumb it through end-to-end). `routes_from_report` (used by Flatten v2's `build_flatten_plan`)
+    updated to read the target path from `data["paths"][0][-1]` instead of `finding.items[1]`,
+    since `items` is now display-only hop names, not raw paths — `data["paths"]` (unchanged, still
+    raw) is the only thing downstream code should parse. +4 pytest (suite 535). **(c) DROPPED
+    2026-07-05, user's call:** tracing the actual data model showed there's no real per-datablock
+    "indirect reference" to repoint — `DepGraph` nodes are whole FILES (built by an offline
+    dependency scan, not the open `bpy.data` session), so a `has_direct` route just means root's
+    blend file has a SEPARATE direct edge to target for some unrelated datablock; target's actual
+    data is one shared Library entry either way, nothing to remap at the bpy level. Revisit only if
+    a concrete production case surfaces showing a real thing to fix.
 41. ~~**Flattenable overrides — redesign, needs clarification of WHICH view this refers to before
     any code.**~~ **RESOLVED + BUILT @ v0.2.82 (2026-06-26).** Root cause of the original confusion:
     two near-identically-named buttons computing the SAME `OVERRIDE_WITH_TRANSFORM` data and

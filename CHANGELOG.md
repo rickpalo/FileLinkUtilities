@@ -8,6 +8,15 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.2.107] — Multi-hop Link Chains display cleanup
+
+### Changed
+- **Find Flattenable Links'** multi-hop route rows no longer repeat the current file's own name
+  on every line, and no longer inline the whole chain as one string — each hop in the route now
+  shows as its own row with a link icon, matching the rest of this UI's tree rendering. (The
+  "Link Directly" repoint action originally scoped alongside this was dropped — there's no real
+  per-datablock action to take at the bpy level for a route that's also linked directly.)
+
 ## [0.2.106] — Phase R: renamed to File & Link Utilities
 
 ### Changed
