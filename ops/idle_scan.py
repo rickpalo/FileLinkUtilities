@@ -8,8 +8,8 @@ blocks the main thread, so it would need to run chunked/modal like every other
 heavy op here, and must never start while a render is running). See
 ``docs/TODO.md`` "BATCH E".
 
-Gated behind ``AssetDoctorPreferences.idle_scan_enabled`` (default OFF). This
-is the FIRST app timer AssetDoctor registers, so ``unregister_idle_timer()``
+Gated behind ``FileLinkPreferences.idle_scan_enabled`` (default OFF). This
+is the FIRST app timer File & Link Utilities registers, so ``unregister_idle_timer()``
 must run on add-on unregister — nothing should survive a disable/reload.
 """
 
@@ -32,12 +32,12 @@ def _idle_tick():
         wm = bpy.context.window_manager
         if prefs is None or wm is None or not prefs.idle_scan_enabled:
             return _TICK_SECONDS
-        if getattr(wm, "assetdoctor_op_active", False):
+        if getattr(wm, "filelink_op_active", False):
             return _TICK_SECONDS  # never fire while a modal scan/apply is running
 
         secs = seconds_since_input()
-        wm.assetdoctor_idle_seconds = secs if secs is not None else 0.0
-        wm.assetdoctor_idle_detected = is_idle(secs, prefs.idle_scan_threshold)
+        wm.filelink_idle_seconds = secs if secs is not None else 0.0
+        wm.filelink_idle_detected = is_idle(secs, prefs.idle_scan_threshold)
     except Exception:
         pass
     return _TICK_SECONDS

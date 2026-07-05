@@ -25,38 +25,38 @@ from dataclasses import dataclass
 class AnalyzeStep:
     key: str
     label: str
-    opname: str  # "assetdoctor.scan_x" -> bpy.ops.assetdoctor.scan_x(**kwargs)
+    opname: str  # "filelink.scan_x" -> bpy.ops.filelink.scan_x(**kwargs)
     kwargs: dict
 
 
 STEPS: tuple[AnalyzeStep, ...] = (
-    AnalyzeStep("check_link_chain", "Check Link Chain", "assetdoctor.scan_dependencies", {}),
-    AnalyzeStep("audit_file", "Audit This File", "assetdoctor.analyze_overrides", {}),
+    AnalyzeStep("check_link_chain", "Check Link Chain", "filelink.scan_dependencies", {}),
+    AnalyzeStep("audit_file", "Audit This File", "filelink.analyze_overrides", {}),
     AnalyzeStep("find_flattenable_chains", "Find Flattenable Link Chains",
-                "assetdoctor.scan_link_chains", {}),
+                "filelink.scan_link_chains", {}),
     AnalyzeStep("find_flattenable_characters", "Group Flattenable Characters",
-                "assetdoctor.scan_flatten_candidates", {}),
+                "filelink.scan_flatten_candidates", {}),
     AnalyzeStep("find_duplicate_datablocks", "Find Duplicate Data-blocks",
-                "assetdoctor.scan_datablock_dups", {}),
-    AnalyzeStep("find_broken_links", "Find Broken Library Links", "assetdoctor.scan_broken_links", {}),
+                "filelink.scan_datablock_dups", {}),
+    AnalyzeStep("find_broken_links", "Find Broken Library Links", "filelink.scan_broken_links", {}),
     AnalyzeStep("find_reconnectable", "Find Reconnectable Data-blocks",
-                "assetdoctor.scan_reconnect_targets", {}),
+                "filelink.scan_reconnect_targets", {}),
     AnalyzeStep("check_library_paths", "Check Library Paths",
-                "assetdoctor.normalize_library_paths", {"apply": False}),
+                "filelink.normalize_library_paths", {"apply": False}),
     AnalyzeStep("find_missing_textures", "Find Missing Textures",
-                "assetdoctor.scan_broken_textures", {}),
+                "filelink.scan_broken_textures", {}),
     AnalyzeStep("find_duplicate_materials", "Find Duplicate Materials",
-                "assetdoctor.material_dedup", {"apply": False}),
+                "filelink.material_dedup", {"apply": False}),
     AnalyzeStep("find_duplicate_geometry", "Find Duplicate Geometry",
-                "assetdoctor.instance_geometry", {"apply": False}),
-    AnalyzeStep("find_orphans", "Find Orphans", "assetdoctor.scan_orphans",
+                "filelink.instance_geometry", {"apply": False}),
+    AnalyzeStep("find_orphans", "Find Orphans", "filelink.scan_orphans",
                 {"purge_orphans": False}),
     AnalyzeStep("find_duplicate_content", "Find Duplicate Content",
-                "assetdoctor.scan_content_dups", {}),
+                "filelink.scan_content_dups", {}),
     AnalyzeStep("find_resolution_variants", "Find Resolution Variants",
-                "assetdoctor.scan_res_variants", {}),
+                "filelink.scan_res_variants", {}),
     AnalyzeStep("analyze_memory_disk", "Analyze Memory/Disk",
-                "assetdoctor.analyze_resources", {}),
+                "filelink.analyze_resources", {}),
 )
 
 

@@ -68,7 +68,7 @@ def main():
                            and cls.get("Material/WoodB") == "orphan"))
 
         # Purge path
-        res = bpy.ops.assetdoctor.scan_orphans("EXEC_DEFAULT", purge_orphans=True)
+        res = bpy.ops.filelink.scan_orphans("EXEC_DEFAULT", purge_orphans=True)
         names = set(bpy.data.materials.keys())
         checks.append(("purge returned FINISHED", res == {"FINISHED"}))
         checks.append(("OrphanMat purged", "OrphanMat" not in names))
@@ -77,24 +77,24 @@ def main():
         checks.append(("WoodA survived (in use)", "WoodA" in names))
 
         # Group 11 #45, 2026-06-26: the new SELECTIVE purge path
-        # (assetdoctor.purge_orphans_selected) — two fresh orphans, untick one,
+        # (filelink.purge_orphans_selected) — two fresh orphans, untick one,
         # confirm Purge Selected removes ONLY the ticked one (proves real
         # per-row selectivity, not a relabeled purge-everything).
         mat("OrphanX")
         mat("OrphanY")
         wm = bpy.context.window_manager
-        bpy.ops.assetdoctor.scan_orphans("EXEC_DEFAULT", purge_orphans=False)
-        checks.append(("two orphan rows populated", len(wm.assetdoctor_orphan_rows) == 2))
-        for row in wm.assetdoctor_orphan_rows:
+        bpy.ops.filelink.scan_orphans("EXEC_DEFAULT", purge_orphans=False)
+        checks.append(("two orphan rows populated", len(wm.filelink_orphan_rows) == 2))
+        for row in wm.filelink_orphan_rows:
             if row.name == "Material/OrphanX":
                 row.selected = False
 
-        res2 = bpy.ops.assetdoctor.purge_orphans_selected("EXEC_DEFAULT")
+        res2 = bpy.ops.filelink.purge_orphans_selected("EXEC_DEFAULT")
         names2 = set(bpy.data.materials.keys())
         checks.append(("selective purge FINISHED", res2 == {"FINISHED"}))
         checks.append(("OrphanY (ticked) purged", "OrphanY" not in names2))
         checks.append(("OrphanX (unticked) survived", "OrphanX" in names2))
-        checks.append(("rows cleared after selective purge", len(wm.assetdoctor_orphan_rows) == 0))
+        checks.append(("rows cleared after selective purge", len(wm.filelink_orphan_rows) == 0))
 
         ok = all(p for _, p in checks)
         for label, p in checks:

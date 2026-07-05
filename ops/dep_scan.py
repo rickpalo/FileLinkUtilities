@@ -21,8 +21,8 @@ from .progress import ModalProgressMixin
 from .report_store import stash_tree
 
 
-class ASSETDOCTOR_OT_scan_dependencies(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.scan_dependencies"
+class FILELINK_OT_scan_dependencies(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.scan_dependencies"
     bl_label = "Scan Dependencies"
     bl_description = (
         "Recursively map this file's library links (and the files they link, "

@@ -1,6 +1,6 @@
-"""Logging for AssetDoctor.
+"""Logging for File & Link Utilities.
 
-A single "assetdoctor" logger always echoes INFO to the console (preserving the
+A single "filelink" logger always echoes INFO to the console (preserving the
 per-finding output operators emit). When the user ticks Utilities > Enable Debug
 Log, a DEBUG-level file handler is attached that writes ``debugLog.txt`` next to
 the current .blend (or to Blender's temp dir for an unsaved file), so a remote
@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import os
 
-_LOGGER_NAME = "assetdoctor"
+_LOGGER_NAME = "filelink"
 _file_handler: logging.Handler | None = None
 
 
@@ -22,7 +22,7 @@ def get_logger() -> logging.Logger:
         log.setLevel(logging.DEBUG)
         stream = logging.StreamHandler()
         stream.setLevel(logging.INFO)
-        stream.setFormatter(logging.Formatter("[AssetDoctor] %(message)s"))
+        stream.setFormatter(logging.Formatter("[FileLink] %(message)s"))
         log.addHandler(stream)
         log.propagate = False
         log._ad_inited = True  # type: ignore[attr-defined]
@@ -32,10 +32,10 @@ def get_logger() -> logging.Logger:
 def debug_log_path(blend_path: str) -> str:
     """Where the debug log goes: next to the .blend, else Blender's temp dir."""
     if blend_path:
-        return os.path.join(os.path.dirname(blend_path), "AssetDoctorDebugLog.txt")
+        return os.path.join(os.path.dirname(blend_path), "FileLinkDebugLog.txt")
     import bpy  # only needed for the unsaved-file fallback
 
-    return os.path.join(bpy.app.tempdir, "AssetDoctorDebugLog.txt")
+    return os.path.join(bpy.app.tempdir, "FileLinkDebugLog.txt")
 
 
 def set_debug_enabled(enabled: bool, blend_path: str = "") -> str | None:

@@ -128,9 +128,9 @@ class Report:
 
 
 def default_export_filename(label: str) -> str:
-    """``"Duplicate Textures"`` -> ``"AssetDoctor_Duplicate_Textures.txt"`` —
+    """``"Duplicate Textures"`` -> ``"FileLink_Duplicate_Textures.txt"`` —
     the file-browser default name for Export, so saving reports from
     different features doesn't always offer to overwrite the same generic
-    ``AssetDoctorReport.txt``."""
+    ``FileLinkReport.txt``."""
     slug = "_".join(label.split())
-    return f"AssetDoctor_{slug}.txt" if slug else "AssetDoctorReport.txt"
+    return f"FileLink_{slug}.txt" if slug else "FileLinkReport.txt"

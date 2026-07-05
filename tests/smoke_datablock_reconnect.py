@@ -3,7 +3,7 @@
     blender --background --factory-startup --python tests/smoke_datablock_reconnect.py
 
 Regression test for a real bug found 2026-06-28 against the user's production
-human_bundle.blend: ``ASSETDOCTOR_OT_reconnect_selected`` looked up each
+human_bundle.blend: ``FILELINK_OT_reconnect_selected`` looked up each
 placeholder via a bare ``target_coll.get(row.name)``, which is ambiguous
 whenever a LOCAL data-block happens to share the exact same name as the
 linked-but-missing placeholder (this project's real files routinely have
@@ -77,21 +77,21 @@ def main():
         addon = __import__(PKG)
         addon.register()
         try:
-            bpy.ops.assetdoctor.scan_reconnect_targets()
+            bpy.ops.filelink.scan_reconnect_targets()
             wm = bpy.context.window_manager
-            coll = wm.assetdoctor_missing_blocks
+            coll = wm.filelink_missing_blocks
             checks.append(("exactly one missing row found", len(coll) == 1))
             row = coll[0] if len(coll) else None
             checks.append(("row auto-suggested 'RealMat' (numbered/renamed match)",
                            row is not None and row.target == "RealMat"
                            and row.confidence == "numbered" and row.selected))
 
-            bpy.ops.assetdoctor.reconnect_selected()
+            bpy.ops.filelink.reconnect_selected()
             checks.append(("result message reports success, not skipped",
-                           wm.assetdoctor_last_result_ok
-                           and "Reconnected 1" in wm.assetdoctor_last_result
-                           and "skipped" not in wm.assetdoctor_last_result))
-            checks.append(("missing list now empty", len(wm.assetdoctor_missing_blocks) == 0))
+                           wm.filelink_last_result_ok
+                           and "Reconnected 1" in wm.filelink_last_result
+                           and "skipped" not in wm.filelink_last_result))
+            checks.append(("missing list now empty", len(wm.filelink_missing_blocks) == 0))
 
             same_name = [m for m in bpy.data.materials if m.name == "RealMat.026"]
             checks.append(("only the decoy is left named RealMat.026 (placeholder removed)",

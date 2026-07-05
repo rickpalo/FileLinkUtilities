@@ -86,10 +86,10 @@ def _in_memory_pools(attr: str, exclude_library) -> tuple[list[str], dict[str, s
 
 
 def _populate_examine_rows(context, library) -> int:
-    """Refill ``assetdoctor_examine_rows`` from every datablock ``library``
+    """Refill ``filelink_examine_rows`` from every datablock ``library``
     currently provides. Returns the row count."""
     wm = context.window_manager
-    coll = wm.assetdoctor_examine_rows
+    coll = wm.filelink_examine_rows
     coll.clear()
     for attr, block in _iter_library_blocks(library):
         local_names, other_by_name = _in_memory_pools(attr, library)
@@ -124,15 +124,15 @@ def _populate_examine_rows(context, library) -> int:
         row.selected = row.use_suggested
         if candidate is not None:
             row.graph_match = _material_graph_match(context, block, candidate)
-    wm.assetdoctor_examine_index = 0
-    wm.assetdoctor_examine_library = library.name if library else ""
-    wm.assetdoctor_examine_scanned = True
+    wm.filelink_examine_index = 0
+    wm.filelink_examine_library = library.name if library else ""
+    wm.filelink_examine_scanned = True
     return len(coll)
 
 
 def rebuild_examine_picker_rows(wm) -> None:
-    """Rebuild ``wm.assetdoctor_examine_picker_rows`` (Group 12 Phase 3, item
-    4) from the current ``assetdoctor_examine_rows`` + expand state.
+    """Rebuild ``wm.filelink_examine_picker_rows`` (Group 12 Phase 3, item
+    4) from the current ``filelink_examine_rows`` + expand state.
 
     The simplest of the four Phase 3 sections: unlike Missing Textures/
     Duplicate Textures/Reconnect, NOTHING in a group's header text depends on
@@ -142,17 +142,17 @@ def rebuild_examine_picker_rows(wm) -> None:
     changing ops (Examine / Apply Selected) need to call this — every other
     per-row edit (``selected``/``make_local``/``target``/a fresh
     ``source_blend`` from Pick a Specific Item or Search a Folder) is drawn
-    live by ``ASSETDOCTOR_UL_examine_picker`` straight off the real row, no
+    live by ``FILELINK_UL_examine_picker`` straight off the real row, no
     rebuild needed."""
     from ..core import picker as picker_mod
     from .report_store import get_expanded
 
-    coll = wm.assetdoctor_examine_rows
+    coll = wm.filelink_examine_rows
     if not len(coll):
-        wm.assetdoctor_examine_picker_rows.clear()
+        wm.filelink_examine_picker_rows.clear()
         return
 
-    expanded = get_expanded(wm, "assetdoctor_examine_expanded")
+    expanded = get_expanded(wm, "filelink_examine_expanded")
     groups: dict[str, list[int]] = {}
     for i, item in enumerate(coll):
         groups.setdefault(item.kind, []).append(i)
@@ -167,9 +167,9 @@ def rebuild_examine_picker_rows(wm) -> None:
         for kind in sorted(groups, key=str.lower)
     ]
     picker_rows = picker_mod.flatten_group_member_rows(
-        specs, expanded, ref_prop="assetdoctor_examine_rows")
+        specs, expanded, ref_prop="filelink_examine_rows")
 
-    picker_coll = wm.assetdoctor_examine_picker_rows
+    picker_coll = wm.filelink_examine_picker_rows
     picker_coll.clear()
     for pr in picker_rows:
         item = picker_coll.add()
@@ -186,8 +186,8 @@ def rebuild_examine_picker_rows(wm) -> None:
         item.is_expanded = pr.is_expanded
 
 
-class ASSETDOCTOR_OT_examine_library(bpy.types.Operator):
-    bl_idname = "assetdoctor.examine_library"
+class FILELINK_OT_examine_library(bpy.types.Operator):
+    bl_idname = "filelink.examine_library"
     bl_label = "Examine Library"
     bl_description = (
         "List every data-block the current file links from the chosen library, "
@@ -198,7 +198,7 @@ class ASSETDOCTOR_OT_examine_library(bpy.types.Operator):
     bl_options = {"REGISTER"}
 
     def execute(self, context):
-        name = context.window_manager.assetdoctor_examine_library_pick
+        name = context.window_manager.filelink_examine_library_pick
         library = bpy.data.libraries.get(name) if name else None
         if library is None:
             self.report({"ERROR"}, "Pick a library to examine")
@@ -208,7 +208,7 @@ class ASSETDOCTOR_OT_examine_library(bpy.types.Operator):
         if context.area:
             context.area.tag_redraw()
         if n:
-            suggested = sum(1 for row in context.window_manager.assetdoctor_examine_rows
+            suggested = sum(1 for row in context.window_manager.filelink_examine_rows
                             if row.suggested_kind != "none")
             self.report({"INFO"}, f"{n} data-block(s) from {library.name}; "
                         f"{suggested} have an in-memory match already")
@@ -229,8 +229,8 @@ def _peek_names(path: str, attr: str) -> list[str] | None:
         return None
 
 
-class ASSETDOCTOR_OT_examine_pick_source(FilePickerMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.examine_pick_source"
+class FILELINK_OT_examine_pick_source(FilePickerMixin, bpy.types.Operator):
+    bl_idname = "filelink.examine_pick_source"
     bl_label = "Pick a Specific Item"
     bl_description = (
         "Choose a .blend AND a specific datablock within it for THIS row — not "
@@ -244,7 +244,7 @@ class ASSETDOCTOR_OT_examine_pick_source(FilePickerMixin, bpy.types.Operator):
     filter_glob: bpy.props.StringProperty(default="*.blend", options={"HIDDEN"})  # type: ignore[valid-type]
 
     def execute(self, context):
-        coll = context.window_manager.assetdoctor_examine_rows
+        coll = context.window_manager.filelink_examine_rows
         if not (0 <= self.index < len(coll)):
             return {"CANCELLED"}
         row = coll[self.index]
@@ -269,7 +269,7 @@ class ASSETDOCTOR_OT_examine_pick_source(FilePickerMixin, bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_examine_search_folder(FilePickerMixin, bpy.types.Operator):
+class FILELINK_OT_examine_search_folder(FilePickerMixin, bpy.types.Operator):
     """Folder-wide convenience layer over Pick a Specific Item (docs/TODO.md
     #20, 2026-06-27): walk every .blend under a chosen folder and peek each
     for a name match, instead of requiring the user to already know which
@@ -280,7 +280,7 @@ class ASSETDOCTOR_OT_examine_search_folder(FilePickerMixin, bpy.types.Operator):
     file is also pointless to search anyway, since its names are already in
     the in-memory pools _populate_examine_rows checked first."""
 
-    bl_idname = "assetdoctor.examine_search_folder"
+    bl_idname = "filelink.examine_search_folder"
     bl_label = "Search a Folder"
     bl_description = (
         "Walk every .blend in a chosen folder looking for a name match for this "
@@ -299,7 +299,7 @@ class ASSETDOCTOR_OT_examine_search_folder(FilePickerMixin, bpy.types.Operator):
         from ..core.blendscan import iter_blend_files
         from ..core.reconnect import find_best_file_match
 
-        coll = context.window_manager.assetdoctor_examine_rows
+        coll = context.window_manager.filelink_examine_rows
         if not (0 <= self.index < len(coll)):
             return {"CANCELLED"}
         row = coll[self.index]
@@ -342,8 +342,8 @@ class ASSETDOCTOR_OT_examine_search_folder(FilePickerMixin, bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_examine_apply_selected(bpy.types.Operator):
-    bl_idname = "assetdoctor.examine_apply_selected"
+class FILELINK_OT_examine_apply_selected(bpy.types.Operator):
+    bl_idname = "filelink.examine_apply_selected"
     bl_label = "Apply Selected"
     bl_description = (
         "For each ticked row: Make Local if checked, else remap onto the accepted "
@@ -355,8 +355,8 @@ class ASSETDOCTOR_OT_examine_apply_selected(bpy.types.Operator):
 
     def execute(self, context):
         wm = context.window_manager
-        library = bpy.data.libraries.get(wm.assetdoctor_examine_library)
-        coll = wm.assetdoctor_examine_rows
+        library = bpy.data.libraries.get(wm.filelink_examine_library)
+        coll = wm.filelink_examine_rows
         chosen = [row for row in coll if row.selected]
         if not chosen:
             self.report({"WARNING"}, "Tick at least one data-block")
@@ -425,8 +425,8 @@ class ASSETDOCTOR_OT_examine_apply_selected(bpy.types.Operator):
         except Exception:
             pass
 
-        wm.assetdoctor_examine_rows.clear()
-        wm.assetdoctor_examine_scanned = False
+        wm.filelink_examine_rows.clear()
+        wm.filelink_examine_scanned = False
         rebuild_examine_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()

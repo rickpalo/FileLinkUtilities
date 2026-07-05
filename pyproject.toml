@@ -5,7 +5,7 @@ testpaths = ["tests"]
 addopts = "-q --import-mode=importlib"
 consider_namespace_packages = false
 
-# Note: the importable package name is "assetdoctor" (the extension id). On disk
-# the dev folder is "AssetDoctor"; Windows' case-insensitive FS makes both work.
+# Note: the importable package name is "file_link_utilities" (the extension id). On disk
+# the dev folder is "FileLinkUtilities"; Windows' case-insensitive FS makes both work.
 # Tests deliberately import the bpy-free `core` package directly (see conftest.py)
 # so they run outside Blender.

@@ -38,7 +38,7 @@ def test_build_harvest_script_embeds_names_and_out_path_as_literals():
     assert "NAMES = ['CharA', 'CharB']" in script
     assert "open('/tmp/out.json'" in script
     # Sanity: it's plain bpy calls, never imports the addon package.
-    assert "assetdoctor" not in script.lower()
+    assert "filelink" not in script.lower()
 
 
 def test_build_harvest_script_is_syntactically_valid_python():

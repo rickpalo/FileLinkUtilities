@@ -6,7 +6,7 @@ Builds a Principled BSDF material, an Emission material, a Mix Shader
 material (both should classify as their own/"Mixed Shader" groups), a
 material with an Image Texture node pointing at a file that doesn't exist on
 disk, and an object with one filled + one empty material slot. Runs the real
-``assetdoctor.check_materials`` operator and asserts the stashed report has
+``filelink.check_materials`` operator and asserts the stashed report has
 the expected shader-type groups, flags the missing-image node, and flags the
 empty slot.
 
@@ -134,12 +134,12 @@ def main():
         mesh.materials.append(wood)
         mesh.materials.append(None)
 
-        res = bpy.ops.assetdoctor.check_materials("EXEC_DEFAULT")
+        res = bpy.ops.filelink.check_materials("EXEC_DEFAULT")
         checks.append(("operator FINISHED", res == {"FINISHED"}))
 
         Report = __import__(f"{PKG}.core.report", fromlist=["Report"]).Report
         wm = bpy.context.window_manager
-        report = Report.from_json(wm.assetdoctor_rep_matdiag)
+        report = Report.from_json(wm.filelink_rep_matdiag)
 
         shader_findings = {f.message: f.items for f in report.findings if f.category == "shader_type"}
         checks.append(("Principled BSDF group has Wood",

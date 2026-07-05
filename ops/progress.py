@@ -1,6 +1,6 @@
-"""Shared live-progress plumbing for AssetDoctor's modal operators.
+"""Shared live-progress plumbing for File & Link Utilities' modal operators.
 
-One set of WindowManager props (`assetdoctor_op_active/_progress/_status`,
+One set of WindowManager props (`filelink_op_active/_progress/_status`,
 registered in the package ``register()``) backs a single progress bar drawn at
 the top of the N-panel. Any modal operator (F1 folder scan, F2 make-local, …)
 calls :func:`set_progress` per timer tick to drive it, and :func:`clear_progress`
@@ -19,23 +19,23 @@ import time
 def set_progress(context, fraction: float = 0.0, status: str = "") -> None:
     """Show/update the shared progress bar and repaint the sidebar."""
     wm = context.window_manager
-    wm.assetdoctor_op_active = True
-    wm.assetdoctor_op_progress = max(0.0, min(1.0, fraction))
-    wm.assetdoctor_op_status = status
+    wm.filelink_op_active = True
+    wm.filelink_op_progress = max(0.0, min(1.0, fraction))
+    wm.filelink_op_status = status
     if context.area is not None:
         context.area.tag_redraw()
 
 
 def set_result(context, message: str, ok: bool = True) -> None:
-    """Leave a STICKY result line in the panel (``assetdoctor_last_result``) —
+    """Leave a STICKY result line in the panel (``filelink_last_result``) —
     unlike a ``self.report()`` toast (gone once you move the mouse) or the
     progress bar (hidden once the op finishes), this stays until the next
     action overwrites it. Plain (non-modal) operators that mutate data should
     call this with the same text they pass to ``self.report()`` so the panel
     itself shows what happened, not just the Info editor."""
     wm = context.window_manager
-    wm.assetdoctor_last_result = message
-    wm.assetdoctor_last_result_ok = ok
+    wm.filelink_last_result = message
+    wm.filelink_last_result_ok = ok
     if context.area is not None:
         context.area.tag_redraw()
 
@@ -43,11 +43,11 @@ def set_result(context, message: str, ok: bool = True) -> None:
 def clear_progress(context) -> None:
     """Hide the shared progress bar."""
     wm = context.window_manager
-    wm.assetdoctor_op_active = False
-    wm.assetdoctor_op_progress = 0.0
-    wm.assetdoctor_op_status = ""
-    wm.assetdoctor_op_paused = False
-    wm.assetdoctor_op_cancel = False
+    wm.filelink_op_active = False
+    wm.filelink_op_progress = 0.0
+    wm.filelink_op_status = ""
+    wm.filelink_op_paused = False
+    wm.filelink_op_cancel = False
     if context.area is not None:
         context.area.tag_redraw()
 
@@ -92,11 +92,11 @@ class ModalProgressMixin:
         self._last = (0.0, "Starting…")
         self._was_paused = False
         wm = context.window_manager
-        wm.assetdoctor_op_paused = False
-        wm.assetdoctor_op_cancel = False
+        wm.filelink_op_paused = False
+        wm.filelink_op_cancel = False
         wm.progress_begin(0, 100)
         set_progress(context, 0.0, "Starting…")
-        context.workspace.status_text_set(f"AssetDoctor: {self.bl_label}… (ESC to cancel)")
+        context.workspace.status_text_set(f"FileLink: {self.bl_label}… (ESC to cancel)")
         self._timer = wm.event_timer_add(0.05, window=context.window)
         wm.modal_handler_add(self)
         return {"RUNNING_MODAL"}
@@ -110,13 +110,13 @@ class ModalProgressMixin:
             return {"PASS_THROUGH"}
 
         # Cancel requested from the panel's Cancel button (works even while paused).
-        if context.window_manager.assetdoctor_op_cancel:
+        if context.window_manager.filelink_op_cancel:
             self._teardown(context)
             self.report({"WARNING"}, self.cancel_message())
             return {"CANCELLED"}
 
         # Paused: hold here without advancing the generator (ESC still cancels).
-        if context.window_manager.assetdoctor_op_paused:
+        if context.window_manager.filelink_op_paused:
             frac, status = self._last
             set_progress(context, frac, f"⏸ Paused — {status}")
             self._was_paused = True
@@ -160,33 +160,33 @@ class ModalProgressMixin:
 import bpy  # noqa: E402 - operators below need bpy; helpers above stay bpy-light
 
 
-class ASSETDOCTOR_OT_toggle_pause(bpy.types.Operator):
-    """Pause or resume the running AssetDoctor operation (it holds between steps;
+class FILELINK_OT_toggle_pause(bpy.types.Operator):
+    """Pause or resume the running File & Link Utilities operation (it holds between steps;
     ESC still cancels). Useful for long recursive scans over multi-GB files."""
 
-    bl_idname = "assetdoctor.toggle_pause"
+    bl_idname = "filelink.toggle_pause"
     bl_label = "Pause/Resume"
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
         wm = context.window_manager
-        wm.assetdoctor_op_paused = not wm.assetdoctor_op_paused
+        wm.filelink_op_paused = not wm.filelink_op_paused
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_request_cancel(bpy.types.Operator):
-    """Cancel the running AssetDoctor operation (same as pressing ESC). The modal
+class FILELINK_OT_request_cancel(bpy.types.Operator):
+    """Cancel the running File & Link Utilities operation (same as pressing ESC). The modal
     stops at the next step boundary — a step already in progress (e.g. reading a
     large file) finishes first."""
 
-    bl_idname = "assetdoctor.request_cancel"
+    bl_idname = "filelink.request_cancel"
     bl_label = "Cancel"
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
-        context.window_manager.assetdoctor_op_cancel = True
+        context.window_manager.filelink_op_cancel = True
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}

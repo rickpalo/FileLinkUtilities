@@ -75,11 +75,11 @@ def _gather_libs() -> list[LibDesc]:
 
 
 def _populate_broken_links(context) -> tuple[int, int]:
-    """Refill ``assetdoctor_broken_libs`` from the current file's missing libraries,
+    """Refill ``filelink_broken_libs`` from the current file's missing libraries,
     each paired with an auto-found candidate where unambiguous. Returns
     (broken count, auto-matched count)."""
     wm = context.window_manager
-    coll = wm.assetdoctor_broken_libs
+    coll = wm.filelink_broken_libs
     coll.clear()
     libs = _gather_libs()
     missing = [lib for lib in libs if not lib.exists]
@@ -99,7 +99,7 @@ def _populate_broken_links(context) -> tuple[int, int]:
         # Reuses the generic per-row `tag` (unused elsewhere for this list) to
         # carry "direct"/"indirect" — see core.relink.LibDesc.is_direct.
         item.tag = "direct" if lib.is_direct else "indirect"
-    wm.assetdoctor_broken_index = 0
+    wm.filelink_broken_index = 0
     return len(missing), len(candidates)
 
 
@@ -110,7 +110,7 @@ def _refresh_broken_links(context) -> tuple[int, int]:
     from .report_store import stash_report
 
     broken, found = _populate_broken_links(context)
-    coll = context.window_manager.assetdoctor_broken_libs
+    coll = context.window_manager.filelink_broken_libs
     rows = [(item.name, item.stored, item.target) for item in coll]
     report = relink.build_broken_links_report(
         rows, blend_name=bpy.path.basename(bpy.data.filepath) or "current file")
@@ -118,8 +118,8 @@ def _refresh_broken_links(context) -> tuple[int, int]:
     return broken, found
 
 
-class ASSETDOCTOR_OT_scan_broken_links(bpy.types.Operator):
-    bl_idname = "assetdoctor.scan_broken_links"
+class FILELINK_OT_scan_broken_links(bpy.types.Operator):
+    bl_idname = "filelink.scan_broken_links"
     bl_label = "Find Broken Library Links"
     bl_description = ("List this file's broken/missing library links so you can relink "
                       "them individually (with an auto-found match where possible)")
@@ -139,8 +139,8 @@ class ASSETDOCTOR_OT_scan_broken_links(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_relink_pick_file(FilePickerMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.relink_pick_file"
+class FILELINK_OT_relink_pick_file(FilePickerMixin, bpy.types.Operator):
+    bl_idname = "filelink.relink_pick_file"
     bl_label = "Pick Library File"
     bl_description = "Choose the .blend file to relink this broken library to"
     bl_options = {"REGISTER", "INTERNAL"}
@@ -150,7 +150,7 @@ class ASSETDOCTOR_OT_relink_pick_file(FilePickerMixin, bpy.types.Operator):
     filter_glob: bpy.props.StringProperty(default="*.blend", options={"HIDDEN"})  # type: ignore[valid-type]
 
     def execute(self, context):
-        coll = context.window_manager.assetdoctor_broken_libs
+        coll = context.window_manager.filelink_broken_libs
         if 0 <= self.index < len(coll):
             item = coll[self.index]
             target = os.path.normpath(bpy.path.abspath(self.filepath))
@@ -162,8 +162,8 @@ class ASSETDOCTOR_OT_relink_pick_file(FilePickerMixin, bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_relink_selected(bpy.types.Operator):
-    bl_idname = "assetdoctor.relink_selected"
+class FILELINK_OT_relink_selected(bpy.types.Operator):
+    bl_idname = "filelink.relink_selected"
     bl_label = "Relink Selected"
     bl_options = {"REGISTER"}
 
@@ -177,7 +177,7 @@ class ASSETDOCTOR_OT_relink_selected(bpy.types.Operator):
             self.report({"ERROR"}, "Save the file first")
             return {"CANCELLED"}
 
-        coll = context.window_manager.assetdoctor_broken_libs
+        coll = context.window_manager.filelink_broken_libs
         chosen = [item for item in coll if item.selected and item.target]
         if not chosen:
             self.report({"WARNING"}, "Tick at least one link that has a target file")
@@ -218,12 +218,12 @@ class ASSETDOCTOR_OT_relink_selected(bpy.types.Operator):
 
 
 def _populate_dup_lib_members(context, plan: relink.LibFixPlan) -> None:
-    """Refill ``assetdoctor_dup_lib_members`` from ``plan.duplicates`` (item 6,
+    """Refill ``filelink_dup_lib_members`` from ``plan.duplicates`` (item 6,
     2026-06-25): one row per stored-path FORM in each duplicate-library group
     (``group`` = the resolved-target key), pre-selecting the first member of
     each group as the default "keep this path" choice — mirrors every other
     list in this addon defaulting to a sensible first pick rather than none."""
-    coll = context.window_manager.assetdoctor_dup_lib_members
+    coll = context.window_manager.filelink_dup_lib_members
     coll.clear()
     for group_key, members in plan.duplicates.items():
         for i, (name, stored) in enumerate(members):
@@ -235,14 +235,14 @@ def _populate_dup_lib_members(context, plan: relink.LibFixPlan) -> None:
 
 
 def _populate_abs_path_members(context, groups: list[relink.AbsolutePathGroup]) -> None:
-    """Refill ``assetdoctor_abs_path_members`` from ``plan_absolute_paths``
+    """Refill ``filelink_abs_path_members`` from ``plan_absolute_paths``
     (item 7, 2026-06-25): one row per absolute library, grouped (``group``)
     by drive. Same-drive members default pre-ticked (the same safe,
     idempotent relative-path conversion Normalize already silently performs)
     and carry their precomputed relative path in ``target``; cross-drive
     members get an EMPTY ``target`` — there is no relative path between
     drives — so the UI can tell them apart and show them read-only."""
-    coll = context.window_manager.assetdoctor_abs_path_members
+    coll = context.window_manager.filelink_abs_path_members
     coll.clear()
     for group in groups:
         for member in group.members:
@@ -272,8 +272,8 @@ def _refresh_libfix(context):
     return plan, blend_dir
 
 
-class ASSETDOCTOR_OT_normalize_library_paths(bpy.types.Operator):
-    bl_idname = "assetdoctor.normalize_library_paths"
+class FILELINK_OT_normalize_library_paths(bpy.types.Operator):
+    bl_idname = "filelink.normalize_library_paths"
     bl_label = "Normalize Library Paths"
     bl_options = {"REGISTER"}
 
@@ -316,18 +316,18 @@ class ASSETDOCTOR_OT_normalize_library_paths(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_dup_lib_select(bpy.types.Operator):
+class FILELINK_OT_dup_lib_select(bpy.types.Operator):
     """Tick exactly one stored-path form per duplicate-library group (radio
     behaviour via checkboxes — Blender has no native radio-checkbox), item 6."""
 
-    bl_idname = "assetdoctor.dup_lib_select"
+    bl_idname = "filelink.dup_lib_select"
     bl_label = "Use This Path"
     bl_options = {"INTERNAL"}
 
     index: bpy.props.IntProperty()  # type: ignore[valid-type]
 
     def execute(self, context):
-        coll = context.window_manager.assetdoctor_dup_lib_members
+        coll = context.window_manager.filelink_dup_lib_members
         if not (0 <= self.index < len(coll)):
             return {"CANCELLED"}
         group = coll[self.index].group
@@ -386,12 +386,12 @@ def _merge_library(victim, canonical) -> int:
     return remapped
 
 
-class ASSETDOCTOR_OT_merge_duplicate_libraries(bpy.types.Operator):
+class FILELINK_OT_merge_duplicate_libraries(bpy.types.Operator):
     """"Use Selected Paths" (item 6): merge every duplicate-library group that
     has a ticked member, keeping that member's path and remapping everything
     the OTHER member(s) provide onto it."""
 
-    bl_idname = "assetdoctor.merge_duplicate_libraries"
+    bl_idname = "filelink.merge_duplicate_libraries"
     bl_label = "Use Selected Paths"
     bl_options = {"REGISTER"}
 
@@ -412,7 +412,7 @@ class ASSETDOCTOR_OT_merge_duplicate_libraries(bpy.types.Operator):
             self.report({"ERROR"}, "Save the file first")
             return {"CANCELLED"}
 
-        coll = context.window_manager.assetdoctor_dup_lib_members
+        coll = context.window_manager.filelink_dup_lib_members
         groups: dict[str, list] = {}
         for item in coll:
             if self.group and item.group != self.group:
@@ -463,13 +463,13 @@ class ASSETDOCTOR_OT_merge_duplicate_libraries(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_make_selected_relative(bpy.types.Operator):
+class FILELINK_OT_make_selected_relative(bpy.types.Operator):
     """"Make Selected Relative" (item 7): convert every ticked same-drive
     absolute library to its precomputed ``//``-relative path. Cross-drive
     libraries have no checkbox to begin with — there is no relative path
     between Windows drives."""
 
-    bl_idname = "assetdoctor.make_selected_relative"
+    bl_idname = "filelink.make_selected_relative"
     bl_label = "Make Selected Relative"
     bl_description = ("Convert every ticked same-drive absolute library path to a "
                       "//-relative one. Takes a backup first")
@@ -480,7 +480,7 @@ class ASSETDOCTOR_OT_make_selected_relative(bpy.types.Operator):
             self.report({"ERROR"}, "Save the file first")
             return {"CANCELLED"}
 
-        coll = context.window_manager.assetdoctor_abs_path_members
+        coll = context.window_manager.filelink_abs_path_members
         chosen = [item for item in coll if item.selected and item.target]
         if not chosen:
             self.report({"WARNING"}, "Tick at least one same-drive library")

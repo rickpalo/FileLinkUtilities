@@ -59,11 +59,11 @@ INLINE_DETAIL_FEATURES = ("f1", "f2", "f4", "f7", "f7chain", "f7flatten", "f7liv
 
 
 def data_prop(feature: str) -> str:
-    return f"assetdoctor_rep_{feature}"
+    return f"filelink_rep_{feature}"
 
 
 def exp_prop(feature: str) -> str:
-    return f"assetdoctor_repx_{feature}"
+    return f"filelink_repx_{feature}"
 
 
 def stash_report(context, report, feature: str, set_active: bool = True) -> None:
@@ -80,7 +80,7 @@ def stash_report(context, report, feature: str, set_active: bool = True) -> None
     setattr(wm, data_prop(feature), report.to_json())
     setattr(wm, exp_prop(feature), "")  # collapsed
     if set_active:
-        wm.assetdoctor_active_report = feature
+        wm.filelink_active_report = feature
     rebuild_report_rows(wm)
 
 
@@ -90,7 +90,7 @@ def stash_tree(context, nodes, feature: str) -> None:
     wm = context.window_manager
     setattr(wm, data_prop(feature), nodes_to_json(nodes))
     setattr(wm, exp_prop(feature), "\n".join(top_level_keys(nodes)))
-    wm.assetdoctor_active_report = feature
+    wm.filelink_active_report = feature
     rebuild_report_rows(wm)
 
 
@@ -99,7 +99,7 @@ def available_features(wm):
 
 
 def active_feature(wm) -> str:
-    a = wm.assetdoctor_active_report
+    a = wm.filelink_active_report
     if a and getattr(wm, data_prop(a), ""):
         return a
     avail = available_features(wm)
@@ -121,7 +121,7 @@ def set_expanded(wm, keys: set[str], prop: str) -> None:
 # the WindowManager stays the source of truth; these helpers re-flatten it into
 # the collection whenever the shown report or its expansion changes.
 
-RESOURCE_EXP_PROP = "assetdoctor_resource_expanded"
+RESOURCE_EXP_PROP = "filelink_resource_expanded"
 
 
 def _fill_rows(coll, rows, prop: str) -> None:
@@ -150,8 +150,8 @@ def _fill_rows(coll, rows, prop: str) -> None:
 
 
 def rebuild_report_rows(wm) -> None:
-    """Refill ``assetdoctor_report_rows`` from the active feature's report JSON."""
-    coll = wm.assetdoctor_report_rows
+    """Refill ``filelink_report_rows`` from the active feature's report JSON."""
+    coll = wm.filelink_report_rows
     active = active_feature(wm)
     if not active:
         coll.clear()
@@ -170,11 +170,11 @@ def rebuild_report_rows(wm) -> None:
 
 
 def inline_rows_prop(feature: str) -> str:
-    return f"assetdoctor_inline_rows_{feature}"
+    return f"filelink_inline_rows_{feature}"
 
 
 def inline_active_prop(feature: str) -> str:
-    return f"assetdoctor_inline_active_{feature}"
+    return f"filelink_inline_active_{feature}"
 
 
 def rebuild_inline_detail_rows(wm, feature: str, nodes: list, expanded: set[str]) -> None:
@@ -192,13 +192,13 @@ def rebuild_inline_detail_rows(wm, feature: str, nodes: list, expanded: set[str]
     if coll is None:
         return
     rows = flatten_visible(nodes, expanded)
-    _fill_rows(coll, rows, "assetdoctor_detail_expanded")
+    _fill_rows(coll, rows, "filelink_detail_expanded")
 
 
 def rebuild_resource_rows(wm) -> None:
-    """Refill ``assetdoctor_resource_rows`` from the resource tree JSON."""
-    coll = wm.assetdoctor_resource_rows
-    raw = getattr(wm, "assetdoctor_resource_tree", "")
+    """Refill ``filelink_resource_rows`` from the resource tree JSON."""
+    coll = wm.filelink_resource_rows
+    raw = getattr(wm, "filelink_resource_tree", "")
     if not raw:
         coll.clear()
         return
@@ -216,8 +216,8 @@ def rebuild_rows_for_prop(wm, prop: str) -> None:
 
     Only two ``prop`` families are backed by a virtualized ``CollectionProperty``
     today: ``RESOURCE_EXP_PROP`` and any feature's own ``exp_prop`` (always
-    ``"assetdoctor_repx_<feature>"``, see ``exp_prop()``) for the Reports tab.
-    ``ASSETDOCTOR_OT_row_toggle`` (docs/TODO.md Group 12) is now the ONE toggle
+    ``"filelink_repx_<feature>"``, see ``exp_prop()``) for the Reports tab.
+    ``FILELINK_OT_row_toggle`` (docs/TODO.md Group 12) is now the ONE toggle
     operator for every grouped section in the addon, not just these two, so an
     unconditional "anything else must be a report feature" ``else`` would be
     wrong — it would silently rebuild the Reports tab's rows (wasted work, and
@@ -227,30 +227,30 @@ def rebuild_rows_for_prop(wm, prop: str) -> None:
     12's phased rollout for sections gaining their own virtualized collection)."""
     if prop == RESOURCE_EXP_PROP:
         rebuild_resource_rows(wm)
-    elif prop.startswith("assetdoctor_repx_"):
+    elif prop.startswith("filelink_repx_"):
         rebuild_report_rows(wm)
-    elif prop in ("assetdoctor_flatten_expanded", "assetdoctor_flatten_deselected"):
+    elif prop in ("filelink_flatten_expanded", "filelink_flatten_deselected"):
         from .linkchain import rebuild_flatten_picker_rows  # lazy — avoids circular import
         rebuild_flatten_picker_rows(wm)
-    elif prop == "assetdoctor_tex_expanded":
+    elif prop == "filelink_tex_expanded":
         # Shared with Possible Matches/Linked-missing's namespaced ("\x01"/"\x03")
         # keys, which still draw manually — a rebuild here is harmless for those
         # (Missing Textures' own picker rows just don't contain that key).
         from .image_relink import rebuild_missing_tex_picker_rows  # lazy — avoids circular import
         rebuild_missing_tex_picker_rows(wm)
-    elif prop == "assetdoctor_dup_expanded":
+    elif prop == "filelink_dup_expanded":
         from .image_dedup import rebuild_dup_tex_picker_rows  # lazy — avoids circular import
         rebuild_dup_tex_picker_rows(wm)
-    elif prop == "assetdoctor_missing_expanded":
+    elif prop == "filelink_missing_expanded":
         from .datablock_reconnect import rebuild_reconnect_picker_rows  # lazy — avoids circular import
         rebuild_reconnect_picker_rows(wm)
-    elif prop == "assetdoctor_examine_expanded":
+    elif prop == "filelink_examine_expanded":
         from .examine_library import rebuild_examine_picker_rows  # lazy — avoids circular import
         rebuild_examine_picker_rows(wm)
 
 
 def _index_prop_for(prop: str) -> str:
-    return "assetdoctor_resource_index" if prop == RESOURCE_EXP_PROP else "assetdoctor_report_index"
+    return "filelink_resource_index" if prop == RESOURCE_EXP_PROP else "filelink_report_index"
 
 
 def focus_row(wm, prop: str, key: str) -> None:
@@ -263,38 +263,38 @@ def focus_row(wm, prop: str, key: str) -> None:
     (every other grouped section still draws manually) — same guard as
     ``rebuild_rows_for_prop``, see there for why a blanket "else" would be wrong
     now that one shared toggle op (below) serves every section."""
-    if prop == RESOURCE_EXP_PROP or prop.startswith("assetdoctor_repx_"):
-        coll = wm.assetdoctor_resource_rows if prop == RESOURCE_EXP_PROP else wm.assetdoctor_report_rows
+    if prop == RESOURCE_EXP_PROP or prop.startswith("filelink_repx_"):
+        coll = wm.filelink_resource_rows if prop == RESOURCE_EXP_PROP else wm.filelink_report_rows
         for i, item in enumerate(coll):
             if item.key == key and item.prop == prop:
                 setattr(wm, _index_prop_for(prop), i)
                 return
-    elif prop in ("assetdoctor_flatten_expanded", "assetdoctor_flatten_deselected"):
-        for i, item in enumerate(wm.assetdoctor_flatten_picker_rows):
+    elif prop in ("filelink_flatten_expanded", "filelink_flatten_deselected"):
+        for i, item in enumerate(wm.filelink_flatten_picker_rows):
             if item.key == key:
-                wm.assetdoctor_flatten_picker_active = i
+                wm.filelink_flatten_picker_active = i
                 return
-    elif prop == "assetdoctor_tex_expanded":
-        for i, item in enumerate(wm.assetdoctor_missingtex_picker_rows):
+    elif prop == "filelink_tex_expanded":
+        for i, item in enumerate(wm.filelink_missingtex_picker_rows):
             if item.key == key:
-                wm.assetdoctor_missingtex_picker_active = i
+                wm.filelink_missingtex_picker_active = i
                 return
-    elif prop == "assetdoctor_dup_expanded":
-        for i, item in enumerate(wm.assetdoctor_duptex_picker_rows):
+    elif prop == "filelink_dup_expanded":
+        for i, item in enumerate(wm.filelink_duptex_picker_rows):
             if item.key == key:
-                wm.assetdoctor_duptex_picker_active = i
+                wm.filelink_duptex_picker_active = i
                 return
-    elif prop == "assetdoctor_missing_expanded":
-        for i, item in enumerate(wm.assetdoctor_reconnect_picker_rows):
+    elif prop == "filelink_missing_expanded":
+        for i, item in enumerate(wm.filelink_reconnect_picker_rows):
             if item.key == key:
-                wm.assetdoctor_reconnect_picker_active = i
+                wm.filelink_reconnect_picker_active = i
                 return
-    elif prop == "assetdoctor_examine_expanded":
-        for i, item in enumerate(wm.assetdoctor_examine_picker_rows):
+    elif prop == "filelink_examine_expanded":
+        for i, item in enumerate(wm.filelink_examine_picker_rows):
             if item.key == key:
-                wm.assetdoctor_examine_picker_active = i
+                wm.filelink_examine_picker_active = i
                 return
-    elif prop == "assetdoctor_detail_expanded":
+    elif prop == "filelink_detail_expanded":
         # Group 12 Phase 4's inline Analyze-button disclosures (docs/TODO.md
         # item 46c, 2026-07-04 live-verify: clicking a row deep in Check
         # Materials' list jumped back to the top) — omitted when Phase 4 added
@@ -314,7 +314,7 @@ def focus_row(wm, prop: str, key: str) -> None:
                 return
 
 
-class ASSETDOCTOR_OT_row_toggle(bpy.types.Operator):
+class FILELINK_OT_row_toggle(bpy.types.Operator):
     """The one generic expand/collapse (and, via a differently-named ``prop``,
     select/deselect — see ``ops.linkchain``'s Flatten-candidate groups) toggle
     for every grouped results section in the addon (docs/TODO.md Group 12,
@@ -323,7 +323,7 @@ class ASSETDOCTOR_OT_row_toggle(bpy.types.Operator):
     string-set named ``prop``" logic — one per section, plus this one's own
     two predecessors (``report_toggle``/``toggle_inline_detail``).
 
-    ``prop`` defaults to ``assetdoctor_detail_expanded``, the one shared
+    ``prop`` defaults to ``filelink_detail_expanded``, the one shared
     bucket used by every inline Analyze-button disclosure (a node's own key
     already embeds its report's feature tag, so two features' keys never
     collide there); every other section passes its own dedicated ``prop``
@@ -333,11 +333,11 @@ class ASSETDOCTOR_OT_row_toggle(bpy.types.Operator):
     ~11 sections still drawn manually; only the Reports tab/Resource Usage
     case (the two ``prop`` families ``report_toggle`` used to serve) gets the
     rebuild+refocus treatment today. Redraws BOTH the area and its region
-    (``ASSETDOCTOR_OT_flatten_category_toggle`` added the region redraw
+    (``FILELINK_OT_flatten_category_toggle`` added the region redraw
     2026-06-27 as a defensive fix for a reported "drill-down arrows stop
     responding" issue; adopted here for every section, not just Flatten's)."""
 
-    bl_idname = "assetdoctor.row_toggle"
+    bl_idname = "filelink.row_toggle"
     bl_label = "Expand/Collapse"
     # Explicit and short (docs/TODO.md item 46k, 2026-07-04 live-verify) — an
     # operator with no `bl_description` falls back to its class docstring as
@@ -348,7 +348,7 @@ class ASSETDOCTOR_OT_row_toggle(bpy.types.Operator):
     bl_options = {"INTERNAL"}
 
     key: bpy.props.StringProperty()  # type: ignore[valid-type]
-    prop: bpy.props.StringProperty(default="assetdoctor_detail_expanded")  # type: ignore[valid-type]
+    prop: bpy.props.StringProperty(default="filelink_detail_expanded")  # type: ignore[valid-type]
 
     def execute(self, context):
         wm = context.window_manager
@@ -364,12 +364,12 @@ class ASSETDOCTOR_OT_row_toggle(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_row_label(bpy.types.Operator):
+class FILELINK_OT_row_label(bpy.types.Operator):
     """A tree row's label as a button: its tooltip is the full text (so long
     paths/messages are readable in the narrow panel), and clicking it does the
     row's natural action (expand/collapse a parent, or select a leaf's datablock)."""
 
-    bl_idname = "assetdoctor.row_label"
+    bl_idname = "filelink.row_label"
     bl_label = "Row"
     bl_options = {"INTERNAL"}
 
@@ -397,10 +397,10 @@ class ASSETDOCTOR_OT_row_label(bpy.types.Operator):
             if context.area:
                 context.area.tag_redraw()
         elif self.popup_parent:
-            bpy.ops.assetdoctor.show_linked_from(
+            bpy.ops.filelink.show_linked_from(
                 "INVOKE_DEFAULT", parent=self.popup_parent, basename=self.popup_basename)
         elif self.ref_type:
-            bpy.ops.assetdoctor.select_datablock(type=self.ref_type, name=self.ref_name)
+            bpy.ops.filelink.select_datablock(type=self.ref_type, name=self.ref_name)
         return {"FINISHED"}
 
 
@@ -472,7 +472,7 @@ SELECT_OUTCOME_ICON = {
 
 
 def _load_select_outcomes(wm) -> dict:
-    raw = wm.assetdoctor_select_outcomes
+    raw = wm.filelink_select_outcomes
     if not raw:
         return {}
     try:
@@ -484,7 +484,7 @@ def _load_select_outcomes(wm) -> dict:
 def _save_select_outcome(wm, type_: str, name: str, outcome: str) -> None:
     outcomes = _load_select_outcomes(wm)
     outcomes[f"{type_}/{name}"] = outcome
-    wm.assetdoctor_select_outcomes = json.dumps(outcomes)
+    wm.filelink_select_outcomes = json.dumps(outcomes)
 
 
 def get_select_outcome(wm, type_: str, name: str) -> str:
@@ -495,8 +495,8 @@ def get_select_outcome(wm, type_: str, name: str) -> str:
     return _load_select_outcomes(wm).get(f"{type_}/{name}", "")
 
 
-class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
-    bl_idname = "assetdoctor.select_datablock"
+class FILELINK_OT_select_datablock(bpy.types.Operator):
+    bl_idname = "filelink.select_datablock"
     bl_label = "Select"
     bl_description = "Select the object(s) this finding refers to (the Outliner follows the active object)"
     bl_options = {"INTERNAL"}
@@ -621,7 +621,7 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
         return found, materials
 
 
-class ASSETDOCTOR_OT_show_linked_from(bpy.types.Operator):
+class FILELINK_OT_show_linked_from(bpy.types.Operator):
     """"Show what's linked from here" for an INDIRECT File Map row (item 2,
     2026-06-26): the row's file was never directly linked into the open file
     (only a library-of-a-library), so it has no real ``bpy.data.libraries``
@@ -631,7 +631,7 @@ class ASSETDOCTOR_OT_show_linked_from(bpy.types.Operator):
     -- each entry reuses ``select_datablock`` so a name that DOES happen to
     also be loaded locally is still clickable."""
 
-    bl_idname = "assetdoctor.show_linked_from"
+    bl_idname = "filelink.show_linked_from"
     bl_label = "Show What's Linked From Here"
     bl_description = (
         "This library was never linked directly into the open file (only "
@@ -674,7 +674,7 @@ class ASSETDOCTOR_OT_show_linked_from(bpy.types.Operator):
             return
         for kind, name in self._items:
             ref = kind_ref(kind, name)
-            op = layout.operator("assetdoctor.select_datablock", text=f"{kind}: {name}")
+            op = layout.operator("filelink.select_datablock", text=f"{kind}: {name}")
             op.type, op.name = ref["type"], ref["name"]
 
 
@@ -688,8 +688,8 @@ def _tree_to_text(nodes, title: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-class ASSETDOCTOR_OT_export_report(FilePickerMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.export_report"
+class FILELINK_OT_export_report(FilePickerMixin, bpy.types.Operator):
+    bl_idname = "filelink.export_report"
     bl_label = "Export Report"
     bl_description = "Save the report to a text file (for printing or sharing)"
 
@@ -715,11 +715,11 @@ class ASSETDOCTOR_OT_export_report(FilePickerMixin, bpy.types.Operator):
     def execute(self, context):
         wm = context.window_manager
         if self.source == "resource":
-            raw = wm.assetdoctor_resource_tree
+            raw = wm.filelink_resource_tree
             if not raw:
                 self.report({"ERROR"}, "No resource analysis to export")
                 return {"CANCELLED"}
-            text = _tree_to_text(nodes_from_json(raw), "AssetDoctor — Resource Usage (estimate)")
+            text = _tree_to_text(nodes_from_json(raw), "File & Link Utilities — Resource Usage (estimate)")
         else:
             feature = self.feature or active_feature(wm)
             raw = getattr(wm, data_prop(feature), "") if feature else ""
@@ -727,7 +727,7 @@ class ASSETDOCTOR_OT_export_report(FilePickerMixin, bpy.types.Operator):
                 self.report({"ERROR"}, "No report to export")
                 return {"CANCELLED"}
             if feature in TREE_FEATURES:
-                text = _tree_to_text(nodes_from_json(raw), f"AssetDoctor — {feature}")
+                text = _tree_to_text(nodes_from_json(raw), f"File & Link Utilities — {feature}")
             elif self.filepath.lower().endswith(".csv"):
                 text = Report.from_json(raw).to_csv()
             else:

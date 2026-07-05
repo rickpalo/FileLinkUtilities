@@ -127,11 +127,11 @@ def _gather_steps(context):
 
 
 def _populate_datablock_families(context, plans, conflicts, skipped) -> None:
-    """Refill ``assetdoctor_datablock_families`` (one row per merge-plan family,
+    """Refill ``filelink_datablock_families`` (one row per merge-plan family,
     grouped by KIND in the panel) + the summary counts + the conflict-list and
     skipped-list text."""
     wm = context.window_manager
-    coll = wm.assetdoctor_datablock_families
+    coll = wm.filelink_datablock_families
     coll.clear()
     for p in plans:
         attr, base = p.base.split(":", 1)
@@ -143,23 +143,23 @@ def _populate_datablock_families(context, plans, conflicts, skipped) -> None:
         row.members = "\n".join(members)
         row.selected = True
         row.removable = len(p.redundant)
-    wm.assetdoctor_datablock_index = 0
-    wm.assetdoctor_datablock_removable = dd.removable_count(plans)
-    wm.assetdoctor_datablock_conflicts = len(conflicts)
+    wm.filelink_datablock_index = 0
+    wm.filelink_datablock_removable = dd.removable_count(plans)
+    wm.filelink_datablock_conflicts = len(conflicts)
 
     lines = []
     for c in conflicts:
         attr, base = c.base.split(":", 1)
         names = [n.split(":", 1)[1] for n in c.members]
         lines.append(f"{_LABEL_BY_ATTR.get(attr, attr)}: {base} — {c.reason} ({', '.join(names)})")
-    wm.assetdoctor_datablock_conflicts_text = "\n".join(lines)
+    wm.filelink_datablock_conflicts_text = "\n".join(lines)
 
-    wm.assetdoctor_datablock_skipped_text = "\n".join(
+    wm.filelink_datablock_skipped_text = "\n".join(
         f"Shape Key: {name} — not read, {reason}" for name, reason in skipped)
 
 
-class ASSETDOCTOR_OT_scan_datablock_dups(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.scan_datablock_dups"
+class FILELINK_OT_scan_datablock_dups(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.scan_datablock_dups"
     bl_label = "Find Duplicate Data-blocks"
     bl_description = (
         "Find .NNN name-family duplicates across Objects, Actions, Node Groups and "
@@ -176,7 +176,7 @@ class ASSETDOCTOR_OT_scan_datablock_dups(ModalProgressMixin, bpy.types.Operator)
         plans, conflicts = dd.plan_merges(members)
         _populate_datablock_families(context, plans, conflicts, skipped)
         wm = context.window_manager
-        wm.assetdoctor_datablock_scanned = True
+        wm.filelink_datablock_scanned = True
         yield (1.0, "Done")
         n = dd.removable_count(plans)
         tail = f"; {len(skipped)} shape key(s) skipped, unsafe to read (see below)" if skipped else ""
@@ -188,8 +188,8 @@ class ASSETDOCTOR_OT_scan_datablock_dups(ModalProgressMixin, bpy.types.Operator)
             self.report({"INFO"}, "✓ No duplicate data-blocks found")
 
 
-class ASSETDOCTOR_OT_merge_datablock_selected(bpy.types.Operator):
-    bl_idname = "assetdoctor.merge_datablock_selected"
+class FILELINK_OT_merge_datablock_selected(bpy.types.Operator):
+    bl_idname = "filelink.merge_datablock_selected"
     bl_label = "Merge Selected Duplicates"
     bl_description = ("Merge each ticked family into its chosen keeper (remap users, "
                       "remove the rest). Takes a backup first")
@@ -197,7 +197,7 @@ class ASSETDOCTOR_OT_merge_datablock_selected(bpy.types.Operator):
 
     def execute(self, context):
         wm = context.window_manager
-        chosen = [row for row in wm.assetdoctor_datablock_families if row.selected]
+        chosen = [row for row in wm.filelink_datablock_families if row.selected]
         if not chosen:
             self.report({"WARNING"}, "Tick at least one family to merge")
             return {"CANCELLED"}
@@ -229,11 +229,11 @@ class ASSETDOCTOR_OT_merge_datablock_selected(bpy.types.Operator):
 
         # A deep re-fingerprint is too heavy to auto-run synchronously here (same
         # call as image dedup's CONTENT mode) — clear + prompt re-scan.
-        wm.assetdoctor_datablock_families.clear()
-        wm.assetdoctor_datablock_removable = 0
-        wm.assetdoctor_datablock_conflicts = 0
-        wm.assetdoctor_datablock_conflicts_text = ""
-        wm.assetdoctor_datablock_scanned = False
+        wm.filelink_datablock_families.clear()
+        wm.filelink_datablock_removable = 0
+        wm.filelink_datablock_conflicts = 0
+        wm.filelink_datablock_conflicts_text = ""
+        wm.filelink_datablock_scanned = False
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

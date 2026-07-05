@@ -34,26 +34,26 @@ def main():
 
         # Disabled by default — a manual tick must not touch the idle flags.
         checks.append(("disabled by default", prefs.idle_scan_enabled is False))
-        wm.assetdoctor_idle_detected = False
+        wm.filelink_idle_detected = False
         idle_scan._idle_tick()
         checks.append(("tick is a no-op while disabled",
-                       wm.assetdoctor_idle_detected is False))
+                       wm.filelink_idle_detected is False))
 
         # Enabled — a manual tick should set seconds-since-input without raising
         # (the real OS value; we only check it ran and produced a number).
         prefs.idle_scan_enabled = True
         idle_scan._idle_tick()
         checks.append(("tick sets idle_seconds while enabled",
-                       isinstance(wm.assetdoctor_idle_seconds, float)))
+                       isinstance(wm.filelink_idle_seconds, float)))
 
         # Must never fire while a modal op is "running".
-        wm.assetdoctor_op_active = True
-        wm.assetdoctor_idle_detected = False
+        wm.filelink_op_active = True
+        wm.filelink_idle_detected = False
         prefs.idle_scan_threshold = 0  # would otherwise always be "idle"
         idle_scan._idle_tick()
         checks.append(("tick skips while a modal op is active",
-                       wm.assetdoctor_idle_detected is False))
-        wm.assetdoctor_op_active = False
+                       wm.filelink_idle_detected is False))
+        wm.filelink_op_active = False
 
         addon.unregister()
         checks.append(("timer removed on add-on unregister",

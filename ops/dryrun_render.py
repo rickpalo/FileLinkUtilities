@@ -44,8 +44,8 @@ def _popen_kwargs() -> dict:
     return {}
 
 
-class ASSETDOCTOR_OT_dryrun_render(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.dryrun_render"
+class FILELINK_OT_dryrun_render(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.dryrun_render"
     bl_label = "Dry-Run Render"
     bl_description = (
         "Render one low-res frame in a SEPARATE background Blender process to "
@@ -72,7 +72,7 @@ class ASSETDOCTOR_OT_dryrun_render(ModalProgressMixin, bpy.types.Operator):
         script_path = None
         log_path = None
         try:
-            fd, script_path = tempfile.mkstemp(suffix=".py", prefix="assetdoctor_dryrun_")
+            fd, script_path = tempfile.mkstemp(suffix=".py", prefix="filelink_dryrun_")
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(dryrun.build_dryrun_script())
             log_path = script_path[:-3] + ".log"

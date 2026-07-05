@@ -72,7 +72,7 @@ def main():
         checks.append(("whitelist forces 1K canonical", wplan[0]["canonical"] == "Wood1K"))
 
         # Apply the default plan via the operator.
-        res = bpy.ops.assetdoctor.material_dedup("EXEC_DEFAULT", apply=True)
+        res = bpy.ops.filelink.material_dedup("EXEC_DEFAULT", apply=True)
         names = set(bpy.data.materials.keys())
         checks.append(("apply FINISHED", res == {"FINISHED"}))
         checks.append(("Wood1K removed", "Wood1K" not in names))
@@ -90,12 +90,12 @@ def main():
         _obj_with(bpy, "S1", m3)
         _obj_with(bpy, "S2", m4)
 
-        res_conflict = bpy.ops.assetdoctor.material_dedup("EXEC_DEFAULT", apply=False)
+        res_conflict = bpy.ops.filelink.material_dedup("EXEC_DEFAULT", apply=False)
         wm = bpy.context.window_manager
         checks.append(("conflict scan FINISHED", res_conflict == {"FINISHED"}))
         checks.append(("differing-content name-family flagged as kept separate",
-                       wm.assetdoctor_mat_conflicts >= 1 and "Stone" in wm.assetdoctor_mat_conflicts_text
-                       and "differing content" in wm.assetdoctor_mat_conflicts_text))
+                       wm.filelink_mat_conflicts >= 1 and "Stone" in wm.filelink_mat_conflicts_text
+                       and "differing content" in wm.filelink_mat_conflicts_text))
 
         ok = all(p for _, p in checks)
         for label, p in checks:

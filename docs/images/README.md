@@ -13,15 +13,15 @@ scale, light or dark theme is fine — just be consistent.
 
 | Filename | What to capture | Notes |
 |---|---|---|
-| `panel-overview.png` | The full **AssetDoctor** N-panel, all sections expanded | The hero shot for the README. Press `N` in the 3D viewport → AssetDoctor tab. Show the version + ? icon in the header. |
+| `panel-overview.png` | The full **File & Link Utilities** N-panel, all sections expanded | The hero shot for the README. Press `N` in the 3D viewport → File & Link Utilities tab. Show the version + ? icon in the header. |
 | `scan-progress.png` | The **Scan Link Map** progress bar mid-scan | Run F1 on a folder with several `.blend` files; grab while the progress bar + "N / M files" is visible. |
 | `progress-bar.png` | The **shared progress bar** for any modal action | The top-of-panel progress bar + status + "Press ESC to cancel", e.g. during a dedup/orphan scan. |
 | `report-panel.png` | The **Report** panel with a tree expanded | Run e.g. *Orphans → Scan* or *Materials → Find Duplicates*, expand a couple of rows; show the per-feature **selector row** at the top and the **Export…** button. |
 | `report-tooltip.png` *(optional)* | A **row tooltip** showing full text | Hover a long item (e.g. a broken-link path) so the full-text tooltip is visible. Nice-to-have for the "tooltips" section. |
 | `resource-panel.png` | The **Resource Usage** panel | Run *Analyze Memory/Disk* (ideally also *Profile Render*), expand the Images/Meshes types so the size columns + "Profiled real peak RAM" line show. |
-| `preferences.png` | AssetDoctor **Preferences** | Edit → Preferences → Add-ons → AssetDoctor; show backup toggle/dir, resolution tokens, white/black lists. |
+| `preferences.png` | File & Link Utilities **Preferences** | Edit → Preferences → Add-ons → File & Link Utilities; show backup toggle/dir, resolution tokens, white/black lists. |
 | `install-repository.png` | **Add Remote Repository** dialog | Get Extensions → ⌄ → Repositories → Add Remote Repository, with the `…/index.json` URL filled in. For the install section. |
-| `install-repository-post.png` | AssetDoctor **in the repo after adding** | Get Extensions list showing AssetDoctor available to install from the rickpalo.github.io repo. |
+| `install-repository-post.png` | File & Link Utilities **in the repo after adding** | Get Extensions list showing File & Link Utilities available to install from the rickpalo.github.io repo. |
 | `material-dedup-report.png` *(optional)* | A **material dedup** report | Find Duplicates on a file with a 1K/2K pair; show the "keep X / remap N" finding. Good for the F3 section. |
 
 Tips:

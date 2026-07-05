@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 @dataclass
 class MemberData:
-    """Plain-Python mirror of ASSETDOCTOR_PG_flatten_candidate's per-row data,
+    """Plain-Python mirror of FILELINK_PG_flatten_candidate's per-row data,
     extractable without bpy so the flatten helper stays testable."""
     name: str
     status: str
@@ -25,7 +25,7 @@ class MemberData:
     done: bool
     is_remote: bool
     is_rig: bool
-    ref_index: int  # index into the real wm.assetdoctor_flatten_candidates collection
+    ref_index: int  # index into the real wm.filelink_flatten_candidates collection
 
 
 @dataclass
@@ -182,7 +182,7 @@ class MemberRef:
     The member row itself is drawn straight from the real PropertyGroup item
     (checkbox, label, target/keeper widgets — all section-specific), so this
     flatten layer only needs to know WHERE it lives; identical live-data
-    approach to ASSETDOCTOR_UL_broken_libs's flat case."""
+    approach to FILELINK_UL_broken_libs's flat case."""
     ref_index: int
 
 

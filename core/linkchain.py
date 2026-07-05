@@ -416,7 +416,7 @@ def _resolve_offline_rig_one(
 def posing_list_to_dict(posing: list[ObjectPosingInfo]) -> list[dict]:
     """JSON-friendly round-trip of a full per-file object census, cached once
     after "Find Flattenable Link Chains" runs (``ops.linkchain.
-    ASSETDOCTOR_OT_scan_link_chains``) so the picker can rebuild the rig index
+    FILELINK_OT_scan_link_chains``) so the picker can rebuild the rig index
     without re-scanning every file."""
     return [asdict(info) for info in posing]
 

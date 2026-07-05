@@ -2,8 +2,8 @@
 
     blender --background --factory-startup --python tests/smoke_analyze_all.py
 
-Regression test for docs/TODO.md Group 10 #34: ``ASSETDOCTOR_OT_find_duplicates``
-used to subclass the already-registered ``ASSETDOCTOR_OT_analyze_all`` operator
+Regression test for docs/TODO.md Group 10 #34: ``FILELINK_OT_find_duplicates``
+used to subclass the already-registered ``FILELINK_OT_analyze_all`` operator
 directly, which corrupts Blender's RNA python-class binding for the FIRST-
 registered one once the second is ALSO registered — ``analyze_all`` kept
 returning {'FINISHED'} while silently running zero of its own steps. Calling
@@ -36,14 +36,14 @@ def main():
         bpy.ops.wm.read_factory_settings(use_empty=True)
         wm = bpy.context.window_manager
 
-        res = bpy.ops.assetdoctor.analyze_all("EXEC_DEFAULT")
-        rows = list(wm.assetdoctor_analyze_steps)
+        res = bpy.ops.filelink.analyze_all("EXEC_DEFAULT")
+        rows = list(wm.filelink_analyze_steps)
         checks.append(("analyze_all FINISHED", res == {"FINISHED"}))
         checks.append(("analyze_all ran all 15 steps", len(rows) == 15))
-        checks.append(("analyze_all stashed a result", bool(wm.assetdoctor_last_result)))
+        checks.append(("analyze_all stashed a result", bool(wm.filelink_last_result)))
 
-        res2 = bpy.ops.assetdoctor.find_duplicates("EXEC_DEFAULT")
-        rows2 = list(wm.assetdoctor_analyze_steps)
+        res2 = bpy.ops.filelink.find_duplicates("EXEC_DEFAULT")
+        rows2 = list(wm.filelink_analyze_steps)
         checks.append(("find_duplicates FINISHED", res2 == {"FINISHED"}))
         checks.append(("find_duplicates ran its 4 steps", len(rows2) == 4))
 
@@ -52,16 +52,16 @@ def main():
         # merged into one trigger, docs/TODO.md #41) -- same RNA-corruption
         # regression class as analyze_all/find_duplicates, now with one more
         # registered class sharing the mixin.
-        res2b = bpy.ops.assetdoctor.find_flattenable_links("EXEC_DEFAULT")
-        rows2b = list(wm.assetdoctor_analyze_steps)
+        res2b = bpy.ops.filelink.find_flattenable_links("EXEC_DEFAULT")
+        rows2b = list(wm.filelink_analyze_steps)
         checks.append(("find_flattenable_links FINISHED", res2b == {"FINISHED"}))
         checks.append(("find_flattenable_links ran its 2 steps", len(rows2b) == 2))
 
         # Re-run analyze_all AFTER both other sequencers have also been called
         # once — this is the exact corrupted-RNA-binding scenario: every
         # operator registered AND every one has been invoked at least once.
-        res3 = bpy.ops.assetdoctor.analyze_all("EXEC_DEFAULT")
-        rows3 = list(wm.assetdoctor_analyze_steps)
+        res3 = bpy.ops.filelink.analyze_all("EXEC_DEFAULT")
+        rows3 = list(wm.filelink_analyze_steps)
         checks.append(("analyze_all still works after the others ran",
                        res3 == {"FINISHED"} and len(rows3) == 15))
 

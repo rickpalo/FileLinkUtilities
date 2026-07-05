@@ -29,7 +29,7 @@ def _emit(operator, context, scan, root, open_graph=True):
     from .report_store import stash_report
     stash_report(context, report, "f1")
 
-    out_dir = root / ".assetdoctor"
+    out_dir = root / ".filelink"
     out_dir.mkdir(exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base = out_dir / f"linkmap_{stamp}"
@@ -64,8 +64,8 @@ def _emit(operator, context, scan, root, open_graph=True):
     )
 
 
-class ASSETDOCTOR_OT_scan_folder(bpy.types.Operator):
-    bl_idname = "assetdoctor.scan_folder"
+class FILELINK_OT_scan_folder(bpy.types.Operator):
+    bl_idname = "filelink.scan_folder"
     bl_label = "Scan Folder → Link Graph"
     bl_description = (
         "Recursively map which .blend files in a folder link which (backups "
@@ -127,7 +127,7 @@ class ASSETDOCTOR_OT_scan_folder(bpy.types.Operator):
         wm = context.window_manager
         wm.progress_begin(0, len(self._files))
         set_progress(context, 0.0, f"0 / {len(self._files)} files")
-        context.workspace.status_text_set("AssetDoctor: scanning… (ESC to cancel)")
+        context.workspace.status_text_set("FileLink: scanning… (ESC to cancel)")
         self._timer = wm.event_timer_add(0.01, window=context.window)
         wm.modal_handler_add(self)
         return {"RUNNING_MODAL"}

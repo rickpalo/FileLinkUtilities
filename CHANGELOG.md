@@ -1,9 +1,22 @@
 # Changelog
 
-All notable changes to AssetDoctor. Versioning is patch-only unless a change is flagged as
-major. From 0.2.x onward, entries below are grouped by feature area rather than one per
-version bump (the project moved to much more frequent small bumps) — see `docs/TODO.md` for
-the detailed session-by-session build history behind any entry.
+All notable changes to File & Link Utilities (renamed from AssetDoctor, see below). Versioning
+is patch-only unless a change is flagged as major. From 0.2.x onward, entries below are grouped
+by feature area rather than one per version bump (the project moved to much more frequent small
+bumps) — see `docs/TODO.md` for the detailed session-by-session build history behind any entry.
+
+Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
+`ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
+
+## [0.2.106] — Phase R: renamed to File & Link Utilities
+
+### Changed
+- **Full rename**, package id `assetdoctor` → `file_link_utilities`, all `ASSETDOCTOR_*` class
+  prefixes → `FILELINK_*`, `bpy.ops.assetdoctor.*` → `bpy.ops.filelink.*`, `assetdoctor_*`
+  WM/Scene properties → `filelink_*`, `AssetDoctorPreferences` → `FileLinkPreferences`. GitHub
+  repo and gh-pages URL renamed to `FileLinkUtilities`. See `docs/USER_GUIDE.md` and
+  `README.md` for the one-time upgrade note (saved Preferences don't carry over; the gh-pages
+  repository entry must be re-added under the new URL).
 
 ## [0.2.105] — Phase 2 live-verify fixes
 

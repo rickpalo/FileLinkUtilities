@@ -1,4 +1,4 @@
-"""Addon preferences for AssetDoctor.
+"""Addon preferences for File & Link Utilities.
 
 Holds user-tunable settings that the operators read: scan root, backup
 directory, the resolution-token regex used for near-duplicate material
@@ -21,7 +21,7 @@ _KEEP_PREF_ITEMS = [
 ]
 
 
-class AssetDoctorPreferences(bpy.types.AddonPreferences):
+class FileLinkPreferences(bpy.types.AddonPreferences):
     # Must match the extension id / package name.
     bl_idname = __package__
 
@@ -115,7 +115,7 @@ class AssetDoctorPreferences(bpy.types.AddonPreferences):
 
 
 def get_prefs(context=None):
-    """Return the AssetDoctorPreferences instance, or None if unavailable."""
+    """Return the FileLinkPreferences instance, or None if unavailable."""
     context = context or bpy.context
     addon = context.preferences.addons.get(__package__)
     return addon.preferences if addon else None

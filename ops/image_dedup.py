@@ -67,13 +67,13 @@ def _fingerprint(img) -> str:
 
 
 def _fill_families(context, plans, conflicts):
-    """Fill ``assetdoctor_dup_families`` + the summary counts from a content-merge
+    """Fill ``filelink_dup_families`` + the summary counts from a content-merge
     plan. Each row carries its members (for the keeper dropdown) and a
     representative material."""
     from .image_relink import _image_material_map
 
     wm = context.window_manager
-    coll = wm.assetdoctor_dup_families
+    coll = wm.filelink_dup_families
     coll.clear()
     mat_map = _image_material_map()
     for p in plans:
@@ -86,10 +86,10 @@ def _fill_families(context, plans, conflicts):
         row.selected = True
         row.material = next((mat_map[m] for m in members if m in mat_map), "")
         row.removable = len(p.redundant)
-    wm.assetdoctor_dup_index = 0
-    wm.assetdoctor_dup_removable = imagededup.removable_count(plans)
-    wm.assetdoctor_dup_conflicts = len(conflicts)
-    wm.assetdoctor_dup_conflicts_text = "\n".join(f"{c.base} — {c.reason}" for c in conflicts)
+    wm.filelink_dup_index = 0
+    wm.filelink_dup_removable = imagededup.removable_count(plans)
+    wm.filelink_dup_conflicts = len(conflicts)
+    wm.filelink_dup_conflicts_text = "\n".join(f"{c.base} — {c.reason}" for c in conflicts)
 
 
 # Below this name-token overlap, a duplicate family's material looks mis-attributed
@@ -101,7 +101,7 @@ def effective_material(row) -> str:
     """The material a duplicate-texture family displays under: the user's
     eyedropper override if set, else the auto-attributed material (or
     "(no material)"). Shared by the panel's virtualized picker and
-    ``ASSETDOCTOR_OT_dup_material_keeper`` — both used to compute this inline."""
+    ``FILELINK_OT_dup_material_keeper`` — both used to compute this inline."""
     return row.material_override.name if row.material_override else (row.material or "(no material)")
 
 
@@ -116,8 +116,8 @@ def is_mismatch(row) -> bool:
 
 
 def rebuild_dup_tex_picker_rows(wm) -> None:
-    """Rebuild ``wm.assetdoctor_duptex_picker_rows`` (Group 12 Phase 3, item 2)
-    from the current ``assetdoctor_dup_families`` + expand state.
+    """Rebuild ``wm.filelink_duptex_picker_rows`` (Group 12 Phase 3, item 2)
+    from the current ``filelink_dup_families`` + expand state.
 
     Called after every op that changes group MEMBERSHIP (scan / merge) and
     from ``ui.panels``'s ``material_override`` PointerProperty ``update``
@@ -128,12 +128,12 @@ def rebuild_dup_tex_picker_rows(wm) -> None:
     from ..core import picker as picker_mod
     from .report_store import get_expanded
 
-    coll = wm.assetdoctor_dup_families
+    coll = wm.filelink_dup_families
     if not len(coll):
-        wm.assetdoctor_duptex_picker_rows.clear()
+        wm.filelink_duptex_picker_rows.clear()
         return
 
-    expanded = get_expanded(wm, "assetdoctor_dup_expanded")
+    expanded = get_expanded(wm, "filelink_dup_expanded")
     groups: dict[str, list[int]] = {}
     for i, row in enumerate(coll):
         groups.setdefault(effective_material(row), []).append(i)
@@ -154,9 +154,9 @@ def rebuild_dup_tex_picker_rows(wm) -> None:
             alert=bool(mism),
         ))
     picker_rows = picker_mod.flatten_group_member_rows(
-        specs, expanded, ref_prop="assetdoctor_dup_families")
+        specs, expanded, ref_prop="filelink_dup_families")
 
-    picker_coll = wm.assetdoctor_duptex_picker_rows
+    picker_coll = wm.filelink_duptex_picker_rows
     picker_coll.clear()
     for pr in picker_rows:
         item = picker_coll.add()
@@ -173,8 +173,8 @@ def rebuild_dup_tex_picker_rows(wm) -> None:
         item.is_expanded = pr.is_expanded
 
 
-class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
-    bl_idname = "assetdoctor.merge_dup_selected"
+class FILELINK_OT_merge_dup_selected(bpy.types.Operator):
+    bl_idname = "filelink.merge_dup_selected"
     bl_label = "Merge Selected Duplicates"
     bl_description = ("Merge each ticked family into its chosen keeper (remap users, "
                       "remove the rest). Takes a backup first")
@@ -184,7 +184,7 @@ class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
         from .safety import auto_backup
 
         wm = context.window_manager
-        chosen = [row for row in wm.assetdoctor_dup_families if row.selected]
+        chosen = [row for row in wm.filelink_dup_families if row.selected]
         if not chosen:
             self.report({"WARNING"}, "Tick at least one family to merge")
             return {"CANCELLED"}
@@ -218,10 +218,10 @@ class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
         # A deep content scan is too heavy to re-run synchronously here; clear the
         # (now partly-merged) list and let the user re-run Find Content Dups.
         wm = context.window_manager
-        wm.assetdoctor_dup_families.clear()
-        wm.assetdoctor_dup_removable = 0
-        wm.assetdoctor_dup_conflicts = 0
-        wm.assetdoctor_dup_conflicts_text = ""
+        wm.filelink_dup_families.clear()
+        wm.filelink_dup_removable = 0
+        wm.filelink_dup_conflicts = 0
+        wm.filelink_dup_conflicts_text = ""
         rebuild_dup_tex_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()
@@ -232,13 +232,13 @@ class ASSETDOCTOR_OT_merge_dup_selected(bpy.types.Operator):
 
 
 def _populate_res_variant_members(context, variants) -> None:
-    """Refill ``assetdoctor_res_variant_members`` from ``plan_res_variants``
+    """Refill ``filelink_res_variant_members`` from ``plan_res_variants``
     (item 11, 2026-06-25): one row per member, ``group`` = the variant set's
     key, ``tag`` = its own resolution token. No default keeper — unlike items
     6/7's safe normalizations, picking a default here would silently choose
     WHICH resolution to keep; the user must tick one (or use Select High/Low
     Resolution) before Remove Excess Variants can do anything."""
-    coll = context.window_manager.assetdoctor_res_variant_members
+    coll = context.window_manager.filelink_res_variant_members
     coll.clear()
     for variant in variants:
         for name, res in variant.members:
@@ -264,13 +264,13 @@ def _rescan_res_variants(context):
     return variants
 
 
-class ASSETDOCTOR_OT_scan_res_variants(bpy.types.Operator):
+class FILELINK_OT_scan_res_variants(bpy.types.Operator):
     """F6 Layer 2 — report textures that exist at multiple resolutions (1k/2k/…).
     Footprint analysis only: standardizing to one resolution is LOSSY (changes the
     render), so finding never mutates — it stashes a report + the checkbox list,
     and the user decides (Select High/Low Resolution + Remove Excess Variants)."""
 
-    bl_idname = "assetdoctor.scan_res_variants"
+    bl_idname = "filelink.scan_res_variants"
     bl_label = "Find Resolution Variants"
     bl_description = ("Report textures present at multiple resolutions (1k/2k/4k) so you "
                       "can decide whether to standardize down. Standardizing is lossy — "
@@ -290,19 +290,19 @@ class ASSETDOCTOR_OT_scan_res_variants(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_res_variant_keep(bpy.types.Operator):
+class FILELINK_OT_res_variant_keep(bpy.types.Operator):
     """Tick exactly one member per resolution-variant group as the one to
     keep (radio behaviour via checkboxes — Blender has no native radio-
     checkbox), item 11."""
 
-    bl_idname = "assetdoctor.res_variant_keep"
+    bl_idname = "filelink.res_variant_keep"
     bl_label = "Keep This Resolution"
     bl_options = {"INTERNAL"}
 
     index: bpy.props.IntProperty()  # type: ignore[valid-type]
 
     def execute(self, context):
-        coll = context.window_manager.assetdoctor_res_variant_members
+        coll = context.window_manager.filelink_res_variant_members
         if not (0 <= self.index < len(coll)):
             return {"CANCELLED"}
         group = coll[self.index].group
@@ -314,11 +314,11 @@ class ASSETDOCTOR_OT_res_variant_keep(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_res_variant_select(bpy.types.Operator):
+class FILELINK_OT_res_variant_select(bpy.types.Operator):
     """"Select High/Low Resolution" (item 11): tick every group's highest- or
     lowest-resolution member at once, instead of clicking each group."""
 
-    bl_idname = "assetdoctor.res_variant_select"
+    bl_idname = "filelink.res_variant_select"
     bl_label = "Select Resolution"
     bl_options = {"REGISTER"}
 
@@ -332,7 +332,7 @@ class ASSETDOCTOR_OT_res_variant_select(bpy.types.Operator):
     def execute(self, context):
         from ..core import imageres
 
-        coll = context.window_manager.assetdoctor_res_variant_members
+        coll = context.window_manager.filelink_res_variant_members
         groups: dict[str, list[int]] = {}
         for i, item in enumerate(coll):
             groups.setdefault(item.group, []).append(i)
@@ -348,11 +348,11 @@ class ASSETDOCTOR_OT_res_variant_select(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_remove_excess_variants(bpy.types.Operator):
+class FILELINK_OT_remove_excess_variants(bpy.types.Operator):
     """"Remove Excess Variants" (item 11): for every group with a ticked
     member, transfer every OTHER member's users onto it and delete them."""
 
-    bl_idname = "assetdoctor.remove_excess_variants"
+    bl_idname = "filelink.remove_excess_variants"
     bl_label = "Remove Excess Variants"
     bl_description = ("For each group with a ticked resolution, transfer every OTHER "
                       "member's users onto it and delete them. LOSSY — this changes "
@@ -367,7 +367,7 @@ class ASSETDOCTOR_OT_remove_excess_variants(bpy.types.Operator):
             self.report({"ERROR"}, "Save the file first")
             return {"CANCELLED"}
 
-        coll = context.window_manager.assetdoctor_res_variant_members
+        coll = context.window_manager.filelink_res_variant_members
         groups: dict[str, list] = {}
         for item in coll:
             groups.setdefault(item.group, []).append(item)
@@ -414,14 +414,14 @@ class ASSETDOCTOR_OT_remove_excess_variants(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_scan_content_dups(ModalProgressMixin, bpy.types.Operator):
+class FILELINK_OT_scan_content_dups(ModalProgressMixin, bpy.types.Operator):
     """F6 Layer 3 — the deep content-overlap scan (the real bloat-killer). Hashes
     EVERY local image and collapses exact-content duplicates regardless of name —
     the same texture imported under different names across many CC4 folders becomes
     one. Modal with progress + pause/ESC because hashing the whole set is slow.
     Populates the same Duplicate list (keeper dropdown + Merge Selected apply)."""
 
-    bl_idname = "assetdoctor.scan_content_dups"
+    bl_idname = "filelink.scan_content_dups"
     bl_label = "Find Content Duplicates"
     bl_options = {"REGISTER"}
 
@@ -448,7 +448,7 @@ class ASSETDOCTOR_OT_scan_content_dups(ModalProgressMixin, bpy.types.Operator):
             context, imagededup.build_dedup_report(plans, conflicts, blend_name), "f6dup",
             set_active=False)
         wm = context.window_manager
-        wm.assetdoctor_dup_scanned = True
+        wm.filelink_dup_scanned = True
         rebuild_dup_tex_picker_rows(wm)
         yield (1.0, "Done")
         n = imagededup.removable_count(plans)
@@ -459,12 +459,12 @@ class ASSETDOCTOR_OT_scan_content_dups(ModalProgressMixin, bpy.types.Operator):
             self.report({"INFO"}, "✓ No content-identical duplicate textures found")
 
 
-class ASSETDOCTOR_OT_dup_material_keeper(bpy.types.Operator):
+class FILELINK_OT_dup_material_keeper(bpy.types.Operator):
     """Master keeper control for a whole MATERIAL group: set the keeper of every
     duplicate family under it at once by a policy (so you don't touch each family's
     dropdown individually). Per-family dropdowns still override afterward."""
 
-    bl_idname = "assetdoctor.dup_material_keeper"
+    bl_idname = "filelink.dup_material_keeper"
     bl_label = "Set Keepers for Material"
     bl_options = {"REGISTER", "INTERNAL"}
 
@@ -486,7 +486,7 @@ class ASSETDOCTOR_OT_dup_material_keeper(bpy.types.Operator):
     def execute(self, context):
         from ..core.datablock_graph import strip_dup_suffix
 
-        coll = context.window_manager.assetdoctor_dup_families
+        coll = context.window_manager.filelink_dup_families
         n = 0
         for row in coll:
             if effective_material(row) != self.material:

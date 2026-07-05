@@ -201,13 +201,13 @@ def test_member_indent_in_nested_remote_group():
 # --- flatten_group_member_rows (Group 12 Phase 3, single-level shape) ---
 
 def test_group_member_empty_input():
-    assert flatten_group_member_rows([], set(), "assetdoctor_broken_imgs") == []
+    assert flatten_group_member_rows([], set(), "filelink_broken_imgs") == []
 
 
 def test_group_member_collapsed_hides_members():
     g = GroupSpec(key="Wood", label="Wood  (1)", icon="MATERIAL",
                  members=[MemberRef(ref_index=0)])
-    rows = flatten_group_member_rows([g], set(), "assetdoctor_broken_imgs")
+    rows = flatten_group_member_rows([g], set(), "filelink_broken_imgs")
     assert len(rows) == 1
     assert rows[0].kind == "group"
     assert rows[0].is_expanded is False
@@ -216,10 +216,10 @@ def test_group_member_collapsed_hides_members():
 def test_group_member_expanded_shows_members_with_ref_prop():
     g = GroupSpec(key="Wood", label="Wood  (2)", icon="MATERIAL",
                  members=[MemberRef(ref_index=3), MemberRef(ref_index=7)])
-    rows = flatten_group_member_rows([g], {"Wood"}, "assetdoctor_broken_imgs")
+    rows = flatten_group_member_rows([g], {"Wood"}, "filelink_broken_imgs")
     kinds = [r.kind for r in rows]
     assert kinds == ["group", "member", "member"]
-    assert rows[1].ref_index == 3 and rows[1].ref_prop == "assetdoctor_broken_imgs"
+    assert rows[1].ref_index == 3 and rows[1].ref_prop == "filelink_broken_imgs"
     assert rows[2].ref_index == 7 and rows[2].group_key == "Wood"
 
 

@@ -65,7 +65,7 @@ def main():
                        local_me != linked_me and local_me.name == "Shared"
                        and linked_me.name == "Shared" and linked_me.library is not None))
 
-        res = bpy.ops.assetdoctor.instance_geometry("EXEC_DEFAULT", apply=True)
+        res = bpy.ops.filelink.instance_geometry("EXEC_DEFAULT", apply=True)
         checks.append(("apply FINISHED", res == {"FINISHED"}))
         checks.append(("local mesh chosen as canonical (local preferred by default)",
                        local_obj.data == local_me))
@@ -76,7 +76,7 @@ def main():
         checks.append(("...and is still actually linked, not silently localized",
                        linked_me.library is not None))
         checks.append(("nothing crashed re-scanning afterward",
-                       bpy.ops.assetdoctor.instance_geometry("EXEC_DEFAULT", apply=False)
+                       bpy.ops.filelink.instance_geometry("EXEC_DEFAULT", apply=False)
                        == {"FINISHED"}))
 
         ok = all(p for _, p in checks)

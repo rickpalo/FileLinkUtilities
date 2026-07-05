@@ -134,9 +134,9 @@ def main():
         store.stash_report(bpy.context, report, "f7chain")
 
         try:
-            res2 = bpy.ops.assetdoctor.scan_flatten_candidates("EXEC_DEFAULT")
+            res2 = bpy.ops.filelink.scan_flatten_candidates("EXEC_DEFAULT")
             checks.append(("scan_flatten_candidates FINISHED", res2 == {"FINISHED"}))
-            rows = list(wm.assetdoctor_flatten_candidates)
+            rows = list(wm.filelink_flatten_candidates)
             print(f"PROBE candidate rows: "
                   f"{[(r.name, r.rig, r.is_remote, r.ready, r.status) for r in rows]}")
             checks.append(("Char found as a LOCAL candidate",
@@ -149,11 +149,11 @@ def main():
             # Only flatten Char's group this round -- Char2's group stays
             # deselected so the Make Local check below can flatten it alone.
             char2_group = next((r.rig for r in rows if r.name == "Char2"), "")
-            wm.assetdoctor_flatten_deselected = char2_group
-            before_done = wm.assetdoctor_flatten_done
-            res3 = bpy.ops.assetdoctor.flatten_selected("EXEC_DEFAULT")
+            wm.filelink_flatten_deselected = char2_group
+            before_done = wm.filelink_flatten_done
+            res3 = bpy.ops.filelink.flatten_selected("EXEC_DEFAULT")
             checks.append(("flatten_selected FINISHED", res3 == {"FINISHED"}))
-            checks.append(("outcome count advanced", wm.assetdoctor_flatten_done > before_done))
+            checks.append(("outcome count advanced", wm.filelink_flatten_done > before_done))
             checks.append(("Char2 untouched this round (its group was deselected)",
                            bpy.data.objects.get("Char2_flattened") is None))
 
@@ -177,16 +177,16 @@ def main():
                            old_char is not None and old_char.hide_viewport))
 
             # --- Make Local: now flatten Char2's group WITH it enabled ------
-            wm.assetdoctor_flatten_deselected = ""  # Char's group already done; harmless either way
-            wm.assetdoctor_flatten_make_local = True
-            bpy.ops.assetdoctor.scan_flatten_candidates("EXEC_DEFAULT")
-            rows2 = list(wm.assetdoctor_flatten_candidates)
+            wm.filelink_flatten_deselected = ""  # Char's group already done; harmless either way
+            wm.filelink_flatten_make_local = True
+            bpy.ops.filelink.scan_flatten_candidates("EXEC_DEFAULT")
+            rows2 = list(wm.filelink_flatten_candidates)
             char2_group2 = next((r.rig for r in rows2 if r.name == "Char2"), "")
             checks.append(("Char2 still a ready candidate on re-scan",
                            any(r.name == "Char2" and r.ready for r in rows2)))
-            wm.assetdoctor_flatten_deselected = "\n".join(
+            wm.filelink_flatten_deselected = "\n".join(
                 g for g in {r.rig for r in rows2} if g != char2_group2)
-            res4 = bpy.ops.assetdoctor.flatten_selected("EXEC_DEFAULT")
+            res4 = bpy.ops.filelink.flatten_selected("EXEC_DEFAULT")
             checks.append(("flatten_selected (Make Local) FINISHED", res4 == {"FINISHED"}))
             char2_new = bpy.data.objects.get("Char2_flattened")
             checks.append(("Char2_flattened exists", char2_new is not None))

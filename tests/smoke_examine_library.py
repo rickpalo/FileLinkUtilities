@@ -86,7 +86,7 @@ def main():
             n = examine._populate_examine_rows(bpy.context, library)
             checks.append(("two rows populated", n == 2))
 
-            rows = {r.name: r for r in bpy.context.window_manager.assetdoctor_examine_rows}
+            rows = {r.name: r for r in bpy.context.window_manager.filelink_examine_rows}
             shared, diff = rows.get("Shared"), rows.get("Diff")
             checks.append(("Shared row found", shared is not None))
             checks.append(("Diff row found", diff is not None))

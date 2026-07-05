@@ -2,7 +2,7 @@
 
     blender --background --factory-startup --python tests/smoke_f1.py
 
-Registers the addon, runs assetdoctor.scan_folder over the linkproj fixtures,
+Registers the addon, runs filelink.scan_folder over the linkproj fixtures,
 and asserts the JSON/CSV/DOT exports were written. Adds the BAT wheel to
 sys.path to mirror what Blender does for an installed extension.
 """
@@ -28,9 +28,9 @@ def main() -> int:
     addon = __import__(PKG)
     addon.register()
     try:
-        res = bpy.ops.assetdoctor.scan_folder("EXEC_DEFAULT", directory=str(LINKPROJ))
+        res = bpy.ops.filelink.scan_folder("EXEC_DEFAULT", directory=str(LINKPROJ))
         assert res == {"FINISHED"}, res
-        out = LINKPROJ / ".assetdoctor"
+        out = LINKPROJ / ".filelink"
         jsons = list(out.glob("linkmap_*.json"))
         csvs = list(out.glob("linkmap_*.csv"))
         dots = list(out.glob("linkmap_*.dot"))

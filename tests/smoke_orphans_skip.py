@@ -7,9 +7,9 @@ class (a native access violation reading geometry/node-tree/image data off a
 missing placeholder or Library Override datablock) crashed ops.orphans's
 mesh-fingerprint step too, which had NO risk filtering at all (unlike shape
 keys). Builds a real Library Override mesh (via the normal link +
-override_create() round trip), runs the REAL ``assetdoctor.scan_orphans``
+override_create() round trip), runs the REAL ``filelink.scan_orphans``
 operator, and checks the override mesh is reported by name in
-``wm.assetdoctor_orphan_skipped_text`` while a plain local mesh is NOT (it
+``wm.filelink_orphan_skipped_text`` while a plain local mesh is NOT (it
 still gets fingerprinted normally).
 """
 
@@ -64,9 +64,9 @@ def main():
         addon = __import__(PKG)
         addon.register()
         try:
-            bpy.ops.assetdoctor.scan_orphans()
+            bpy.ops.filelink.scan_orphans()
             wm = bpy.context.window_manager
-            skipped_text = wm.assetdoctor_orphan_skipped_text
+            skipped_text = wm.filelink_orphan_skipped_text
             checks.append(("override mesh named in the skipped text",
                            override_mesh_name in skipped_text))
             checks.append(("skipped reason mentions it's a Library Override",

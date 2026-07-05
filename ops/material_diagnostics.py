@@ -154,8 +154,8 @@ def _gather(context):
         return done.value
 
 
-class ASSETDOCTOR_OT_check_materials(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.check_materials"
+class FILELINK_OT_check_materials(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.check_materials"
     bl_label = "Check Materials"
     bl_description = ("List materials grouped by shader type, flag broken node links "
                        "and Image Texture nodes with a missing file, and flag empty "

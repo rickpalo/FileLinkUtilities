@@ -35,8 +35,8 @@ class _AnalyzeSequencerMixin:
     registered (confirmed via an isolated repro: the parent's ``execute``
     silently stops running and ``bpy.ops`` calls return FINISHED having done
     nothing). That was the actual cause of "Analyze All no longer works"
-    (docs/TODO.md Group 10 #34) — ``ASSETDOCTOR_OT_find_duplicates`` used to
-    subclass ``ASSETDOCTOR_OT_analyze_all`` directly.
+    (docs/TODO.md Group 10 #34) — ``FILELINK_OT_find_duplicates`` used to
+    subclass ``FILELINK_OT_analyze_all`` directly.
 
     Set per-operator via class attributes: ``_steps`` (which
     ``AnalyzeStep``s to run) and ``_run_label`` (feeds the closing message).
@@ -47,7 +47,7 @@ class _AnalyzeSequencerMixin:
 
     def run_steps(self, context):
         wm = context.window_manager
-        coll = wm.assetdoctor_analyze_steps
+        coll = wm.filelink_analyze_steps
         coll.clear()
         steps = self._steps
         for step in steps:
@@ -77,8 +77,8 @@ class _AnalyzeSequencerMixin:
         self.report({"WARNING"} if errors else {"INFO"}, msg)
 
 
-class ASSETDOCTOR_OT_analyze_all(_AnalyzeSequencerMixin, ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.analyze_all"
+class FILELINK_OT_analyze_all(_AnalyzeSequencerMixin, ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.analyze_all"
     bl_label = "Analyze All"
     bl_description = (
         "Run every Analyze check below in sequence against the CURRENT file, one "
@@ -91,7 +91,7 @@ class ASSETDOCTOR_OT_analyze_all(_AnalyzeSequencerMixin, ModalProgressMixin, bpy
     _run_label = "Analyze All"
 
 
-class ASSETDOCTOR_OT_find_duplicates(_AnalyzeSequencerMixin, ModalProgressMixin, bpy.types.Operator):
+class FILELINK_OT_find_duplicates(_AnalyzeSequencerMixin, ModalProgressMixin, bpy.types.Operator):
     """Item 3, 2026-06-25 (user request): "Find Duplicate Materials/Geometry/
     Content" folded into ONE "Find Duplicates" trigger alongside Find
     Duplicate Data-blocks — same dispatcher as Analyze All, just scoped to the
@@ -101,7 +101,7 @@ class ASSETDOCTOR_OT_find_duplicates(_AnalyzeSequencerMixin, ModalProgressMixin,
     DIFFERENT kind of analysis (multi-res footprint, not strict duplicates)
     and deliberately stays its own separate button."""
 
-    bl_idname = "assetdoctor.find_duplicates"
+    bl_idname = "filelink.find_duplicates"
     bl_label = "Find Duplicates"
     bl_description = (
         "Find duplicate data-blocks, materials, geometry, and image content in "
@@ -114,7 +114,7 @@ class ASSETDOCTOR_OT_find_duplicates(_AnalyzeSequencerMixin, ModalProgressMixin,
     _run_label = "Find Duplicates"
 
 
-class ASSETDOCTOR_OT_find_flattenable_links(_AnalyzeSequencerMixin, ModalProgressMixin,
+class FILELINK_OT_find_flattenable_links(_AnalyzeSequencerMixin, ModalProgressMixin,
                                              bpy.types.Operator):
     """2026-06-26 (user request, docs/TODO.md #41): "Find Flattenable Link
     Chains" and "Find Flattenable Characters" merged into one trigger — the
@@ -123,7 +123,7 @@ class ASSETDOCTOR_OT_find_flattenable_links(_AnalyzeSequencerMixin, ModalProgres
     pattern as Find Duplicates; each step's own report/list is filled in
     exactly as if you'd clicked it yourself."""
 
-    bl_idname = "assetdoctor.find_flattenable_links"
+    bl_idname = "filelink.find_flattenable_links"
     bl_label = "Find Flattenable Links"
     bl_description = (
         "Find multi-hop link chains and group every flattenable Library "

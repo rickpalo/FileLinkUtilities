@@ -103,25 +103,25 @@ def _gather(context):
 
 
 def _populate_orphan_rows(context, report) -> None:
-    """Refill ``assetdoctor_orphan_rows`` (one row per TRUE orphan, Group 11
+    """Refill ``filelink_orphan_rows`` (one row per TRUE orphan, Group 11
     #45, 2026-06-26) from the report's ``orphan`` Finding — the actionable
     checkbox shape every other dedup/cleanup section already has. Fake-only
     and identical findings are deliberately NOT mirrored into a WM collection
     here; they stay read-only, drawn straight from the report (see this
     module's own docstring)."""
     wm = context.window_manager
-    coll = wm.assetdoctor_orphan_rows
+    coll = wm.filelink_orphan_rows
     coll.clear()
     orphan_finding = next((f for f in report.findings if f.category == "orphan"), None)
     for label in (orphan_finding.items if orphan_finding else []):
         row = coll.add()
         row.name = label
         row.selected = True
-    wm.assetdoctor_orphan_index = 0
+    wm.filelink_orphan_index = 0
 
 
-class ASSETDOCTOR_OT_scan_orphans(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.scan_orphans"
+class FILELINK_OT_scan_orphans(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.scan_orphans"
     bl_label = "Scan Orphans & Fake Users"
     bl_description = "List orphaned and fake-user-only datablocks and group identical ones"
     bl_options = {"REGISTER"}
@@ -155,7 +155,7 @@ class ASSETDOCTOR_OT_scan_orphans(ModalProgressMixin, bpy.types.Operator):
         stash_report(context, report, "f4")
         _populate_orphan_rows(context, report)
         wm = context.window_manager
-        wm.assetdoctor_orphan_skipped_text = "\n".join(
+        wm.filelink_orphan_skipped_text = "\n".join(
             f"{label} — not read, {reason}" for label, reason in skipped)
         for f in report.findings:
             log.info("F4 [%s] %s: %s", f.severity, f.category, f.message)
@@ -177,20 +177,20 @@ class ASSETDOCTOR_OT_scan_orphans(ModalProgressMixin, bpy.types.Operator):
         backup = auto_backup(context)
         purged = bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=False,
                                         do_recursive=True)
-        context.window_manager.assetdoctor_orphan_rows.clear()
+        context.window_manager.filelink_orphan_rows.clear()
         tail = f"Purged {purged} orphan(s)."
         tail += f" Backup: {backup}" if backup else " (no backup written)"
         self.report({"INFO"}, f"{msg}. {tail}")
 
 
-class ASSETDOCTOR_OT_purge_orphans_selected(bpy.types.Operator):
-    """Purge only the ticked orphans from ``assetdoctor_orphan_rows`` (Group
+class FILELINK_OT_purge_orphans_selected(bpy.types.Operator):
+    """Purge only the ticked orphans from ``filelink_orphan_rows`` (Group
     11 #45, 2026-06-26) — mirrors ``merge_material_selected``'s shape, except
     removal itself uses ``bpy.data.batch_remove`` (the same generic, mixed-
     type-safe primitive Blender's own native orphan purge uses internally),
     since the resolved datablocks span arbitrary types."""
 
-    bl_idname = "assetdoctor.purge_orphans_selected"
+    bl_idname = "filelink.purge_orphans_selected"
     bl_label = "Purge Selected"
     bl_description = "Delete each ticked orphan datablock. Takes a backup first"
     bl_options = {"REGISTER"}
@@ -199,7 +199,7 @@ class ASSETDOCTOR_OT_purge_orphans_selected(bpy.types.Operator):
         from .report_store import resolve_datablock
 
         wm = context.window_manager
-        chosen = [row.name for row in wm.assetdoctor_orphan_rows if row.selected]
+        chosen = [row.name for row in wm.filelink_orphan_rows if row.selected]
         if not chosen:
             self.report({"WARNING"}, "Tick at least one orphan to purge")
             return {"CANCELLED"}
@@ -219,7 +219,7 @@ class ASSETDOCTOR_OT_purge_orphans_selected(bpy.types.Operator):
         backup = auto_backup(context)
         bpy.data.batch_remove(ids=ids)
 
-        wm.assetdoctor_orphan_rows.clear()
+        wm.filelink_orphan_rows.clear()
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

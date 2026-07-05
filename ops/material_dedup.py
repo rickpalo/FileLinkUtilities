@@ -21,7 +21,7 @@ _FP_CHUNK = 32  # materials fingerprinted between progress yields
 
 
 def _populate_material_families(context, plan: list[dict]) -> None:
-    """Refill ``assetdoctor_mat_families`` (one row per fingerprint-identical
+    """Refill ``filelink_mat_families`` (one row per fingerprint-identical
     cluster) from ``build_dedup_plan``'s ``plan`` — the actionable, keeper-
     dropdown shape every other dedup section already has (user feedback,
     2026-06-25: Find Duplicate Materials reported findings but gave no way
@@ -30,7 +30,7 @@ def _populate_material_families(context, plan: list[dict]) -> None:
     Preferences — the dropdown only matters when the user wants to override
     that pick for one specific group."""
     wm = context.window_manager
-    coll = wm.assetdoctor_mat_families
+    coll = wm.filelink_mat_families
     coll.clear()
     linked_total = 0
     for group in plan:
@@ -41,10 +41,10 @@ def _populate_material_families(context, plan: list[dict]) -> None:
         row.selected = True
         row.removable = len(group["victims"])
         linked_total += len(group["linked_victims"])
-    wm.assetdoctor_mat_index = 0
-    wm.assetdoctor_mat_removable = sum(len(g["victims"]) for g in plan)
-    wm.assetdoctor_mat_linked = linked_total
-    wm.assetdoctor_mat_scanned = True
+    wm.filelink_mat_index = 0
+    wm.filelink_mat_removable = sum(len(g["victims"]) for g in plan)
+    wm.filelink_mat_linked = linked_total
+    wm.filelink_mat_scanned = True
 
 
 def _populate_material_conflicts(context, items: list[dict]) -> None:
@@ -57,8 +57,8 @@ def _populate_material_conflicts(context, items: list[dict]) -> None:
     members = [dd.MemberInfo(name=it["name"], fingerprint=it["fingerprint"] or "")
               for it in items]
     conflicts = dd.plan_merges(members)[1]
-    wm.assetdoctor_mat_conflicts = len(conflicts)
-    wm.assetdoctor_mat_conflicts_text = "\n".join(
+    wm.filelink_mat_conflicts = len(conflicts)
+    wm.filelink_mat_conflicts_text = "\n".join(
         f"{c.base} — {c.reason} ({', '.join(c.members)})" for c in conflicts)
 
 
@@ -130,8 +130,8 @@ def _gather(context):
         return done.value
 
 
-class ASSETDOCTOR_OT_material_dedup(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.material_dedup"
+class FILELINK_OT_material_dedup(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.material_dedup"
     bl_label = "Find Duplicate Materials"
     bl_description = "Find duplicate / multi-resolution materials and remap them to a single source"
     bl_options = {"REGISTER"}
@@ -211,8 +211,8 @@ class ASSETDOCTOR_OT_material_dedup(ModalProgressMixin, bpy.types.Operator):
         self.report({"INFO"}, f"{msg}. {tail}")
 
 
-class ASSETDOCTOR_OT_merge_material_selected(bpy.types.Operator):
-    bl_idname = "assetdoctor.merge_material_selected"
+class FILELINK_OT_merge_material_selected(bpy.types.Operator):
+    bl_idname = "filelink.merge_material_selected"
     bl_label = "Merge Selected Duplicates"
     bl_description = ("Merge each ticked group into its chosen keeper (remap users, "
                       "remove local duplicates). Takes a backup first")
@@ -220,7 +220,7 @@ class ASSETDOCTOR_OT_merge_material_selected(bpy.types.Operator):
 
     def execute(self, context):
         wm = context.window_manager
-        chosen = [row for row in wm.assetdoctor_mat_families if row.selected]
+        chosen = [row for row in wm.filelink_mat_families if row.selected]
         if not chosen:
             self.report({"WARNING"}, "Tick at least one group to merge")
             return {"CANCELLED"}
@@ -263,12 +263,12 @@ class ASSETDOCTOR_OT_merge_material_selected(bpy.types.Operator):
         # A deep re-fingerprint is too heavy to auto-run synchronously here
         # (same call as the other dedup tools' post-merge UX) — clear +
         # prompt re-scan.
-        wm.assetdoctor_mat_families.clear()
-        wm.assetdoctor_mat_removable = 0
-        wm.assetdoctor_mat_linked = 0
-        wm.assetdoctor_mat_scanned = False
-        wm.assetdoctor_mat_conflicts = 0
-        wm.assetdoctor_mat_conflicts_text = ""
+        wm.filelink_mat_families.clear()
+        wm.filelink_mat_removable = 0
+        wm.filelink_mat_linked = 0
+        wm.filelink_mat_scanned = False
+        wm.filelink_mat_conflicts = 0
+        wm.filelink_mat_conflicts_text = ""
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

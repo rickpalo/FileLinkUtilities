@@ -37,18 +37,18 @@ def main():
             (root / "one" / "uniq.png").write_bytes(b"x")
 
             wm = bpy.context.window_manager
-            coll = wm.assetdoctor_broken_imgs
+            coll = wm.filelink_broken_imgs
             coll.clear()
             for name in ("dup.png", "uniq.png"):
                 row = coll.add()
                 row.name = name
                 row.stored = f"//missing/{name}"
 
-            res = bpy.ops.assetdoctor.relink_folder_search(
+            res = bpy.ops.filelink.relink_folder_search(
                 "EXEC_DEFAULT", directory=str(root), mode="EXACT_ALL", recursive=True)
             checks.append(("operator FINISHED", res == {"FINISHED"}))
 
-            rows = {r.name: r for r in wm.assetdoctor_broken_imgs}
+            rows = {r.name: r for r in wm.filelink_broken_imgs}
             dup, uniq = rows.get("dup.png"), rows.get("uniq.png")
             checks.append(("dup row found", dup is not None))
             checks.append(("uniq row found", uniq is not None))

@@ -35,8 +35,8 @@ from .progress import ModalProgressMixin
 from .report_store import data_prop, resolve_datablock, stash_report
 
 
-class ASSETDOCTOR_OT_scan_link_chains(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.scan_link_chains"
+class FILELINK_OT_scan_link_chains(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.scan_link_chains"
     bl_label = "Find Flattenable Link Chains"
     bl_description = (
         "Find libraries this file reaches via an intermediate hop (not just "
@@ -93,7 +93,7 @@ class ASSETDOCTOR_OT_scan_link_chains(ModalProgressMixin, bpy.types.Operator):
         # hierarchy (parent/Armature-modifier/Hook-modifier/Child-Of-
         # constraint relationships) to group remote characters correctly, and
         # that data would otherwise be discarded once this generator returns.
-        context.window_manager.assetdoctor_flatten_hierarchy_json = json.dumps(
+        context.window_manager.filelink_flatten_hierarchy_json = json.dumps(
             linkchain.posing_list_to_dict(posing))
 
         routes = sum(1 for f in report.findings if f.category == "multihop_route")
@@ -233,25 +233,25 @@ def _flatten_group_sort_key(rig: str, members) -> tuple:
 
 
 def rebuild_flatten_picker_rows(wm) -> None:
-    """Rebuild ``wm.assetdoctor_flatten_picker_rows`` from the current
+    """Rebuild ``wm.filelink_flatten_picker_rows`` from the current
     candidates + expand/deselect state.
 
     Called after ``scan_flatten_candidates``, ``evaluate_selected``,
     ``flatten_selected``, ``flatten_group_select_all``, and via
     ``ops.report_store.rebuild_rows_for_prop`` whenever the user toggles
-    ``assetdoctor_flatten_expanded`` or ``assetdoctor_flatten_deselected``
-    through the shared ``assetdoctor.row_toggle`` operator."""
+    ``filelink_flatten_expanded`` or ``filelink_flatten_deselected``
+    through the shared ``filelink.row_toggle`` operator."""
     from ..core import picker as picker_mod
     from .report_store import get_expanded
 
-    coll = wm.assetdoctor_flatten_candidates
+    coll = wm.filelink_flatten_candidates
     if not len(coll):
-        wm.assetdoctor_flatten_picker_rows.clear()
+        wm.filelink_flatten_picker_rows.clear()
         return
 
-    cached = json.loads(wm.assetdoctor_flatten_plans_json or "{}")
-    expanded = get_expanded(wm, "assetdoctor_flatten_expanded")
-    deselected = get_expanded(wm, "assetdoctor_flatten_deselected")
+    cached = json.loads(wm.filelink_flatten_plans_json or "{}")
+    expanded = get_expanded(wm, "filelink_flatten_expanded")
+    deselected = get_expanded(wm, "filelink_flatten_deselected")
 
     groups: dict[str, list[picker_mod.MemberData]] = {}
     order: list[str] = []
@@ -291,7 +291,7 @@ def rebuild_flatten_picker_rows(wm) -> None:
         rollups=rollups,
     )
 
-    picker_coll = wm.assetdoctor_flatten_picker_rows
+    picker_coll = wm.filelink_flatten_picker_rows
     picker_coll.clear()
     for pr in picker_rows:
         item = picker_coll.add()
@@ -307,14 +307,14 @@ def rebuild_flatten_picker_rows(wm) -> None:
         item.is_expanded = pr.is_expanded
 
 
-class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
+class FILELINK_OT_scan_flatten_candidates(bpy.types.Operator):
     """Find every override-with-transform character and cache a plan for each
     (cheap — no disk I/O, just RNA reads), so the user can pick ONE row in the
     list and build/show a focused plan for just that character — they
     explicitly don't want to be forced to act on every character in the file
     at once, now or once Apply exists."""
 
-    bl_idname = "assetdoctor.scan_flatten_candidates"
+    bl_idname = "filelink.scan_flatten_candidates"
     bl_label = "Find Flattenable Characters"
     bl_description = (
         "List every Library Override in this file with an adjusted transform "
@@ -332,7 +332,7 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
         chain_report = Report.from_json(raw)
         routes = linkchain.routes_from_report(chain_report)
 
-        coll = wm.assetdoctor_flatten_candidates
+        coll = wm.filelink_flatten_candidates
         coll.clear()
         cached = {}
         local_names: set[str] = set()
@@ -372,8 +372,8 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
             row.status = "; ".join(plan.warnings) if plan.warnings else status
             local_names.add(obj.name)
 
-        wm.assetdoctor_flatten_plans_json = json.dumps(cached)
-        wm.assetdoctor_flatten_index = 0
+        wm.filelink_flatten_plans_json = json.dumps(cached)
+        wm.filelink_flatten_index = 0
 
         # --- Remote candidates: grouped by resolved rig, not by donor file --
         # 2026-06-27 redesign (docs/TODO.md): the old version only ever
@@ -383,11 +383,11 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
         # Armature), and grouped every character from one donor file under a
         # single "Remote: <file>" key, so a user could never select Character
         # A without Character B. Both fixed by reading the raw per-file
-        # census (assetdoctor_flatten_hierarchy_json, cached by Find
+        # census (filelink_flatten_hierarchy_json, cached by Find
         # Flattenable Link Chains) directly instead of the already-filtered
         # Report findings, and resolving each object's rig via
         # build_offline_rig_index before grouping.
-        hierarchy_raw = wm.assetdoctor_flatten_hierarchy_json
+        hierarchy_raw = wm.filelink_flatten_hierarchy_json
         posing = linkchain.posing_list_from_dict(json.loads(hierarchy_raw)) if hierarchy_raw else []
         rig_index = linkchain.build_offline_rig_index(posing)
         current_file_display = _display_file_name(bpy.data.filepath).lower() if bpy.data.filepath else ""
@@ -426,7 +426,7 @@ class ASSETDOCTOR_OT_scan_flatten_candidates(bpy.types.Operator):
         # stays as a fallback for the (now rarer) case where there's truly
         # NOTHING in the census at all to show, local or remote.
         remote_files = [] if len(coll) else linkchain.remote_posing_files(chain_report, bpy.data.filepath)
-        wm.assetdoctor_flatten_remote_note = (
+        wm.filelink_flatten_remote_note = (
             f"Found in {', '.join(remote_files)} but nothing could be listed — "
             "re-run Find Flattenable Links") if remote_files else ""
 
@@ -550,7 +550,7 @@ def _set_override_value(root, rna_path: str, value) -> None:
 # cross-group batch (any mix of rig groups, standalone-by-type groups, and
 # remote-sourced groups). This superseded an earlier one-rig-at-a-time
 # mechanism (``_flatten_rig``, called from the now-removed
-# ``ASSETDOCTOR_OT_build_flatten_plan`` — see docs/TODO.md for its production-
+# ``FILELINK_OT_build_flatten_plan`` — see docs/TODO.md for its production-
 # validated history, "Flattened 8/9 part(s)" on People1_v5.1.blend) — removed
 # 2026-06-27 once ``_flatten_member`` below covered every case it handled
 # (same per-member ``override_create()`` + before/after freshness check, see
@@ -568,8 +568,8 @@ def _harvest_remote(blend_path: str, names: list[str]):
     via StopIteration.value is ``dict[str, HarvestResult]``."""
     script_path = out_path = None
     try:
-        fd, script_path = tempfile.mkstemp(suffix=".py", prefix="assetdoctor_harvest_")
-        fd_out, out_path = tempfile.mkstemp(suffix=".json", prefix="assetdoctor_harvest_out_")
+        fd, script_path = tempfile.mkstemp(suffix=".py", prefix="filelink_harvest_")
+        fd_out, out_path = tempfile.mkstemp(suffix=".json", prefix="filelink_harvest_out_")
         os.close(fd_out)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(remote_harvest.build_harvest_script(names, out_path))
@@ -753,11 +753,11 @@ def _flatten_member(context, plan, mirror_collections: dict, make_local: bool):
 def _selected_members(wm) -> list:
     """Every row belonging to a CHECKED group (rig/standalone-type/remote
     group key, tracked as DESELECTED keys — toggled via the generic
-    ``ASSETDOCTOR_OT_row_toggle`` against ``assetdoctor_flatten_deselected``),
+    ``FILELINK_OT_row_toggle`` against ``filelink_flatten_deselected``),
     shared by Evaluate Selected and Flatten Selected so both act on identical
     selection state."""
-    rows = wm.assetdoctor_flatten_candidates
-    deselected = set(filter(None, wm.assetdoctor_flatten_deselected.split("\n")))
+    rows = wm.filelink_flatten_candidates
+    deselected = set(filter(None, wm.filelink_flatten_deselected.split("\n")))
     groups: dict[str, list] = {}
     for row in rows:
         groups.setdefault(row.rig, []).append(row)
@@ -824,7 +824,7 @@ def _harvest_and_build_plans(members: list, routes: dict, cached: dict):
     return plans, results
 
 
-class ASSETDOCTOR_OT_evaluate_selected(ModalProgressMixin, bpy.types.Operator):
+class FILELINK_OT_evaluate_selected(ModalProgressMixin, bpy.types.Operator):
     """Harvest + build a real flatten plan for every CHECKED character/group
     (same harvest mechanism Flatten Selected uses) WITHOUT applying anything
     — the preview-after-harvest checkpoint requested 2026-06-27 (docs/
@@ -834,7 +834,7 @@ class ASSETDOCTOR_OT_evaluate_selected(ModalProgressMixin, bpy.types.Operator):
     local ones already are, so a following Flatten Selected run reuses them
     instead of re-harvesting."""
 
-    bl_idname = "assetdoctor.evaluate_selected"
+    bl_idname = "filelink.evaluate_selected"
     bl_label = "Evaluate Selected"
     bl_description = (
         "Build a real flatten plan for every CHECKED character/group, "
@@ -846,7 +846,7 @@ class ASSETDOCTOR_OT_evaluate_selected(ModalProgressMixin, bpy.types.Operator):
 
     def invoke(self, context, event):
         wm = context.window_manager
-        if not len(wm.assetdoctor_flatten_candidates):
+        if not len(wm.filelink_flatten_candidates):
             self.report({"ERROR"}, "Run Find Flattenable Links first")
             return {"CANCELLED"}
         return super().invoke(context, event)
@@ -861,7 +861,7 @@ class ASSETDOCTOR_OT_evaluate_selected(ModalProgressMixin, bpy.types.Operator):
         chain_raw = getattr(wm, data_prop("f7chain"), "")
         chain_report = Report.from_json(chain_raw) if chain_raw else Report(title="", feature="f7chain")
         routes = linkchain.routes_from_report(chain_report)
-        cached = json.loads(wm.assetdoctor_flatten_plans_json or "{}")
+        cached = json.loads(wm.filelink_flatten_plans_json or "{}")
 
         gen = _harvest_and_build_plans(members, routes, cached)
         plans = results = None
@@ -874,7 +874,7 @@ class ASSETDOCTOR_OT_evaluate_selected(ModalProgressMixin, bpy.types.Operator):
 
         for name, plan in plans.items():
             cached[name] = linkchain.flatten_plan_to_dict(plan)
-        wm.assetdoctor_flatten_plans_json = json.dumps(cached)
+        wm.filelink_flatten_plans_json = json.dumps(cached)
 
         by_name = {r.object_name: r for r in results}
         for row in members:
@@ -904,7 +904,7 @@ class ASSETDOCTOR_OT_evaluate_selected(ModalProgressMixin, bpy.types.Operator):
                               f"{total - ready} blocked")
 
 
-class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
+class FILELINK_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
     """The single shared action for every CHECKED group in the picker (any
     mix of rig/standalone-type/remote groups), using the one shared Make
     Local / Make Copy setting on the "Flattenable overrides" subgroup's own
@@ -914,7 +914,7 @@ class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
     Evaluate Selected run already cached); local members reuse today's live
     read."""
 
-    bl_idname = "assetdoctor.flatten_selected"
+    bl_idname = "filelink.flatten_selected"
     bl_label = "Flatten Selected"
     bl_description = (
         "Flatten every CHECKED character/group: link directly from the "
@@ -928,7 +928,7 @@ class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
 
     def invoke(self, context, event):
         wm = context.window_manager
-        if not len(wm.assetdoctor_flatten_candidates):
+        if not len(wm.filelink_flatten_candidates):
             self.report({"ERROR"}, "Run Find Flattenable Links first")
             return {"CANCELLED"}
         return super().invoke(context, event)
@@ -940,10 +940,10 @@ class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
             self.report({"WARNING"}, "Nothing selected")
             return
 
-        if not wm.assetdoctor_flatten_make_copy:
+        if not wm.filelink_flatten_make_copy:
             self.report({"INFO"},
                        "In-place (Make Copy off) isn't built yet — running as a copy instead")
-        make_local = wm.assetdoctor_flatten_make_local
+        make_local = wm.filelink_flatten_make_local
 
         yield (0.02, "Backing up…")
         from .safety import auto_backup
@@ -952,7 +952,7 @@ class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
         chain_raw = getattr(wm, data_prop("f7chain"), "")
         chain_report = Report.from_json(chain_raw) if chain_raw else Report(title="", feature="f7chain")
         routes = linkchain.routes_from_report(chain_report)
-        cached = json.loads(wm.assetdoctor_flatten_plans_json or "{}")
+        cached = json.loads(wm.filelink_flatten_plans_json or "{}")
 
         gen = _harvest_and_build_plans(members, routes, cached)
         plans = results = None
@@ -988,8 +988,8 @@ class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
         context.view_layer.update()
 
         ok = sum(1 for r in results if r.ok)
-        wm.assetdoctor_flatten_done += ok
-        wm.assetdoctor_flatten_failed += (len(results) - ok)
+        wm.filelink_flatten_done += ok
+        wm.filelink_flatten_failed += (len(results) - ok)
         by_name = {r.object_name: r for r in results}
         for row in members:
             r = by_name.get(row.name)
@@ -1006,14 +1006,14 @@ class ASSETDOCTOR_OT_flatten_selected(ModalProgressMixin, bpy.types.Operator):
         self.report({level}, f"Flattened {ok}/{len(results)} part(s). Save to persist.")
 
 
-class ASSETDOCTOR_OT_flatten_group_select_all(bpy.types.Operator):
+class FILELINK_OT_flatten_group_select_all(bpy.types.Operator):
     """Select/deselect every character group under one donor-file's outer
     group in a single click (user feedback, 2026-06-27: "good idea to have
     a select all at the library level"). Toggles on current combined
     state — if every child is already selected, deselects all of them;
     otherwise selects all of them."""
 
-    bl_idname = "assetdoctor.flatten_group_select_all"
+    bl_idname = "filelink.flatten_group_select_all"
     bl_label = "Select/Deselect All In Group"
     bl_options = {"INTERNAL"}
 
@@ -1022,12 +1022,12 @@ class ASSETDOCTOR_OT_flatten_group_select_all(bpy.types.Operator):
     def execute(self, context):
         wm = context.window_manager
         children = list(filter(None, self.keys.split("\n")))
-        deselected = set(filter(None, wm.assetdoctor_flatten_deselected.split("\n")))
+        deselected = set(filter(None, wm.filelink_flatten_deselected.split("\n")))
         if all(c not in deselected for c in children):
             deselected.update(children)
         else:
             deselected.difference_update(children)
-        wm.assetdoctor_flatten_deselected = "\n".join(sorted(deselected))
+        wm.filelink_flatten_deselected = "\n".join(sorted(deselected))
         rebuild_flatten_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()

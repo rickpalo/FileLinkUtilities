@@ -94,12 +94,12 @@ def test_severities_ordering_constant():
 
 
 def test_default_export_filename_slugifies_label():
-    assert default_export_filename("Duplicate Textures") == "AssetDoctor_Duplicate_Textures.txt"
+    assert default_export_filename("Duplicate Textures") == "FileLink_Duplicate_Textures.txt"
 
 
 def test_default_export_filename_single_word():
-    assert default_export_filename("Orphans") == "AssetDoctor_Orphans.txt"
+    assert default_export_filename("Orphans") == "FileLink_Orphans.txt"
 
 
 def test_default_export_filename_empty_label_falls_back():
-    assert default_export_filename("") == "AssetDoctorReport.txt"
+    assert default_export_filename("") == "FileLinkReport.txt"

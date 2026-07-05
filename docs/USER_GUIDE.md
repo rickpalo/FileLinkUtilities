@@ -1,13 +1,13 @@
-# AssetDoctor — User Guide
+# File & Link Utilities — User Guide
 
-AssetDoctor is a Blender **5.0+** extension for **mapping, diagnosing, and cleaning** the
-asset debt that builds up in multi-file projects: tangled library links, duplicate and
-multi-resolution materials, orphaned data, duplicated geometry that could be instanced, and
-unclear memory/disk usage.
+File & Link Utilities (formerly AssetDoctor) is a Blender **5.0+** extension for **mapping,
+diagnosing, and cleaning** the asset debt that builds up in multi-file projects: tangled
+library links, duplicate and multi-resolution materials, orphaned data, duplicated geometry
+that could be instanced, and unclear memory/disk usage.
 
 - [Installation & updates](#installation--updates)
 - [Core ideas & safety model](#core-ideas--safety-model)
-- [The AssetDoctor panel](#the-assetdoctor-panel)
+- [The File & Link Utilities panel](#the-file--link-utilities-panel)
 - [Features](#features)
   - [F1 — Scan Link Map (folder)](#f1--scan-link-map-folder)
   - [F2 — Make Local](#f2--make-local)
@@ -31,19 +31,25 @@ unclear memory/disk usage.
 ### Recommended: install from the auto-updating repository
 1. **Edit → Preferences → System →** enable **Allow Online Access**.
 2. **Edit → Preferences → Get Extensions →** the **⌄ (Settings) dropdown → Repositories… → ＋ Add Remote Repository**.
-3. URL: `https://rickpalo.github.io/AssetDoctor/index.json` — tick **Enabled** and **Check for Updates on Startup**.
-4. Back in **Get Extensions**, search **AssetDoctor** and **Install**. Blender will offer updates automatically from then on.
+3. URL: `https://rickpalo.github.io/FileLinkUtilities/index.json` — tick **Enabled** and **Check for Updates on Startup**.
+4. Back in **Get Extensions**, search **File & Link Utilities** and **Install**. Blender will offer updates automatically from then on.
 
 ![Adding the remote repository](images/install-repository.png)
 
-Once added, AssetDoctor appears in **Get Extensions** ready to install:
+Once added, File & Link Utilities appears in **Get Extensions** ready to install:
 
-![AssetDoctor in the repository after adding it](images/install-repository-post.png)
+![File & Link Utilities in the repository after adding it](images/install-repository-post.png)
 
 ### Alternative: install from disk (no auto-update)
-**Get Extensions → ⌄ → Install from Disk…** and pick `assetdoctor-<version>.zip`
-(from the [Releases page](https://github.com/rickpalo/AssetDoctor/releases)). You'll update by
+**Get Extensions → ⌄ → Install from Disk…** and pick `file_link_utilities-<version>.zip`
+(from the [Releases page](https://github.com/rickpalo/FileLinkUtilities/releases)). You'll update by
 reinstalling newer zips.
+
+> **Upgrading from AssetDoctor:** the package id changed, so this can't auto-update over an
+> existing install. Remove the old `rickpalo.github.io/AssetDoctor/index.json` repository entry
+> (and the AssetDoctor add-on) in Preferences, then add the new repo above and install fresh.
+> Saved Preferences (backup folder, resolution-token regex, etc.) are keyed by package id and
+> won't carry over — reconfigure them once after reinstalling.
 
 > The panel header shows the installed version (e.g. `v0.1.5`) so you can confirm what you have.
 
@@ -55,8 +61,8 @@ reinstalling newer zips.
   *appended* data was copied in with no link kept. See the [Glossary](#glossary).
 - **Report-first → Apply.** Every destructive action has a **dry-run report** first; you only
   change anything with the explicit Apply button.
-- **Auto-backup.** Before any mutation, AssetDoctor saves a **timestamped `.blend` backup**
-  (`<name>_assetdoctor_<timestamp>.blend`) next to your file (or to a folder you set in
+- **Auto-backup.** Before any mutation, File & Link Utilities saves a **timestamped `.blend` backup**
+  (`<name>_filelink_<timestamp>.blend`) next to your file (or to a folder you set in
   Preferences). In-session changes also support **Undo (Ctrl+Z)**.
 - **Where results go.** A summary pops up in Blender's header; the **full detail** appears in
   the [Reports section](#the-reports-section), the System Console (Window → Toggle System Console),
@@ -64,12 +70,12 @@ reinstalling newer zips.
 
 ---
 
-## The AssetDoctor panel
+## The File & Link Utilities panel
 
-Open **Properties → Scene** and look for the **AssetDoctor** panel (the link icon, next to the
+Open **Properties → Scene** and look for the **File & Link Utilities** panel (the link icon, next to the
 version number in its header).
 
-![The AssetDoctor panel](images/panel-overview.png)
+![The File & Link Utilities panel](images/panel-overview.png)
 > Screenshot shows an earlier layout (the 3D-viewport sidebar). As of v0.2.35 every feature
 > lives under Properties → Scene instead — same sections, same buttons, new location.
 
@@ -112,7 +118,7 @@ Tracer — no files are opened in Blender) and maps which file links which.
 ![Scan progress](images/scan-progress.png)
 
 **Reports** (in the [Reports section](#the-reports-section), under "Link Map") and exports to
-`<folder>/.assetdoctor/linkmap_<timestamp>.{json,csv,dot}`:
+`<folder>/.filelink/linkmap_<timestamp>.{json,csv,dot}`:
 - **broken links** — a file references a library that's missing,
 - **absolute paths** — non-portable links that should be relative,
 - **circular references** — files that link each other in a loop,
@@ -238,7 +244,7 @@ The **Resource Analyzer** section's results use the same tree, with size columns
 
 ## Preferences
 
-**Edit → Preferences → Add-ons → AssetDoctor** (Extensions list).
+**Edit → Preferences → Add-ons → File & Link Utilities** (Extensions list).
 
 ![Preferences](images/preferences.png)
 
@@ -253,7 +259,7 @@ The **Resource Analyzer** section's results use the same tree, with size columns
 
 ## Utilities & the debug log
 
-**Utilities → Enable Debug Log** writes a detailed **`AssetDoctorDebugLog.txt`** next to your
+**Utilities → Enable Debug Log** writes a detailed **`FileLinkDebugLog.txt`** next to your
 `.blend` (or Blender's temp folder if unsaved). Tick it, reproduce an issue, then send that file
 along when reporting a bug. (Normal summary/findings always print to the System Console too.)
 
@@ -307,5 +313,5 @@ compressed files (or run it with Blender's Python, which already has it).
 - **I want to undo an Apply.** In-session ops (F2 In Place, F3, F4 purge, geometry instancing)
   support **Ctrl+Z**; an auto-backup `.blend` is also written beforehand.
 
-Found a bug? Enable the debug log, reproduce, and open an issue with `AssetDoctorDebugLog.txt`:
-https://github.com/rickpalo/AssetDoctor/issues
+Found a bug? Enable the debug log, reproduce, and open an issue with `FileLinkDebugLog.txt`:
+https://github.com/rickpalo/FileLinkUtilities/issues

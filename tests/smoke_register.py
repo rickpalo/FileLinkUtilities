@@ -12,7 +12,7 @@ import os
 import sys
 import traceback
 
-# Make the repo root's PARENT importable so `import assetdoctor` works, mapping
+# Make the repo root's PARENT importable so `import filelink` works, mapping
 # this dev folder (whatever its case) to the extension's package name.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(REPO_ROOT))

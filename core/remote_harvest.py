@@ -10,8 +10,8 @@ process, never the live session, the same technique ``core.dryrun`` already
 uses for render warnings.
 
 Kept bpy-free and unit-tested. The generated script text is plain bpy calls
-with zero dependency on the AssetDoctor package, so it runs standalone in the
-subprocess regardless of how AssetDoctor itself happens to be installed
+with zero dependency on the File & Link Utilities package, so it runs standalone in the
+subprocess regardless of how File & Link Utilities itself happens to be installed
 there. It re-derives the same property list + reference a LOCAL flatten
 already gets via ``ops.linkchain.read_live_override_properties``/
 ``_live_override_reference`` -- duplicated here deliberately (those live in

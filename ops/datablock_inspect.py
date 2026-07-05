@@ -67,8 +67,8 @@ def _iter_missing_blocks():
                 collection=attr)
 
 
-class ASSETDOCTOR_OT_scan_all_missing(bpy.types.Operator):
-    bl_idname = "assetdoctor.scan_all_missing"
+class FILELINK_OT_scan_all_missing(bpy.types.Operator):
+    bl_idname = "filelink.scan_all_missing"
     bl_label = "Find All Missing"
     bl_description = (
         "Run BOTH checks at once: broken library LINKS (whole .blend files that "
@@ -82,16 +82,16 @@ class ASSETDOCTOR_OT_scan_all_missing(bpy.types.Operator):
         if not bpy.data.filepath:
             self.report({"ERROR"}, "Save the file first")
             return {"CANCELLED"}
-        bpy.ops.assetdoctor.scan_broken_links()        # whole missing libraries
-        bpy.ops.assetdoctor.scan_reconnect_targets()    # individual placeholder ids
+        bpy.ops.filelink.scan_broken_links()        # whole missing libraries
+        bpy.ops.filelink.scan_reconnect_targets()    # individual placeholder ids
         if context.area:
             context.area.tag_redraw()
         self.report({"INFO"}, "Checked broken library links + reconnectable data-blocks")
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_analyze_overrides(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.analyze_overrides"
+class FILELINK_OT_analyze_overrides(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.analyze_overrides"
     bl_label = "Analyze Overrides"
     bl_description = (
         "Scan the CURRENT file: count linked/override datablocks per library and "

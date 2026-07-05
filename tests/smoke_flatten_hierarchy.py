@@ -5,7 +5,7 @@ possible) and only ever surfaced objects already classified
 OVERRIDE_WITH_TRANSFORM at the offline-census stage (missing any character
 posed purely via bones, e.g. the rig's own Armature whose object-transform
 never moves). Both fixed by reading the raw per-file hierarchy census
-(``assetdoctor_flatten_hierarchy_json``) + ``build_offline_rig_index``
+(``filelink_flatten_hierarchy_json``) + ``build_offline_rig_index``
 instead of the already-filtered f7chain report findings.
 
     blender --background --factory-startup --python tests/smoke_flatten_hierarchy.py
@@ -66,7 +66,7 @@ def main():
                 reference=linkchain.OverrideReference(name="LooseProp", kind="Object", library=ref_lib),
                 source_file=donor),
         ]
-        wm.assetdoctor_flatten_hierarchy_json = json.dumps(linkchain.posing_list_to_dict(posing))
+        wm.filelink_flatten_hierarchy_json = json.dumps(linkchain.posing_list_to_dict(posing))
 
         g = linkchain.DepGraph()
         g.add_edge(root, "/proj/intermediate.blend")
@@ -74,10 +74,10 @@ def main():
         report = linkchain.build_chain_report(g, root, [])
         store.stash_report(bpy.context, report, "f7chain")
 
-        res = bpy.ops.assetdoctor.scan_flatten_candidates("EXEC_DEFAULT")
+        res = bpy.ops.filelink.scan_flatten_candidates("EXEC_DEFAULT")
         checks.append(("scan_flatten_candidates FINISHED", res == {"FINISHED"}))
 
-        rows = {r.name: r for r in wm.assetdoctor_flatten_candidates}
+        rows = {r.name: r for r in wm.filelink_flatten_candidates}
         print(f"PROBE rows: {[(n, r.group_parent, r.rig) for n, r in rows.items()]}")
 
         checks.append(("HeroRig (bone-only-posed Armature) IS a candidate -- "

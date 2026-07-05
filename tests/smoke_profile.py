@@ -35,16 +35,16 @@ def main():
         bpy.context.scene.render.resolution_x = 16
         bpy.context.scene.render.resolution_y = 16
 
-        res = bpy.ops.assetdoctor.profile_render("EXEC_DEFAULT")
+        res = bpy.ops.filelink.profile_render("EXEC_DEFAULT")
         wm = bpy.context.window_manager
         checks.append(("FINISHED", res == {"FINISHED"}))
-        checks.append(("profiled RAM stored", bool(wm.assetdoctor_profiled_ram)))
+        checks.append(("profiled RAM stored", bool(wm.filelink_profiled_ram)))
         checks.append(("profiled RAM is a real figure",
-                       wm.assetdoctor_profiled_ram not in ("", "unavailable")))
+                       wm.filelink_profiled_ram not in ("", "unavailable")))
 
         ok = all(p for _, p in checks)
         for label, p in checks:
-            print(f"  [{'OK' if p else 'FAIL'}] {label}  ({wm.assetdoctor_profiled_ram})")
+            print(f"  [{'OK' if p else 'FAIL'}] {label}  ({wm.filelink_profiled_ram})")
         print("PROFILE_SMOKE_OK" if ok else "PROFILE_SMOKE_FAIL")
         return 0 if ok else 1
     except Exception:

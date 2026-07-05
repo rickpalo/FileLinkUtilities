@@ -36,6 +36,6 @@ def auto_backup(context) -> str | None:
     os.makedirs(dirpath, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     stem = os.path.splitext(os.path.basename(src))[0] if src else "untitled"
-    dst = os.path.join(dirpath, f"{stem}_assetdoctor_{stamp}.blend")
+    dst = os.path.join(dirpath, f"{stem}_filelink_{stamp}.blend")
     bpy.ops.wm.save_as_mainfile(filepath=dst, copy=True)
     return dst

@@ -7,7 +7,7 @@ import log as adlog  # repo root is on sys.path (see conftest)
 
 def test_debug_log_path_next_to_blend():
     p = adlog.debug_log_path("/proj/scene.blend")
-    assert p.replace("\\", "/").endswith("/proj/AssetDoctorDebugLog.txt")
+    assert p.replace("\\", "/").endswith("/proj/FileLinkDebugLog.txt")
 
 
 def test_get_logger_is_singleton_with_console():
@@ -23,8 +23,8 @@ def test_enable_disable_writes_file(tmp_path):
     try:
         assert path is not None
         adlog.get_logger().info("hello-debug")
-        assert (tmp_path / "AssetDoctorDebugLog.txt").is_file()
-        assert "Debug log enabled" in (tmp_path / "AssetDoctorDebugLog.txt").read_text(encoding="utf-8")
+        assert (tmp_path / "FileLinkDebugLog.txt").is_file()
+        assert "Debug log enabled" in (tmp_path / "FileLinkDebugLog.txt").read_text(encoding="utf-8")
     finally:
         adlog.set_debug_enabled(False)
     # Disabling detaches the file handler.

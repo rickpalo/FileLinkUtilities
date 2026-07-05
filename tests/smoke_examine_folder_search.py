@@ -6,7 +6,7 @@ docs/TODO.md #20 (2026-06-27): "Search a Folder" should find a name match
 across several .blend files without the user already knowing which one holds
 it, prefer an exact match in one file over a fuzzy one in another, and skip
 any file that's already linked into the current session (crash-avoidance,
-see ops.examine_library.ASSETDOCTOR_OT_examine_search_folder's docstring).
+see ops.examine_library.FILELINK_OT_examine_search_folder's docstring).
 """
 
 import glob
@@ -78,7 +78,7 @@ def main():
             checks.append(("two rows populated (Object + its Mesh data)", n == 2))
 
             wm = bpy.context.window_manager
-            idx, row = next(((i, r) for i, r in enumerate(wm.assetdoctor_examine_rows)
+            idx, row = next(((i, r) for i, r in enumerate(wm.filelink_examine_rows)
                              if r.kind == "Object"), (None, None))
             checks.append(("Object row is for Body", row is not None and row.name == "Body"))
 
@@ -88,7 +88,7 @@ def main():
             # confidence, the already-loaded one because it's skipped
             # entirely (crash-avoidance) despite being an earlier
             # alphabetical/equal-confidence tiebreak candidate.
-            res = bpy.ops.assetdoctor.examine_search_folder(
+            res = bpy.ops.filelink.examine_search_folder(
                 "EXEC_DEFAULT", index=idx, directory=str(tmp))
             checks.append(("search FINISHED", res == {"FINISHED"}))
             checks.append(("found the EXACT match's file, not the fuzzy or "
@@ -102,7 +102,7 @@ def main():
             empty_dir = tempfile.mkdtemp()
             row.source_blend = ""
             row.candidates = ""
-            res2 = bpy.ops.assetdoctor.examine_search_folder(
+            res2 = bpy.ops.filelink.examine_search_folder(
                 "EXEC_DEFAULT", index=idx, directory=empty_dir)
             checks.append(("empty folder: CANCELLED (nothing found)", res2 == {"CANCELLED"}))
 

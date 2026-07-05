@@ -1,10 +1,13 @@
-# AssetDoctor
+# File & Link Utilities
 
 A Blender **5.0+** extension to **map, diagnose, and clean** the asset debt in multi-file
 projects — tangled library links, duplicate/multi-resolution materials, orphaned data,
 duplicated geometry, and unclear memory/disk usage.
 
-![The AssetDoctor panel](docs/images/panel-overview.png)
+(Renamed from **AssetDoctor** — see [CHANGELOG.md](CHANGELOG.md) for the migration note if
+you have an existing install.)
+
+![The File & Link Utilities panel](docs/images/panel-overview.png)
 
 ## Features
 
@@ -25,11 +28,17 @@ feature, expandable, click-to-select, export to txt/CSV).
 
 **Auto-updating (recommended):** Preferences → System → **Allow Online Access**; then
 Get Extensions → **⌄ → Repositories → Add Remote Repository** →
-`https://rickpalo.github.io/AssetDoctor/index.json` → install **AssetDoctor**.
+`https://rickpalo.github.io/FileLinkUtilities/index.json` → install **File & Link Utilities**.
 
-**From disk:** download the latest `assetdoctor-*.zip` from
-[Releases](https://github.com/rickpalo/AssetDoctor/releases) →
+**From disk:** download the latest `file_link_utilities-*.zip` from
+[Releases](https://github.com/rickpalo/FileLinkUtilities/releases) →
 Get Extensions → **⌄ → Install from Disk…**
+
+**Upgrading from AssetDoctor:** the package id changed, so this can't auto-update over an
+existing install. Remove the old `rickpalo.github.io/AssetDoctor/index.json` repository entry
+(and the AssetDoctor add-on) in Preferences, then add the new repo above and install fresh.
+Saved preferences (backup folder, resolution-token regex, etc.) are keyed by package id and
+won't carry over — reconfigure them once after reinstalling.
 
 Full instructions and feature walkthrough: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 

@@ -153,8 +153,8 @@ def localize_steps(log, max_passes: int = 50):
     yield (1.0, "Done")
 
 
-class ASSETDOCTOR_OT_make_local(bpy.types.Operator):
-    bl_idname = "assetdoctor.make_local"
+class FILELINK_OT_make_local(bpy.types.Operator):
+    bl_idname = "filelink.make_local"
     bl_label = "Make All Local"
     bl_description = "Recursively make every linked asset local (report first, then apply)"
     bl_options = {"REGISTER"}
@@ -327,7 +327,7 @@ class ASSETDOCTOR_OT_make_local(bpy.types.Operator):
         wm = context.window_manager
         wm.progress_begin(0, 100)
         set_progress(context, 0.0, "Starting make-local…")
-        context.workspace.status_text_set("AssetDoctor: making local… (ESC to cancel)")
+        context.workspace.status_text_set("FileLink: making local… (ESC to cancel)")
         self._timer = wm.event_timer_add(0.05, window=context.window)
         wm.modal_handler_add(self)
         return {"RUNNING_MODAL"}

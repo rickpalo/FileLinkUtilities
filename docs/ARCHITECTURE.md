@@ -1,10 +1,10 @@
-# AssetDoctor — Architecture & Roadmap
+# File & Link Utilities — Architecture & Roadmap
 
 ## Why this exists
 
 A multi-file Blender project accumulates asset-management debt: tangled link graphs,
 near-duplicate materials at different resolutions, and data kept alive only by Fake
-Users. AssetDoctor maps, diagnoses, and cleans this for Blender 5+.
+Users. File & Link Utilities (formerly AssetDoctor) maps, diagnoses, and cleans this for Blender 5+.
 
 ## Locked decisions
 
@@ -27,13 +27,13 @@ different execution worlds. So:
   imports `bpy`. Operators are thin: gather bpy data → hand to `core` → present a report →
   on Apply, mutate after an auto-backup.
 - **Import rule:** `core` modules import each other with *relative* imports, so they
-  resolve both inside Blender (as `assetdoctor.core`) and in pytest (as top-level `core`;
+  resolve both inside Blender (as `filelink.core`) and in pytest (as top-level `core`;
   see `conftest.py`).
 
 ## Layout
 
 ```
-assetdoctor/ (dev folder: AssetDoctor)
+file_link_utilities/ (dev folder: FileLinkUtilities)
 ├─ blender_manifest.toml   Extension manifest (blender_version_min = 5.0)
 ├─ __init__.py             register/unregister (thin)
 ├─ prefs.py                backup dir, auto-backup toggle, resolution-token regex

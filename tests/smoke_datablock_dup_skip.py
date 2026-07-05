@@ -8,8 +8,8 @@ user needs to see WHICH shape key got skipped and WHY, so they can go
 investigate the underlying file corruption. Builds a real Library Override
 (via the normal link + override_create() round trip) whose shape key shares
 a `.NNN` name family with a plain local one, runs the REAL
-``assetdoctor.scan_datablock_dups`` operator, and checks the override one is
-reported by name in ``wm.assetdoctor_datablock_skipped_text`` while the
+``filelink.scan_datablock_dups`` operator, and checks the override one is
+reported by name in ``wm.filelink_datablock_skipped_text`` while the
 plain local one is NOT (it still gets fingerprinted normally).
 """
 
@@ -74,9 +74,9 @@ def main():
         addon = __import__(PKG)
         addon.register()
         try:
-            bpy.ops.assetdoctor.scan_datablock_dups()
+            bpy.ops.filelink.scan_datablock_dups()
             wm = bpy.context.window_manager
-            skipped_text = wm.assetdoctor_datablock_skipped_text
+            skipped_text = wm.filelink_datablock_skipped_text
             checks.append(("override shape key named in the skipped text",
                            override_key_name in skipped_text))
             checks.append(("skipped reason mentions it's a Library Override",

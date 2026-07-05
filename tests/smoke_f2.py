@@ -58,7 +58,7 @@ def main():
         bpy.ops.wm.open_mainfile(filepath=str(scene))
         linked_before = _count_linked(bpy)
         out = tmp / "scene_local.blend"
-        res = bpy.ops.assetdoctor.make_local(
+        res = bpy.ops.filelink.make_local(
             "EXEC_DEFAULT", mode="NEW_FILE", apply=True, filepath=str(out)
         )
         checks.append(("NEW_FILE FINISHED", res == {"FINISHED"}))
@@ -74,7 +74,7 @@ def main():
 
         # ---- IN_PLACE mode ----
         bpy.ops.wm.open_mainfile(filepath=str(scene))
-        res2 = bpy.ops.assetdoctor.make_local("EXEC_DEFAULT", mode="IN_PLACE", apply=True)
+        res2 = bpy.ops.filelink.make_local("EXEC_DEFAULT", mode="IN_PLACE", apply=True)
         checks.append(("IN_PLACE FINISHED", res2 == {"FINISHED"}))
         checks.append(("session has no linked datablocks", _count_linked(bpy) == 0))
         checks.append(("no libraries remain", len(bpy.data.libraries) == 0))
@@ -88,10 +88,10 @@ def main():
         collide_with = next(it for it in linked_items if it["type"] == "Object")
         bpy.data.objects.new(collide_with["name"], None)  # local, same type+name
 
-        res3 = bpy.ops.assetdoctor.make_local("EXEC_DEFAULT", mode="IN_PLACE", apply=False)
+        res3 = bpy.ops.filelink.make_local("EXEC_DEFAULT", mode="IN_PLACE", apply=False)
         wm = bpy.context.window_manager
         checks.append(("dry-run FINISHED", res3 == {"FINISHED"}))
-        f2_report = wm.assetdoctor_rep_f2
+        f2_report = wm.filelink_rep_f2
         checks.append(("rename collision reported", f"Object/{collide_with['name']}" in f2_report
                        and "rename_risk" in f2_report))
 

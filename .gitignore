@@ -21,10 +21,10 @@ wheels/*.whl.tmp
 *.blend2
 ~*
 
-# AssetDoctor runtime output (never commit)
-AssetDoctorDebugLog.txt
-.assetdoctor/
-*_assetdoctor_*.blend
+# File & Link Utilities runtime output (never commit)
+FileLinkDebugLog.txt
+.filelink/
+*_filelink_*.blend
 *_local.blend
 
 # OS

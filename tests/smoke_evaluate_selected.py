@@ -72,10 +72,10 @@ def main():
         report = linkchain.build_chain_report(g, str(root_path), posing)
         store.stash_report(bpy.context, report, "f7chain")
 
-        bpy.ops.assetdoctor.scan_flatten_candidates("EXEC_DEFAULT")
+        bpy.ops.filelink.scan_flatten_candidates("EXEC_DEFAULT")
         before_objects = set(bpy.data.objects.keys())
 
-        res = bpy.ops.assetdoctor.evaluate_selected("EXEC_DEFAULT")
+        res = bpy.ops.filelink.evaluate_selected("EXEC_DEFAULT")
         checks.append(("evaluate_selected FINISHED", res == {"FINISHED"}))
 
         after_objects = set(bpy.data.objects.keys())
@@ -86,11 +86,11 @@ def main():
                        old_char is not None and old_char.override_library is not None
                        and not old_char.hide_viewport))
 
-        rows = {r.name: r for r in wm.assetdoctor_flatten_candidates}
+        rows = {r.name: r for r in wm.filelink_flatten_candidates}
         checks.append(("Char marked ready after evaluation", rows.get("Char") is not None
                        and rows["Char"].ready))
 
-        cached = __import__("json").loads(wm.assetdoctor_flatten_plans_json or "{}")
+        cached = __import__("json").loads(wm.filelink_flatten_plans_json or "{}")
         checks.append(("Char's plan was cached for a later Flatten Selected", "Char" in cached))
 
         raw = getattr(wm, store.data_prop("f7flatten"), "")

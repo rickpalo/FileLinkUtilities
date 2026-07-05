@@ -59,41 +59,41 @@ def main():
             checks.append(("group covers A and B",
                            {grp["canonical"], *grp["victims"]} == {a.data.name, b.data.name}))
 
-        res = bpy.ops.assetdoctor.instance_geometry("EXEC_DEFAULT", apply=True)
+        res = bpy.ops.filelink.instance_geometry("EXEC_DEFAULT", apply=True)
         checks.append(("apply FINISHED", res == {"FINISHED"}))
         checks.append(("A and B now share one mesh", a.data == b.data))
         checks.append(("duplicate mesh removed", len(bpy.data.meshes) == 2))  # shared + sphere
         checks.append(("sphere untouched", c.data.name == "Sphere"))
 
         # Group 11 #44, 2026-06-26: the new SELECTIVE apply path
-        # (assetdoctor.instance_geometry_selected) — a fresh duplicate pair (a
+        # (filelink.instance_geometry_selected) — a fresh duplicate pair (a
         # DIFFERENT shape than A/B's, so this group is isolated from the
         # already-merged shared mesh above), scan via the report-only path
-        # (populates assetdoctor_geo_families), untick the row, confirm
+        # (populates filelink_geo_families), untick the row, confirm
         # Instance Selected does NOTHING (proves "selective" is real, not just
         # a relabeled apply-everything), then re-tick and confirm it DOES.
         quad = ([(0, 0, 0), (3, 0, 0), (3, 3, 0), (0, 3, 0)], [], [(0, 1, 2, 3)])
         d = obj_with_own_mesh("D", quad)
         e = obj_with_own_mesh("E", quad)
-        res2 = bpy.ops.assetdoctor.instance_geometry("EXEC_DEFAULT", apply=False)
+        res2 = bpy.ops.filelink.instance_geometry("EXEC_DEFAULT", apply=False)
         wm = bpy.context.window_manager
         checks.append(("scan FINISHED", res2 == {"FINISHED"}))
-        checks.append(("one geo family populated", len(wm.assetdoctor_geo_families) == 1))
-        checks.append(("group covers only D and E", set(wm.assetdoctor_geo_families[0].victims.split("\n"))
-                       | {wm.assetdoctor_geo_families[0].name} == {d.data.name, e.data.name}))
+        checks.append(("one geo family populated", len(wm.filelink_geo_families) == 1))
+        checks.append(("group covers only D and E", set(wm.filelink_geo_families[0].victims.split("\n"))
+                       | {wm.filelink_geo_families[0].name} == {d.data.name, e.data.name}))
 
-        wm.assetdoctor_geo_families[0].selected = False
-        res3 = bpy.ops.assetdoctor.instance_geometry_selected("EXEC_DEFAULT")
+        wm.filelink_geo_families[0].selected = False
+        res3 = bpy.ops.filelink.instance_geometry_selected("EXEC_DEFAULT")
         checks.append(("unselected: CANCELLED (nothing ticked)", res3 == {"CANCELLED"}))
         checks.append(("unselected: D and E still distinct", d.data != e.data))
         checks.append(("unselected: row NOT cleared (CANCELLED is a no-op)",
-                       len(wm.assetdoctor_geo_families) == 1))
+                       len(wm.filelink_geo_families) == 1))
 
-        wm.assetdoctor_geo_families[0].selected = True
-        res4 = bpy.ops.assetdoctor.instance_geometry_selected("EXEC_DEFAULT")
+        wm.filelink_geo_families[0].selected = True
+        res4 = bpy.ops.filelink.instance_geometry_selected("EXEC_DEFAULT")
         checks.append(("selected: FINISHED", res4 == {"FINISHED"}))
         checks.append(("selected: D and E now share one mesh", d.data == e.data))
-        checks.append(("selected: rows cleared after apply", len(wm.assetdoctor_geo_families) == 0))
+        checks.append(("selected: rows cleared after apply", len(wm.filelink_geo_families) == 0))
 
         # docs/TODO.md #16 (2026-06-27): a .NNN-name-family pair with genuinely
         # DIFFERENT geometry should be reported "kept separate," not silently
@@ -103,11 +103,11 @@ def main():
         f_obj.data.name = "Block"
         g_obj.data.name = "Block.001"
 
-        res5 = bpy.ops.assetdoctor.instance_geometry("EXEC_DEFAULT", apply=False)
+        res5 = bpy.ops.filelink.instance_geometry("EXEC_DEFAULT", apply=False)
         checks.append(("conflict scan FINISHED", res5 == {"FINISHED"}))
         checks.append(("differing-content name-family flagged as kept separate",
-                       wm.assetdoctor_geo_conflicts >= 1 and "Block" in wm.assetdoctor_geo_conflicts_text
-                       and "differing content" in wm.assetdoctor_geo_conflicts_text))
+                       wm.filelink_geo_conflicts >= 1 and "Block" in wm.filelink_geo_conflicts_text
+                       and "differing content" in wm.filelink_geo_conflicts_text))
 
         ok = all(p for _, p in checks)
         for label, p in checks:

@@ -16,8 +16,8 @@ from .progress import ModalProgressMixin
 from .report_store import stash_report
 
 
-class ASSETDOCTOR_OT_check_dependents(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.check_dependents"
+class FILELINK_OT_check_dependents(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.check_dependents"
     bl_label = "Check What Links This File"
     bl_description = (
         "Before deleting a .blend, scan the Project Folder (offline) and list every "
@@ -32,8 +32,8 @@ class ASSETDOCTOR_OT_check_dependents(ModalProgressMixin, bpy.types.Operator):
         from ..core import blendscan, reversedep
 
         scene = context.scene
-        root_str = bpy.path.abspath(scene.assetdoctor_scan_dir or "")
-        target_str = bpy.path.abspath(scene.assetdoctor_dep_target or "")
+        root_str = bpy.path.abspath(scene.filelink_scan_dir or "")
+        target_str = bpy.path.abspath(scene.filelink_dep_target or "")
 
         root = pathlib.Path(root_str) if root_str else None
         if root is None or not root.is_dir():
@@ -69,17 +69,17 @@ class ASSETDOCTOR_OT_check_dependents(ModalProgressMixin, bpy.types.Operator):
 
         wm = context.window_manager
         if canon is None:
-            wm.assetdoctor_dep_verdict = "not_scanned"
-            wm.assetdoctor_dep_verdict_text = (
+            wm.filelink_dep_verdict = "not_scanned"
+            wm.filelink_dep_verdict_text = (
                 f"{label} wasn't found in the scanned folder")
         elif direct or indirect:
-            wm.assetdoctor_dep_verdict = "unsafe"
+            wm.filelink_dep_verdict = "unsafe"
             tail = f", {len(indirect)} more transitively" if indirect else ""
-            wm.assetdoctor_dep_verdict_text = (
+            wm.filelink_dep_verdict_text = (
                 f"⚠ Do Not Delete — {len(direct)} file(s) link {label} directly{tail}")
         else:
-            wm.assetdoctor_dep_verdict = "safe"
-            wm.assetdoctor_dep_verdict_text = "No Links Detected — Safe to Delete"
+            wm.filelink_dep_verdict = "safe"
+            wm.filelink_dep_verdict_text = "No Links Detected — Safe to Delete"
 
         yield (1.0, "Done")
         if canon is None:

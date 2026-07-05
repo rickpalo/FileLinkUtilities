@@ -1,10 +1,10 @@
 """Pytest bootstrap (lives in tests/ so pytest never imports the bpy-dependent
-top-level ``assetdoctor`` package during collection).
+top-level ``filelink`` package during collection).
 
 Tests exercise the bpy-free ``core`` package only. We put the repo root on
 sys.path so ``import core.report`` works WITHOUT importing the top-level
 package. Core modules use *relative* imports among themselves, which resolve
-both here (as top-level ``core``) and inside Blender (as ``assetdoctor.core``).
+both here (as top-level ``core``) and inside Blender (as ``filelink.core``).
 """
 
 import glob

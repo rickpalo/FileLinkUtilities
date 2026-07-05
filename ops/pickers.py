@@ -1,5 +1,5 @@
 """Phase 2a (2026-06-24 code-review plan) — shared file-browser boilerplate for
-AssetDoctor's many "pick a file/folder to fix this" operators (Pick Source
+File & Link Utilities' many "pick a file/folder to fix this" operators (Pick Source
 .blend, Pick Library File, Relink Pick Texture, Examine Library's per-row pick,
 etc.). ``invoke()`` is 100% identical across every one of them (open the
 native file browser, run modally); only the after-pick validation in

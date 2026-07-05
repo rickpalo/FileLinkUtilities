@@ -75,7 +75,7 @@ def _gather(context):
 
 
 def _populate_geo_families(context, plan: list[dict]) -> None:
-    """Refill ``assetdoctor_geo_families`` (one row per instancing group) from
+    """Refill ``filelink_geo_families`` (one row per instancing group) from
     :func:`build_instance_plan`'s ``plan`` (Group 11 #44, 2026-06-26) — the
     actionable checkbox shape every other dedup section already has. No
     keeper dropdown: unlike Materials/Data-blocks/Images, instancing always
@@ -83,7 +83,7 @@ def _populate_geo_families(context, plan: list[dict]) -> None:
     (``choose_canonical`` — most-shared local mesh), no ambiguity to
     override."""
     wm = context.window_manager
-    coll = wm.assetdoctor_geo_families
+    coll = wm.filelink_geo_families
     coll.clear()
     linked_total = 0
     for group in plan:
@@ -95,12 +95,12 @@ def _populate_geo_families(context, plan: list[dict]) -> None:
         row.selected = True
         row.removable = len(group["victims"]) - len(linked_victims)
         linked_total += len(linked_victims)
-    wm.assetdoctor_geo_index = 0
+    wm.filelink_geo_index = 0
     from ..core.geometry_dedup import removable_count
 
-    wm.assetdoctor_geo_removable = removable_count(plan)
-    wm.assetdoctor_geo_linked = linked_total
-    wm.assetdoctor_geo_scanned = True
+    wm.filelink_geo_removable = removable_count(plan)
+    wm.filelink_geo_linked = linked_total
+    wm.filelink_geo_scanned = True
 
 
 def _populate_geo_conflicts(context, items: list[dict]) -> None:
@@ -112,13 +112,13 @@ def _populate_geo_conflicts(context, items: list[dict]) -> None:
     members = [dd.MemberInfo(name=it["name"], fingerprint=it["fingerprint"] or "")
               for it in items]
     conflicts = dd.plan_merges(members)[1]
-    wm.assetdoctor_geo_conflicts = len(conflicts)
-    wm.assetdoctor_geo_conflicts_text = "\n".join(
+    wm.filelink_geo_conflicts = len(conflicts)
+    wm.filelink_geo_conflicts_text = "\n".join(
         f"{c.base} — {c.reason} ({', '.join(c.members)})" for c in conflicts)
 
 
-class ASSETDOCTOR_OT_instance_geometry(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.instance_geometry"
+class FILELINK_OT_instance_geometry(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.instance_geometry"
     bl_label = "Instance Duplicate Geometry"
     bl_description = "Find identical separate meshes and make their objects share one (instancing)"
     bl_options = {"REGISTER"}
@@ -191,14 +191,14 @@ class ASSETDOCTOR_OT_instance_geometry(ModalProgressMixin, bpy.types.Operator):
         self.report({"INFO"}, f"{msg}. {tail}")
 
 
-class ASSETDOCTOR_OT_instance_geometry_selected(bpy.types.Operator):
-    """Instance only the ticked groups from ``assetdoctor_geo_families`` (Group
+class FILELINK_OT_instance_geometry_selected(bpy.types.Operator):
+    """Instance only the ticked groups from ``filelink_geo_families`` (Group
     11 #44, 2026-06-26) — mirrors ``merge_material_selected``/
     ``merge_datablock_selected``'s shape. Re-resolves mesh ids fresh (cheap —
     no re-fingerprinting needed, identity was already verified by the scan
     that built these rows), same pattern as the other "_selected" operators."""
 
-    bl_idname = "assetdoctor.instance_geometry_selected"
+    bl_idname = "filelink.instance_geometry_selected"
     bl_label = "Instance Selected"
     bl_description = ("Instance each ticked group onto its canonical mesh and remove the "
                       "local duplicates. Takes a backup first")
@@ -206,7 +206,7 @@ class ASSETDOCTOR_OT_instance_geometry_selected(bpy.types.Operator):
 
     def execute(self, context):
         wm = context.window_manager
-        chosen = [row for row in wm.assetdoctor_geo_families if row.selected]
+        chosen = [row for row in wm.filelink_geo_families if row.selected]
         if not chosen:
             self.report({"WARNING"}, "Tick at least one group to instance")
             return {"CANCELLED"}
@@ -239,11 +239,11 @@ class ASSETDOCTOR_OT_instance_geometry_selected(bpy.types.Operator):
         # Re-fingerprinting all meshes is too heavy to auto-run synchronously
         # here (same call as every other "_selected" operator) — clear +
         # prompt re-scan.
-        wm.assetdoctor_geo_families.clear()
-        wm.assetdoctor_geo_removable = 0
-        wm.assetdoctor_geo_scanned = False
-        wm.assetdoctor_geo_conflicts = 0
-        wm.assetdoctor_geo_conflicts_text = ""
+        wm.filelink_geo_families.clear()
+        wm.filelink_geo_removable = 0
+        wm.filelink_geo_scanned = False
+        wm.filelink_geo_conflicts = 0
+        wm.filelink_geo_conflicts_text = ""
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"

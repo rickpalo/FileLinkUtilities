@@ -1,4 +1,4 @@
-"""The AssetDoctor N-panel (3D viewport sidebar > AssetDoctor).
+"""The File & Link Utilities N-panel (3D viewport sidebar > File & Link Utilities).
 
 Each feature exposes a read-only/report action and, where relevant, an explicit
 Apply action so the report-first → apply workflow is reachable without the F9
@@ -12,7 +12,7 @@ import pathlib
 
 import bpy
 
-DOC_URL = "https://github.com/rickpalo/AssetDoctor/tree/main/docs"
+DOC_URL = "https://github.com/rickpalo/FileLinkUtilities/tree/main/docs"
 
 _ADDON_VERSION = None
 
@@ -39,7 +39,7 @@ _ANALYZE_STEP_ICON = {
 }
 
 
-class ASSETDOCTOR_PG_tree_row(bpy.types.PropertyGroup):
+class FILELINK_PG_tree_row(bpy.types.PropertyGroup):
     """One flattened, indented tree row, materialised so a ``UIList`` can draw it.
 
     The Report/Resource trees used to be drawn as manual rows, but the N-panel
@@ -70,7 +70,7 @@ class ASSETDOCTOR_PG_tree_row(bpy.types.PropertyGroup):
 
 # Fixed width (UI units) for each RAM/VRAM/disk column (docs/TODO.md #15,
 # 2026-06-27) -- shared by the Resource Usage header and
-# ASSETDOCTOR_UL_tree.draw_item's resource-row branch so values actually
+# FILELINK_UL_tree.draw_item's resource-row branch so values actually
 # line up under their header instead of drifting with content length.
 _RESOURCE_COL_WIDTH = 4.4
 
@@ -86,13 +86,13 @@ def _resource_columns(row):
     return cols
 
 
-class ASSETDOCTOR_UL_tree(bpy.types.UIList):
+class FILELINK_UL_tree(bpy.types.UIList):
     """Virtualized, scrollable tree for the Report and Resource panels: indent +
     expand toggle + tooltip-bearing label + right-aligned detail. Shared by both.
     A row with ``ram``/``vram``/``disk`` set (only Resource rows) draws those as
     3 real aligned columns instead of the generic single ``detail`` column."""
 
-    bl_idname = "ASSETDOCTOR_UL_tree"
+    bl_idname = "FILELINK_UL_tree"
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if self.layout_type == "GRID":
@@ -111,7 +111,7 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
             row.separator(factor=1.4)
         if item.has_children:
             tri = "TRIA_DOWN" if item.expanded else "TRIA_RIGHT"
-            op = row.operator("assetdoctor.row_toggle", text="", icon=tri, emboss=False)
+            op = row.operator("filelink.row_toggle", text="", icon=tri, emboss=False)
             op.key = item.key
             op.prop = item.prop
         else:
@@ -132,7 +132,7 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
         if (item.indent == 0 and not item.has_children and item.severity == "info"
                 and " — " in item.label and region and region.width < 320):
             display = item.label.split(" — ", 1)[0]
-        op = row.operator("assetdoctor.row_label", text=display,
+        op = row.operator("filelink.row_label", text=display,
                           icon="NONE", emboss=False)
         op.text = full
         op.key = item.key
@@ -162,7 +162,7 @@ class ASSETDOCTOR_UL_tree(bpy.types.UIList):
             sub.label(text=item.detail)
 
 
-class ASSETDOCTOR_PG_analyze_step(bpy.types.PropertyGroup):
+class FILELINK_PG_analyze_step(bpy.types.PropertyGroup):
     """One step of the Analyze section's "Analyze All" sequence (Phase 3a) — a
     thin progress mirror of ``core.analyze_steps.STEPS``, rebuilt and updated by
     ``ops.analyze_all`` as it runs so the panel can show a per-step icon."""
@@ -173,7 +173,7 @@ class ASSETDOCTOR_PG_analyze_step(bpy.types.PropertyGroup):
     status: bpy.props.StringProperty(default="pending")  # pending|running|done|error  # type: ignore[valid-type]
 
 
-class ASSETDOCTOR_PG_flatten_candidate(bpy.types.PropertyGroup):
+class FILELINK_PG_flatten_candidate(bpy.types.PropertyGroup):
     """One Library Override with an adjusted transform (Phase 4-B), for the
     character picker. ``ops.linkchain.scan_flatten_candidates`` fills the
     collection AND caches each row's full plan (as JSON, on the WM) so picking
@@ -218,17 +218,17 @@ class ASSETDOCTOR_PG_flatten_candidate(bpy.types.PropertyGroup):
     group_parent: bpy.props.StringProperty()  # type: ignore[valid-type]
 
 
-class ASSETDOCTOR_PG_picker_row(bpy.types.PropertyGroup):
+class FILELINK_PG_picker_row(bpy.types.PropertyGroup):
     """One row in the flat virtualized picker list (Group 12 Phase 2).
 
-    ``kind`` selects the row shape in ``ASSETDOCTOR_UL_flatten_picker.draw_item``:
+    ``kind`` selects the row shape in ``FILELINK_UL_flatten_picker.draw_item``:
     - "outer"  — remote donor-file header (select-all checkbox + triangle + label)
     - "group"  — one rig/character group (done-checkmark OR checkbox + triangle + label)
     - "rollup" — the combined property summary under an expanded group (INFO icon + text)
     - "member" — one individual flatten candidate; ``ref_index`` points into the
-                 real ``wm.assetdoctor_flatten_candidates`` collection so edits land
+                 real ``wm.filelink_flatten_candidates`` collection so edits land
                  on live data with no sync step.
-    Also reused (Group 12 Phase 3) by ``ASSETDOCTOR_UL_target_picker`` for
+    Also reused (Group 12 Phase 3) by ``FILELINK_UL_target_picker`` for
     single-level "checkbox + label + target widget + picker button" sections
     (Missing Textures first): "group"/"member" only there, and ``ref_prop``
     names WHICH WM collection ``ref_index`` points into (member rows only) —
@@ -251,7 +251,7 @@ class ASSETDOCTOR_PG_picker_row(bpy.types.PropertyGroup):
     is_expanded: bpy.props.BoolProperty()      # type: ignore[valid-type]
 
 
-class ASSETDOCTOR_PG_broken_lib(bpy.types.PropertyGroup):
+class FILELINK_PG_broken_lib(bpy.types.PropertyGroup):
     """One broken/missing library link, for the per-link relink list (F7).
 
     ``ops.relink._populate_broken_links`` fills the collection from the current
@@ -327,7 +327,7 @@ def _dup_override_updated(self, context) -> None:
         context.area.tag_redraw()
 
 
-class ASSETDOCTOR_PG_dup_family(bpy.types.PropertyGroup):
+class FILELINK_PG_dup_family(bpy.types.PropertyGroup):
     """One content-identical ``.NNN`` duplicate family, for the redesigned Duplicate
     Materials/Textures list. ``members`` (newline-joined, canonical first) feeds the
     ``keeper`` dropdown so the user can pick which datablock survives; ``selected``
@@ -374,7 +374,7 @@ def _reconnect_target_items(self, context):
     return items
 
 
-class ASSETDOCTOR_PG_missing_block(bpy.types.PropertyGroup):
+class FILELINK_PG_missing_block(bpy.types.PropertyGroup):
     """One missing (placeholder) data-block staged for RECONNECT (Batch C). Rows
     group by ``library`` in the panel — one source-.blend pick applies to the whole
     group, since a broken/renamed library's blocks usually all need the same fix.
@@ -430,7 +430,7 @@ def _material_keeper_items(self, context):
     return items or [("", "", "")]
 
 
-class ASSETDOCTOR_PG_material_family(bpy.types.PropertyGroup):
+class FILELINK_PG_material_family(bpy.types.PropertyGroup):
     """One content-identical duplicate-material group for the reformatted
     Find Duplicate Materials list (user feedback, 2026-06-25: the old report
     gave no way to act on what it found). Unlike the .NNN name-family tools,
@@ -448,9 +448,9 @@ class ASSETDOCTOR_PG_material_family(bpy.types.PropertyGroup):
     removable: bpy.props.IntProperty()  # type: ignore[valid-type]
 
 
-class ASSETDOCTOR_PG_geo_family(bpy.types.PropertyGroup):
+class FILELINK_PG_geo_family(bpy.types.PropertyGroup):
     """One duplicate-geometry instancing group for the Find Duplicates section
-    (Group 11 #44, 2026-06-26) — mirrors :class:`ASSETDOCTOR_PG_material_family`'s
+    (Group 11 #44, 2026-06-26) — mirrors :class:`FILELINK_PG_material_family`'s
     shape but no keeper dropdown: instancing always keeps the canonical mesh
     ``core.geometry_dedup.choose_canonical`` already picked (most-shared
     local), no ambiguity to override."""
@@ -464,7 +464,7 @@ class ASSETDOCTOR_PG_geo_family(bpy.types.PropertyGroup):
     removable: bpy.props.IntProperty()  # type: ignore[valid-type]
 
 
-class ASSETDOCTOR_PG_orphan_row(bpy.types.PropertyGroup):
+class FILELINK_PG_orphan_row(bpy.types.PropertyGroup):
     """One TRUE orphan (users==0) datablock for the Find Orphans section
     (Group 11 #45, 2026-06-26) — checkbox-only, no keeper: purging is binary,
     no "which one survives" decision like the dedup tools. Fake-user-only and
@@ -479,7 +479,7 @@ class ASSETDOCTOR_PG_orphan_row(bpy.types.PropertyGroup):
         description="Include this datablock when you Purge Selected")  # type: ignore[valid-type]
 
 
-class ASSETDOCTOR_PG_datablock_family(bpy.types.PropertyGroup):
+class FILELINK_PG_datablock_family(bpy.types.PropertyGroup):
     """One content-identical ``.NNN`` duplicate family for the generic Duplicate
     Data-blocks list (Batch C #3) — any datablock type ``ops.datablock_dup``
     fingerprints, grouped by ``kind`` in the panel (no material attribution; that
@@ -526,7 +526,7 @@ def _graph_match_suffix(base: str, graph_match: str) -> tuple[str, str]:
     return base, "CHECKMARK"
 
 
-class ASSETDOCTOR_PG_examine_row(bpy.types.PropertyGroup):
+class FILELINK_PG_examine_row(bpy.types.PropertyGroup):
     """One datablock the EXAMINED library currently provides (Examine Library —
     distinct from the missing-data-block reconnect list: these links are NOT
     broken, the user just wants to stop depending on this library for them).
@@ -556,12 +556,12 @@ class ASSETDOCTOR_PG_examine_row(bpy.types.PropertyGroup):
         description="Include this data-block when you Apply Selected")  # type: ignore[valid-type]
 
 
-class ASSETDOCTOR_UL_broken_libs(bpy.types.UIList):
+class FILELINK_UL_broken_libs(bpy.types.UIList):
     """Per-link relink list: checkbox + broken library name + its target file (or
     a 'pick a file' hint) + a file-picker button. Lets the user fix one specific
     broken link without running a bulk pass."""
 
-    bl_idname = "ASSETDOCTOR_UL_broken_libs"
+    bl_idname = "FILELINK_UL_broken_libs"
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if self.layout_type == "GRID":
@@ -587,19 +587,19 @@ class ASSETDOCTOR_UL_broken_libs(bpy.types.UIList):
                          icon="CHECKMARK" if item.has_candidate else "QUESTION")
         else:
             target.label(text="no match — pick a file", icon="QUESTION")
-        row.operator("assetdoctor.relink_pick_file", text="", icon="FILEBROWSER").index = index
+        row.operator("filelink.relink_pick_file", text="", icon="FILEBROWSER").index = index
 
 
-class ASSETDOCTOR_UL_flatten_picker(bpy.types.UIList):
+class FILELINK_UL_flatten_picker(bpy.types.UIList):
     """Virtualized picker for the Flattenable Overrides section (Group 12 Phase 2).
 
-    Renders from ``wm.assetdoctor_flatten_picker_rows`` (rebuilt by
+    Renders from ``wm.filelink_flatten_picker_rows`` (rebuilt by
     ``ops.linkchain.rebuild_flatten_picker_rows`` after scan/toggle/evaluate/flatten).
     Four row shapes handled in ``draw_item`` via ``item.kind``; all state (expanded,
     deselected, done) is pre-baked into the row at rebuild time so this draw path
     stays pure read-only — no per-redraw string-set parsing."""
 
-    bl_idname = "ASSETDOCTOR_UL_flatten_picker"
+    bl_idname = "FILELINK_UL_flatten_picker"
 
     def draw_item(self, context, layout, data, item, icon,
                   active_data, active_propname, index):
@@ -613,30 +613,30 @@ class ASSETDOCTOR_UL_flatten_picker(bpy.types.UIList):
             row.separator(factor=float(item.indent) * 1.5)
 
         if item.kind == "outer":
-            gop = row.operator("assetdoctor.flatten_group_select_all", text="",
+            gop = row.operator("filelink.flatten_group_select_all", text="",
                                icon=("CHECKBOX_HLT" if item.checkbox_state == "checked"
                                      else "CHECKBOX_DEHLT"),
                                emboss=False)
             gop.keys = item.children_keys
-            tog = row.operator("assetdoctor.row_toggle", text="",
+            tog = row.operator("filelink.row_toggle", text="",
                                icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
                                emboss=False)
-            tog.key, tog.prop = item.key, "assetdoctor_flatten_expanded"
+            tog.key, tog.prop = item.key, "filelink_flatten_expanded"
             row.label(text=item.label, icon=item.icon)
 
         elif item.kind == "group":
             if item.checkbox_state == "done":
                 row.label(text="", icon="CHECKMARK")
             else:
-                cop = row.operator("assetdoctor.row_toggle", text="",
+                cop = row.operator("filelink.row_toggle", text="",
                                    icon=("CHECKBOX_HLT" if item.checkbox_state == "checked"
                                          else "CHECKBOX_DEHLT"),
                                    emboss=False)
-                cop.key, cop.prop = item.key, "assetdoctor_flatten_deselected"
-            tog = row.operator("assetdoctor.row_toggle", text="",
+                cop.key, cop.prop = item.key, "filelink_flatten_deselected"
+            tog = row.operator("filelink.row_toggle", text="",
                                icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
                                emboss=False)
-            tog.key, tog.prop = item.key, "assetdoctor_flatten_expanded"
+            tog.key, tog.prop = item.key, "filelink_flatten_expanded"
             row.label(text=item.label, icon=item.icon)
 
         elif item.kind == "rollup":
@@ -646,19 +646,19 @@ class ASSETDOCTOR_UL_flatten_picker(bpy.types.UIList):
             row.label(text=item.label, icon=item.icon)
 
 
-class ASSETDOCTOR_UL_missing_tex_picker(bpy.types.UIList):
+class FILELINK_UL_missing_tex_picker(bpy.types.UIList):
     """Virtualized picker for the Missing Textures section (Group 12 Phase 3,
     first single-level "checkbox + label + target widget + picker button"
-    section). Renders from ``wm.assetdoctor_missingtex_picker_rows`` (rebuilt
+    section). Renders from ``wm.filelink_missingtex_picker_rows`` (rebuilt
     by ``ops.image_relink.rebuild_missing_tex_picker_rows`` after every scan/
     toggle/pick/accept/relink). Group rows draw the pre-baked triangle+icon+
     label+count (and an optional "point at folder" action button); member
-    rows read/write the REAL ``wm.assetdoctor_broken_imgs`` row directly via
+    rows read/write the REAL ``wm.filelink_broken_imgs`` row directly via
     ``item.ref_prop``/``item.ref_index`` — same live-data approach as
-    ``ASSETDOCTOR_UL_broken_libs`` — so ticking a checkbox or picking a file
+    ``FILELINK_UL_broken_libs`` — so ticking a checkbox or picking a file
     needs no rebuild, only a target/membership change does."""
 
-    bl_idname = "ASSETDOCTOR_UL_missing_tex_picker"
+    bl_idname = "FILELINK_UL_missing_tex_picker"
 
     def draw_item(self, context, layout, data, item, icon,
                   active_data, active_propname, index):
@@ -672,13 +672,13 @@ class ASSETDOCTOR_UL_missing_tex_picker(bpy.types.UIList):
             row.separator(factor=float(item.indent) * 1.5)
 
         if item.kind == "group":
-            tog = row.operator("assetdoctor.row_toggle", text="",
+            tog = row.operator("filelink.row_toggle", text="",
                                icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
                                emboss=False)
-            tog.key, tog.prop = item.key, "assetdoctor_tex_expanded"
+            tog.key, tog.prop = item.key, "filelink_tex_expanded"
             row.label(text=item.label, icon=item.icon)
             if item.has_action:
-                fop = row.operator("assetdoctor.point_group_at_folder", text="",
+                fop = row.operator("filelink.point_group_at_folder", text="",
                                    icon="FILE_FOLDER")
                 fop.group_key, fop.by = item.key, "MATERIAL"
             return
@@ -698,23 +698,23 @@ class ASSETDOCTOR_UL_missing_tex_picker(bpy.types.UIList):
             tgt.label(text=f"{real.ambiguous_count} found elsewhere — pick one", icon="ERROR")
         else:
             tgt.label(text="no match", icon="QUESTION")
-        row.operator("assetdoctor.relink_pick_texture", text="",
+        row.operator("filelink.relink_pick_texture", text="",
                     icon="FILEBROWSER").index = item.ref_index
 
 
-class ASSETDOCTOR_UL_dup_tex_picker(bpy.types.UIList):
+class FILELINK_UL_dup_tex_picker(bpy.types.UIList):
     """Virtualized picker for the Duplicate Textures section (Group 12 Phase 3,
     item 2) — the "keeper dropdown" member shape, a DIFFERENT row family from
     Missing Textures' target+picker shape (every member row carries a keeper
     ``EnumProperty`` + a conditional material-override eyedropper instead of a
-    file-picker button). Renders from ``wm.assetdoctor_duptex_picker_rows``
+    file-picker button). Renders from ``wm.filelink_duptex_picker_rows``
     (rebuilt by ``ops.image_dedup.rebuild_dup_tex_picker_rows`` after scan/
     merge/toggle, AND by ``material_override``'s own ``update`` callback since
     that field can change a family's group with no operator involved). Member
-    rows read/write the REAL ``wm.assetdoctor_dup_families`` row directly, same
-    live-data approach as ``ASSETDOCTOR_UL_missing_tex_picker``."""
+    rows read/write the REAL ``wm.filelink_dup_families`` row directly, same
+    live-data approach as ``FILELINK_UL_missing_tex_picker``."""
 
-    bl_idname = "ASSETDOCTOR_UL_dup_tex_picker"
+    bl_idname = "FILELINK_UL_dup_tex_picker"
 
     def draw_item(self, context, layout, data, item, icon,
                   active_data, active_propname, index):
@@ -728,15 +728,15 @@ class ASSETDOCTOR_UL_dup_tex_picker(bpy.types.UIList):
             row.separator(factor=float(item.indent) * 1.5)
 
         if item.kind == "group":
-            tog = row.operator("assetdoctor.row_toggle", text="",
+            tog = row.operator("filelink.row_toggle", text="",
                                icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
                                emboss=False)
-            tog.key, tog.prop = item.key, "assetdoctor_dup_expanded"
+            tog.key, tog.prop = item.key, "filelink_dup_expanded"
             lab = row.row()
             lab.alert = item.alert
             lab.label(text=item.label, icon=item.icon)
             if item.has_action:
-                kop = row.operator("assetdoctor.dup_material_keeper", text="",
+                kop = row.operator("filelink.dup_material_keeper", text="",
                                    icon="DOWNARROW_HLT")
                 kop.material = item.key
             return
@@ -764,21 +764,21 @@ class ASSETDOCTOR_UL_dup_tex_picker(bpy.types.UIList):
         keep.prop(real, "keeper", text="")
 
 
-class ASSETDOCTOR_UL_reconnect_picker(bpy.types.UIList):
+class FILELINK_UL_reconnect_picker(bpy.types.UIList):
     """Virtualized picker for the Datablock Reconnect section (Group 12 Phase
     3, item 3) — a THIRD member-row family (checkbox + label + a confidence
     icon/label + a "Reconnect to" ``EnumProperty`` dropdown, no file-picker or
-    keeper). Renders from ``wm.assetdoctor_reconnect_picker_rows`` (rebuilt by
+    keeper). Renders from ``wm.filelink_reconnect_picker_rows`` (rebuilt by
     ``ops.datablock_reconnect.rebuild_reconnect_picker_rows`` after scan/pick-
     source/reconnect-selected). Group rows always carry the "Pick Source
     .blend" action button; the source-status line (which .blend is picked, or
     why not) draws as a "rollup" row — the same INFO-line shape Flattenable
     Overrides already uses, generalized (Group 12 Phase 3's ``GroupSpec.info``)
     so this section didn't need its own kind. Member rows read/write the REAL
-    ``wm.assetdoctor_missing_blocks`` row directly, same live-data approach as
-    ``ASSETDOCTOR_UL_missing_tex_picker``."""
+    ``wm.filelink_missing_blocks`` row directly, same live-data approach as
+    ``FILELINK_UL_missing_tex_picker``."""
 
-    bl_idname = "ASSETDOCTOR_UL_reconnect_picker"
+    bl_idname = "FILELINK_UL_reconnect_picker"
 
     def draw_item(self, context, layout, data, item, icon,
                   active_data, active_propname, index):
@@ -792,13 +792,13 @@ class ASSETDOCTOR_UL_reconnect_picker(bpy.types.UIList):
             row.separator(factor=float(item.indent) * 1.5)
 
         if item.kind == "group":
-            tog = row.operator("assetdoctor.row_toggle", text="",
+            tog = row.operator("filelink.row_toggle", text="",
                                icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
                                emboss=False)
-            tog.key, tog.prop = item.key, "assetdoctor_missing_expanded"
+            tog.key, tog.prop = item.key, "filelink_missing_expanded"
             row.label(text=item.label, icon=item.icon)
             if item.has_action:
-                pop = row.operator("assetdoctor.reconnect_pick_source", text="",
+                pop = row.operator("filelink.reconnect_pick_source", text="",
                                    icon="FILEBROWSER")
                 pop.library = item.key
             return
@@ -822,7 +822,7 @@ class ASSETDOCTOR_UL_reconnect_picker(bpy.types.UIList):
         row.prop(real, "target", text="")
 
 
-class ASSETDOCTOR_UL_examine_picker(bpy.types.UIList):
+class FILELINK_UL_examine_picker(bpy.types.UIList):
     """Virtualized picker for the Examine Library section (Group 12 Phase 3,
     item 4 — the last single-level section) — a FOURTH member-row family:
     checkbox + label + a conditional middle status (Make Local / in-memory
@@ -833,10 +833,10 @@ class ASSETDOCTOR_UL_examine_picker(bpy.types.UIList):
     rebuild_examine_picker_rows`` only runs after Examine/Apply Selected —
     every per-row edit here (``selected``/``make_local``/``target``, or a
     fresh ``source_blend`` from Pick a Specific Item/Search a Folder) draws
-    live off the real ``wm.assetdoctor_examine_rows`` row, same as the other
+    live off the real ``wm.filelink_examine_rows`` row, same as the other
     three pickers."""
 
-    bl_idname = "ASSETDOCTOR_UL_examine_picker"
+    bl_idname = "FILELINK_UL_examine_picker"
 
     def draw_item(self, context, layout, data, item, icon,
                   active_data, active_propname, index):
@@ -850,10 +850,10 @@ class ASSETDOCTOR_UL_examine_picker(bpy.types.UIList):
             row.separator(factor=float(item.indent) * 1.5)
 
         if item.kind == "group":
-            tog = row.operator("assetdoctor.row_toggle", text="",
+            tog = row.operator("filelink.row_toggle", text="",
                                icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
                                emboss=False)
-            tog.key, tog.prop = item.key, "assetdoctor_examine_expanded"
+            tog.key, tog.prop = item.key, "filelink_examine_expanded"
             row.label(text=item.label, icon=item.icon)
             return
 
@@ -886,9 +886,9 @@ class ASSETDOCTOR_UL_examine_picker(bpy.types.UIList):
             s.alignment = "RIGHT"
             s.label(text="no in-memory match", icon="QUESTION")
         row.prop(real, "make_local", text="", icon="FILE_TICK")
-        row.operator("assetdoctor.examine_pick_source", text="",
+        row.operator("filelink.examine_pick_source", text="",
                     icon="FILEBROWSER").index = item.ref_index
-        row.operator("assetdoctor.examine_search_folder", text="",
+        row.operator("filelink.examine_search_folder", text="",
                     icon="VIEWZOOM").index = item.ref_index
 
 
@@ -896,16 +896,16 @@ class _SceneFeaturePanel:
     """Shared bl_* attributes for the legacy-feature Scene sub-panels (Make
     Local, Duplicate Materials, Orphans, Geometry, Utilities) — migrated off
     the old VIEW_3D N-panel (Batch 5, 2026-06-23) so
-    everything lives under Properties > Scene > AssetDoctor. Each is a child of
-    ASSETDOCTOR_PT_scene_deps, which gives it a native collapse triangle and
+    everything lives under Properties > Scene > File & Link Utilities. Each is a child of
+    FILELINK_PT_scene_deps, which gives it a native collapse triangle and
     remembers its open/closed state per-file, same as the N-panel did."""
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
     bl_context = "scene"
-    bl_parent_id = "ASSETDOCTOR_PT_scene_deps"
+    bl_parent_id = "FILELINK_PT_scene_deps"
 
 
-class ASSETDOCTOR_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
+class FILELINK_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
     """Phase 3a (2026-06-25) — the first of the 5 named top-level sections: the
     instant, no-scan "what is this file" summary. Content unchanged from before
     the split (just promoted to its own collapsible native sub-panel, per the
@@ -913,7 +913,7 @@ class ASSETDOCTOR_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
     with face/vert/texture-size counts is its own deferred design question."""
 
     bl_label = "Current File Data"
-    bl_idname = "ASSETDOCTOR_PT_current_file_data"
+    bl_idname = "FILELINK_PT_current_file_data"
     bl_order = 0
 
     def draw(self, context):
@@ -953,7 +953,7 @@ def _analyze_step_status_icon(wm, step_key: str, has_run: bool) -> str:
     ``running`` or just ``error``-ed (transient, only meaningful during/right
     after a run); otherwise fall back to ``has_run`` — whether this check's
     OWN data shows it has ever been run, individually or not."""
-    for row in wm.assetdoctor_analyze_steps:
+    for row in wm.filelink_analyze_steps:
         if row.key == step_key and row.status in ("running", "error"):
             return _ANALYZE_STEP_ICON[row.status]
     return "CHECKMARK" if has_run else "RADIOBUT_OFF"
@@ -1063,7 +1063,7 @@ def _f7chain_headline(wm, nodes) -> tuple[str, list]:
     except Exception:
         total = None
     if total is not None:
-        remaining = max(0, total - wm.assetdoctor_flatten_done - wm.assetdoctor_flatten_failed)
+        remaining = max(0, total - wm.filelink_flatten_done - wm.filelink_flatten_failed)
         old = f"{total} flattenable (override+transform)"
         new = f"{remaining} of {total} flattenable (override+transform)"
         label = label.replace(old, new, 1)
@@ -1130,11 +1130,11 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
     """One Analyze button's report result: a single row carrying BOTH the
     one-line headline AND its own expand arrow — no separate "Details" row
     (item a, 2026-06-25). When expanded, every remaining category draws via
-    the SAME ``ASSETDOCTOR_UL_tree``/``ASSETDOCTOR_PG_tree_row`` machinery the
+    the SAME ``FILELINK_UL_tree``/``FILELINK_PG_tree_row`` machinery the
     Reports tab uses (Group 12 Phase 4, 2026-07-03) — closes the third
     independent manual tree-renderer this project had accumulated, and its own
     "blank rows on a deeply-expanded tree" exposure along with it. Collapsed
-    by default via the inline-only ``assetdoctor_detail_expanded`` key set
+    by default via the inline-only ``filelink_detail_expanded`` key set
     (independent of each feature's own ``exp_prop`` — the dedicated Reports
     tab pre-seeds THAT one expanded, which would defeat "starts collapsed"
     here). The one node the headline already quotes verbatim is left out of
@@ -1174,10 +1174,10 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
         row.label(text=headline)
         return
 
-    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
     root_key = f"{feature}:__inline_root__"
     is_open = root_key in expanded
-    op = row.operator("assetdoctor.row_toggle", text="",
+    op = row.operator("filelink.row_toggle", text="",
                        icon="TRIA_DOWN" if is_open else "TRIA_RIGHT", emboss=False)
     op.key = root_key
     row.label(text=headline)
@@ -1189,7 +1189,7 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
     n = len(getattr(wm, rows_prop))
     if n:
         col.template_list(
-            "ASSETDOCTOR_UL_tree", f"inline_{feature}",
+            "FILELINK_UL_tree", f"inline_{feature}",
             wm, rows_prop,
             wm, report_store.inline_active_prop(feature),
             rows=min(12, max(3, n)),
@@ -1199,11 +1199,11 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
 def _missing_textures_headline(wm, narrow: bool) -> str:
     """The Missing Textures section's own header summary, factored out so the
     Analyze button can show the same line inline (Phase 3c)."""
-    n_missing = len(wm.assetdoctor_broken_imgs)
-    n_linked = len(wm.assetdoctor_linked_missing_imgs)
-    scanned = wm.assetdoctor_tex_scanned
-    found = max(wm.assetdoctor_tex_initial_missing - n_missing, 0)
-    matched = sum(1 for it in wm.assetdoctor_broken_imgs if it.target)
+    n_missing = len(wm.filelink_broken_imgs)
+    n_linked = len(wm.filelink_linked_missing_imgs)
+    scanned = wm.filelink_tex_scanned
+    found = max(wm.filelink_tex_initial_missing - n_missing, 0)
+    matched = sum(1 for it in wm.filelink_broken_imgs if it.target)
 
     title = "Missing Materials/Textures"
     linked_bit = f"{n_linked} linked" if n_linked else ""
@@ -1238,11 +1238,11 @@ def _missing_textures_headline(wm, narrow: bool) -> str:
 def _duplicate_textures_headline(wm, narrow: bool) -> str:
     """The Duplicate Materials/Textures section's own header summary,
     factored out so the Analyze button can show the same line inline."""
-    scanned = wm.assetdoctor_dup_scanned
-    families = wm.assetdoctor_dup_families
+    scanned = wm.filelink_dup_scanned
+    families = wm.filelink_dup_families
     mats = len({row.material or "(no material)" for row in families})
-    removable = wm.assetdoctor_dup_removable
-    conflicts = wm.assetdoctor_dup_conflicts
+    removable = wm.filelink_dup_removable
+    conflicts = wm.filelink_dup_conflicts
     if not scanned:
         return ""
     if not len(families) and not conflicts:
@@ -1258,8 +1258,8 @@ def _duplicate_textures_headline(wm, narrow: bool) -> str:
 def _duplicates_has_run(wm) -> bool:
     """Item 3, 2026-06-25: "Find Duplicates" status icon — true once ANY of
     the 4 folded-in scans has data, regardless of which one was clicked."""
-    return bool(wm.assetdoctor_datablock_scanned or wm.assetdoctor_mat_scanned
-                or _feature_has_run(wm, "geo") or wm.assetdoctor_dup_scanned)
+    return bool(wm.filelink_datablock_scanned or wm.filelink_mat_scanned
+                or _feature_has_run(wm, "geo") or wm.filelink_dup_scanned)
 
 
 def _duplicates_overview_summary(wm) -> str:
@@ -1269,8 +1269,8 @@ def _duplicates_overview_summary(wm) -> str:
     once this section is expanded)."""
     if not _duplicates_has_run(wm):
         return "Find Duplicates"
-    scanned = sum([bool(wm.assetdoctor_datablock_scanned), bool(wm.assetdoctor_mat_scanned),
-                   _feature_has_run(wm, "geo"), bool(wm.assetdoctor_dup_scanned)])
+    scanned = sum([bool(wm.filelink_datablock_scanned), bool(wm.filelink_mat_scanned),
+                   _feature_has_run(wm, "geo"), bool(wm.filelink_dup_scanned)])
     return f"Find Duplicates — {scanned}/4 scan(s) run"
 
 
@@ -1283,43 +1283,43 @@ def _draw_duplicates(layout, wm, narrow: bool) -> None:
     internally: each ``_draw_*_dups`` already gates on its own ``*_scanned``
     flag and draws nothing until ITS OWN button has been clicked. "Find All
     Duplicates" (the header's own action button) still runs all 4 in
-    sequence via the existing ``assetdoctor.find_duplicates`` sequencer,
+    sequence via the existing ``filelink.find_duplicates`` sequencer,
     waiting for each step's UI update before starting the next — unchanged,
     just relocated from its own top-level row into this header."""
-    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
     key = "duplicates:all"
     is_open = key in expanded
     outer = layout.box().column(align=True)
     _draw_group_header(
-        outer, key=key, prop="assetdoctor_detail_expanded", is_exp=is_open,
+        outer, key=key, prop="filelink_detail_expanded", is_exp=is_open,
         label=_duplicates_overview_summary(wm), icon="LIBRARY_DATA_OVERRIDE",
-        action=lambda r: r.operator("assetdoctor.find_duplicates",
+        action=lambda r: r.operator("filelink.find_duplicates",
                                     text="Find All Duplicates", icon="PLAY"))
     if not is_open:
         return
     col = outer.column(align=True)
-    col.operator("assetdoctor.scan_datablock_dups",
+    col.operator("filelink.scan_datablock_dups",
                  text="Find Duplicate Data-blocks", icon="LIBRARY_DATA_OVERRIDE")
     _draw_datablock_dups(col, wm)
     col.separator()
-    col.operator("assetdoctor.material_dedup", text="Find Duplicate Materials", icon="MATERIAL")
+    col.operator("filelink.material_dedup", text="Find Duplicate Materials", icon="MATERIAL")
     _draw_material_dups(col, wm)
     col.separator()
-    col.operator("assetdoctor.instance_geometry", text="Find Duplicate Geometry", icon="MESH_DATA")
+    col.operator("filelink.instance_geometry", text="Find Duplicate Geometry", icon="MESH_DATA")
     _draw_geo_dups(col, wm)
     col.separator()
-    col.operator("assetdoctor.scan_content_dups", text="Find Duplicate Textures", icon="IMAGE_DATA")
+    col.operator("filelink.scan_content_dups", text="Find Duplicate Textures", icon="IMAGE_DATA")
     _draw_duplicate_textures(col, wm, narrow)
 
 
 def _datablock_dups_headline(wm) -> str:
     """The Duplicate Data-blocks section's own header summary, factored out
     so the Analyze button can show the same line inline."""
-    families = wm.assetdoctor_datablock_families
-    scanned = wm.assetdoctor_datablock_scanned
-    removable = wm.assetdoctor_datablock_removable
-    conflicts = wm.assetdoctor_datablock_conflicts
-    skipped = len([ln for ln in wm.assetdoctor_datablock_skipped_text.split("\n") if ln])
+    families = wm.filelink_datablock_families
+    scanned = wm.filelink_datablock_scanned
+    removable = wm.filelink_datablock_removable
+    conflicts = wm.filelink_datablock_conflicts
+    skipped = len([ln for ln in wm.filelink_datablock_skipped_text.split("\n") if ln])
     if not scanned:
         return ""
     if not len(families) and not conflicts and not skipped:
@@ -1336,8 +1336,8 @@ def _datablock_dups_headline(wm) -> str:
 def _reconnect_headline(wm) -> str:
     """The Datablock Reconnect section's own header summary, factored out so
     the Analyze button can show the same line inline."""
-    rows = wm.assetdoctor_missing_blocks
-    scanned = wm.assetdoctor_missing_scanned
+    rows = wm.filelink_missing_blocks
+    scanned = wm.filelink_missing_scanned
     if not scanned:
         return ""
     if not len(rows):
@@ -1350,10 +1350,10 @@ def _reconnect_headline(wm) -> str:
 def _all_missing_summary(wm) -> str:
     """"Find All Missing" runs both the broken-library-link scan and the
     datablock-reconnect scan; combine their counts into one line."""
-    if not wm.assetdoctor_missing_scanned:
+    if not wm.filelink_missing_scanned:
         return ""
-    broken = len(wm.assetdoctor_broken_libs)
-    missing = len(wm.assetdoctor_missing_blocks)
+    broken = len(wm.filelink_broken_libs)
+    missing = len(wm.filelink_missing_blocks)
     if not broken and not missing:
         return "✓ nothing missing"
     return f"{broken} broken link(s), {missing} missing data-block(s)"
@@ -1367,7 +1367,7 @@ def _broken_links_headline(wm) -> str:
     the interactive UIList below already shows everything actionable)."""
     if not _feature_has_run(wm, "f7links"):
         return ""
-    coll = wm.assetdoctor_broken_libs
+    coll = wm.filelink_broken_libs
     if not len(coll):
         return "Broken Library Links — none found"
     matched = sum(1 for item in coll if item.target)
@@ -1390,8 +1390,8 @@ def _path_normalization_headline(wm) -> str:
         renames = sum(1 for f in report.findings if f.category == "normalize_path")
     except Exception:
         renames = 0
-    dup_groups = len({item.group for item in wm.assetdoctor_dup_lib_members})
-    abs_groups = len({item.group for item in wm.assetdoctor_abs_path_members})
+    dup_groups = len({item.group for item in wm.filelink_dup_lib_members})
+    abs_groups = len({item.group for item in wm.filelink_abs_path_members})
     if not renames and not dup_groups and not abs_groups:
         return "Path Normalization — ✓ clean"
     bits = []
@@ -1420,8 +1420,8 @@ def _path_normalization_clean(wm) -> bool:
         renames = sum(1 for f in report.findings if f.category == "normalize_path")
     except Exception:
         renames = 0
-    dup_groups = len({item.group for item in wm.assetdoctor_dup_lib_members})
-    abs_groups = len({item.group for item in wm.assetdoctor_abs_path_members})
+    dup_groups = len({item.group for item in wm.filelink_dup_lib_members})
+    abs_groups = len({item.group for item in wm.filelink_abs_path_members})
     return not renames and not dup_groups and not abs_groups
 
 
@@ -1430,31 +1430,31 @@ def _normalize_action_button(row) -> None:
     #43) — a tiny named function rather than a lambda since it needs to set
     ``apply=True`` on the returned operator properties, which a single-
     expression lambda can't do."""
-    row.operator("assetdoctor.normalize_library_paths",
+    row.operator("filelink.normalize_library_paths",
                  text="Normalize", icon="CHECKMARK").apply = True
 
 
 def _flatten_candidates_summary(wm) -> str:
-    """``assetdoctor_flatten_plans_json`` is non-empty (even if "{}") once a
+    """``filelink_flatten_plans_json`` is non-empty (even if "{}") once a
     scan has run, so its presence — not the row count — is the "has this
     been run" signal (negative-output principle: say so when nothing was
     found, don't just look identical to never-run)."""
-    if not wm.assetdoctor_flatten_plans_json:
+    if not wm.filelink_flatten_plans_json:
         return ""
-    rows = wm.assetdoctor_flatten_candidates
+    rows = wm.filelink_flatten_candidates
     if not len(rows):
-        return wm.assetdoctor_flatten_remote_note or "✓ no flattenable characters found"
+        return wm.filelink_flatten_remote_note or "✓ no flattenable characters found"
     rigs = len({r.rig for r in rows})
     ready = sum(1 for r in rows if r.ready)
     return f"{len(rows)} part(s) across {rigs} rig(s)/character(s) — {ready} ready, {len(rows) - ready} blocked"
 
 
 def _resource_summary(wm) -> str:
-    return wm.assetdoctor_resource_totals
+    return wm.filelink_resource_totals
 
 
 def _profile_render_summary(wm) -> str:
-    ram = wm.assetdoctor_profiled_ram
+    ram = wm.filelink_profiled_ram
     return f"Real peak RAM: {ram}" if ram else ""
 
 
@@ -1469,7 +1469,7 @@ def _draw_resource_breakdown(layout, wm):
     VRAM/disk columns + a clickable column-header sort (docs/TODO.md #15,
     2026-06-27) — each header button re-sorts the top-level type groups by
     that metric (cheap: reuses the last scan's cached items, no re-scan)."""
-    if not wm.assetdoctor_resource_tree:
+    if not wm.filelink_resource_tree:
         return
     col = layout.column(align=True)
     hint = col.row(align=True)
@@ -1478,21 +1478,21 @@ def _draw_resource_breakdown(layout, wm):
 
     header = col.row(align=True)
     header.label(text="")  # flexible spacer matching each row's indent/triangle/label area
-    sort_by = wm.assetdoctor_resource_sort
+    sort_by = wm.filelink_resource_sort
     for sort_col, key in zip(_resource_columns(header), _RESOURCE_COL_LABELS):
-        op = sort_col.operator("assetdoctor.resource_sort_by", text=_RESOURCE_COL_LABELS[key],
+        op = sort_col.operator("filelink.resource_sort_by", text=_RESOURCE_COL_LABELS[key],
                                depress=(sort_by == key))
         op.metric = key.upper()
 
     col.template_list(
-        "ASSETDOCTOR_UL_tree", "resource",
-        wm, "assetdoctor_resource_rows",
-        wm, "assetdoctor_resource_index",
+        "FILELINK_UL_tree", "resource",
+        wm, "filelink_resource_rows",
+        wm, "filelink_resource_index",
         rows=8, sort_lock=True,
     )
     erow = col.row(align=True)
     erow.separator(factor=2.2)
-    erow.operator("assetdoctor.export_report", text="Export…", icon="EXPORT").source = "resource"
+    erow.operator("filelink.export_report", text="Export…", icon="EXPORT").source = "resource"
 
 
 def _analyze_row(layout, wm, step_key, opname, text, icon, summary="", has_run=None,
@@ -1533,10 +1533,10 @@ def _flattenable_overrides_summary(wm) -> str:
     docs/TODO.md Group 11 #47's standing summary-propagation rule: every
     action that changes the count updates this AND the top overview line
     (see _f7chain_headline) together, not just one of them."""
-    rows = wm.assetdoctor_flatten_candidates
+    rows = wm.filelink_flatten_candidates
     total = len(rows)
-    done = wm.assetdoctor_flatten_done
-    failed = wm.assetdoctor_flatten_failed
+    done = wm.filelink_flatten_done
+    failed = wm.filelink_flatten_failed
     return f"Flattenable overrides — {total} original, {done} flattened, {failed} failed"
 
 
@@ -1546,38 +1546,38 @@ def _draw_flatten_candidates(layout, wm):
 
     The outer box + header + control row are still drawn manually (they're
     not part of the scrollable list); the per-group/per-member rows are
-    rendered by ``ASSETDOCTOR_UL_flatten_picker`` from the pre-built
-    ``wm.assetdoctor_flatten_picker_rows`` collection.  That collection is
+    rendered by ``FILELINK_UL_flatten_picker`` from the pre-built
+    ``wm.filelink_flatten_picker_rows`` collection.  That collection is
     rebuilt by ``ops.linkchain.rebuild_flatten_picker_rows`` after every
     scan/toggle/evaluate/flatten — never on each redraw."""
-    if not len(wm.assetdoctor_flatten_candidates):
+    if not len(wm.filelink_flatten_candidates):
         return
 
-    expanded = set(filter(None, wm.assetdoctor_flatten_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_flatten_expanded.split("\n")))
     all_key = "__flattenable_overrides__"
     is_open = all_key in expanded
 
     outer = layout.box().column(align=True)
     hrow = outer.row(align=True)
-    hop = hrow.operator("assetdoctor.row_toggle", text="",
+    hop = hrow.operator("filelink.row_toggle", text="",
                         icon="TRIA_DOWN" if is_open else "TRIA_RIGHT", emboss=False)
-    hop.key, hop.prop = all_key, "assetdoctor_flatten_expanded"
+    hop.key, hop.prop = all_key, "filelink_flatten_expanded"
     hrow.label(text=_flattenable_overrides_summary(wm))
     if not is_open:
         return
 
     crow = outer.row(align=True)
-    crow.prop(wm, "assetdoctor_flatten_make_local", text="Make Local")
-    crow.prop(wm, "assetdoctor_flatten_make_copy", text="Make Copy")
-    crow.operator("assetdoctor.evaluate_selected", text="Evaluate Selected", icon="VIEWZOOM")
-    crow.operator("assetdoctor.flatten_selected", text="Flatten Selected", icon="CHECKMARK")
+    crow.prop(wm, "filelink_flatten_make_local", text="Make Local")
+    crow.prop(wm, "filelink_flatten_make_copy", text="Make Copy")
+    crow.operator("filelink.evaluate_selected", text="Evaluate Selected", icon="VIEWZOOM")
+    crow.operator("filelink.flatten_selected", text="Flatten Selected", icon="CHECKMARK")
 
-    n = len(wm.assetdoctor_flatten_picker_rows)
+    n = len(wm.filelink_flatten_picker_rows)
     if n:
         outer.template_list(
-            "ASSETDOCTOR_UL_flatten_picker", "",
-            wm, "assetdoctor_flatten_picker_rows",
-            wm, "assetdoctor_flatten_picker_active",
+            "FILELINK_UL_flatten_picker", "",
+            wm, "filelink_flatten_picker_rows",
+            wm, "filelink_flatten_picker_active",
             rows=min(12, max(3, n)),
         )
 
@@ -1586,7 +1586,7 @@ def _draw_flatten_candidates(layout, wm):
     _draw_report_detail(layout, wm, "f7flatten")
 
 
-class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
+class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
     """Phase 3a (2026-06-25) — the second named section: every "look for
     problems in the CURRENT file" trigger, in one place, plus an Analyze All
     sequencer (``ops.analyze_all``) that runs them in order. Each button here
@@ -1605,7 +1605,7 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
     not just a layout change."""
 
     bl_label = "Analyze This File"
-    bl_idname = "ASSETDOCTOR_PT_analyze"
+    bl_idname = "FILELINK_PT_analyze"
     bl_order = 1
 
     def draw(self, context):
@@ -1613,31 +1613,31 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         wm = context.window_manager
         narrow = bool(context.region) and context.region.width < 320
 
-        layout.operator("assetdoctor.analyze_all", icon="PLAY")
+        layout.operator("filelink.analyze_all", icon="PLAY")
 
-        _analyze_row(layout, wm, "check_link_chain", "assetdoctor.scan_dependencies",
+        _analyze_row(layout, wm, "check_link_chain", "filelink.scan_dependencies",
                      "Check Link Chain", "VIEWZOOM", has_run=_feature_has_run(wm, "f7"))
         _draw_report_detail(layout, wm, "f7")
-        _analyze_row(layout, wm, "audit_file", "assetdoctor.analyze_overrides",
+        _analyze_row(layout, wm, "audit_file", "filelink.analyze_overrides",
                      "Audit This File", "LIBRARY_DATA_OVERRIDE", has_run=_feature_has_run(wm, "f7live"))
         _draw_report_detail(layout, wm, "f7live")
         # Merged 2026-06-26 (docs/TODO.md #41) -- "Find Flattenable Link
         # Chains" and "Find Flattenable Characters" were really one workflow
         # wearing two buttons (the second always needed the first's f7chain
         # data already stashed); one click now runs both via
-        # assetdoctor.find_flattenable_links.
-        _analyze_row(layout, wm, "find_flattenable_chains", "assetdoctor.find_flattenable_links",
+        # filelink.find_flattenable_links.
+        _analyze_row(layout, wm, "find_flattenable_chains", "filelink.find_flattenable_links",
                      "Find Flattenable Links", "LIBRARY_DATA_OVERRIDE",
                      _flatten_candidates_summary(wm))
         _draw_report_detail(layout, wm, "f7chain")
         _draw_flatten_candidates(layout, wm)
 
-        _analyze_row(layout, wm, "find_broken_links", "assetdoctor.scan_broken_links",
+        _analyze_row(layout, wm, "find_broken_links", "filelink.scan_broken_links",
                      "Find Broken Library Links", "LIBRARY_DATA_BROKEN",
                      _broken_links_headline(wm),
                      draw_action=(lambda r: r.operator(
-                         "assetdoctor.relink_selected", text="Relink Selected", icon="FILE_REFRESH"))
-                     if len(wm.assetdoctor_broken_libs) else None)
+                         "filelink.relink_selected", text="Relink Selected", icon="FILE_REFRESH"))
+                     if len(wm.filelink_broken_libs) else None)
         _draw_broken_links(layout, wm)
         # Item 3, 2026-06-25 (user request): Find Duplicate Materials/Geometry/
         # Content folded into ONE "Find Duplicates" trigger alongside Find
@@ -1652,17 +1652,17 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         # individual per-type buttons its expanded body reveals.
         _draw_duplicates(layout, wm, narrow)
 
-        _analyze_row(layout, wm, "find_reconnectable", "assetdoctor.scan_reconnect_targets",
+        _analyze_row(layout, wm, "find_reconnectable", "filelink.scan_reconnect_targets",
                      "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
                      _reconnect_headline(wm),
                      draw_action=(lambda r: r.operator(
-                         "assetdoctor.reconnect_selected", text="Reconnect Selected", icon="LINKED"))
-                     if wm.assetdoctor_missing_scanned and len(wm.assetdoctor_missing_blocks) else None)
+                         "filelink.reconnect_selected", text="Reconnect Selected", icon="LINKED"))
+                     if wm.filelink_missing_scanned and len(wm.filelink_missing_blocks) else None)
         _draw_reconnect(layout, wm)
-        _analyze_row(layout, wm, "", "assetdoctor.scan_all_missing",
+        _analyze_row(layout, wm, "", "filelink.scan_all_missing",
                      "Find All Missing", "VIEWZOOM", _all_missing_summary(wm))
 
-        _analyze_row(layout, wm, "check_library_paths", "assetdoctor.normalize_library_paths",
+        _analyze_row(layout, wm, "check_library_paths", "filelink.normalize_library_paths",
                      "Check Library Paths", "FILE_REFRESH",
                      _path_normalization_headline(wm),
                      draw_action=_normalize_action_button
@@ -1670,17 +1670,17 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
                      else None).apply = False
         _draw_path_normalization(layout, wm)
 
-        _analyze_row(layout, wm, "find_missing_textures", "assetdoctor.scan_broken_textures",
+        _analyze_row(layout, wm, "find_missing_textures", "filelink.scan_broken_textures",
                      "Find Missing Textures", "IMAGE_DATA",
                      _missing_textures_headline(wm, narrow))
         _draw_missing_textures(layout, wm, narrow)
 
-        _analyze_row(layout, wm, "find_resolution_variants", "assetdoctor.scan_res_variants",
+        _analyze_row(layout, wm, "find_resolution_variants", "filelink.scan_res_variants",
                      "Find Resolution Variants", "FULLSCREEN_ENTER",
                      _res_variants_headline(wm))
         _draw_res_variants(layout, wm)
 
-        _analyze_row(layout, wm, "find_orphans", "assetdoctor.scan_orphans",
+        _analyze_row(layout, wm, "find_orphans", "filelink.scan_orphans",
                      "Find Orphans", "NONE", _orphans_headline(wm)).purge_orphans = False
         _draw_orphans(layout, wm)
 
@@ -1689,7 +1689,7 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         # other Find-a-problem buttons above): groups materials by shader
         # type, flags dangling node links / broken Image Texture nodes, and
         # empty material slots.
-        _analyze_row(layout, wm, "", "assetdoctor.check_materials",
+        _analyze_row(layout, wm, "", "filelink.check_materials",
                      "Check Materials", "MATERIAL", has_run=_feature_has_run(wm, "matdiag"))
         _draw_report_detail(layout, wm, "matdiag")
 
@@ -1697,7 +1697,7 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         # something broken") — separated from the find-a-problem buttons above
         # (user request, 2026-06-25).
         layout.separator()
-        _analyze_row(layout, wm, "analyze_memory_disk", "assetdoctor.analyze_resources",
+        _analyze_row(layout, wm, "analyze_memory_disk", "filelink.analyze_resources",
                      "Analyze Memory/Disk", "VIEWZOOM", _resource_summary(wm))
         _draw_resource_breakdown(layout, wm)
         # "Make Local" = the old Make Local panel's "Report (Dry Run)" button,
@@ -1707,7 +1707,7 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         # Renamed from "Make Local Impact" (docs/TODO.md item 46d,
         # 2026-07-04) — confusing in the Analyze section, where every other
         # button already names the ANALYSIS it runs, not its effect.
-        _analyze_row(layout, wm, "", "assetdoctor.make_local",
+        _analyze_row(layout, wm, "", "filelink.make_local",
                      "Make Local", "LIBRARY_DATA_DIRECT",
                      has_run=_feature_has_run(wm, "f2")).apply = False
         _draw_report_detail(layout, wm, "f2")
@@ -1715,7 +1715,7 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         # actually renders, more "one-off tool" than "is something broken."
 
 
-class ASSETDOCTOR_PT_analyze_external(_SceneFeaturePanel, bpy.types.Panel):
+class FILELINK_PT_analyze_external(_SceneFeaturePanel, bpy.types.Panel):
     """Folder-wide link map (graphical) + reverse-dependency check both scan a
     FOLDER you pick, not the current file — different scope from "Analyze
     This File" above, so they live in their own section (user request,
@@ -1723,7 +1723,7 @@ class ASSETDOCTOR_PT_analyze_external(_SceneFeaturePanel, bpy.types.Panel):
     Files"). Content unchanged from the old Analyze panel, just relocated."""
 
     bl_label = "Analyze External Files"
-    bl_idname = "ASSETDOCTOR_PT_analyze_external"
+    bl_idname = "FILELINK_PT_analyze_external"
     bl_order = 2
 
     def draw(self, context):
@@ -1732,9 +1732,9 @@ class ASSETDOCTOR_PT_analyze_external(_SceneFeaturePanel, bpy.types.Panel):
 
         pmap = layout.box().column(align=True)
         pmap.label(text="Map a Folder (folder → graph)", icon="NODETREE")
-        pmap.prop(context.scene, "assetdoctor_scan_dir", text="")
-        pmap.operator("assetdoctor.scan_folder", text="Map Folder → Open Graph",
-                      icon="VIEWZOOM").directory = context.scene.assetdoctor_scan_dir
+        pmap.prop(context.scene, "filelink_scan_dir", text="")
+        pmap.operator("filelink.scan_folder", text="Map Folder → Open Graph",
+                      icon="VIEWZOOM").directory = context.scene.filelink_scan_dir
         # Group 11 #46, 2026-06-26: the scan ALSO stashes a flat f1 report
         # (legacy — its real surface is the HTML graph the button above opens)
         # — give it a home here rather than losing access entirely now that
@@ -1743,25 +1743,25 @@ class ASSETDOCTOR_PT_analyze_external(_SceneFeaturePanel, bpy.types.Panel):
 
         rev = layout.box().column(align=True)
         rev.label(text="Safe to delete? (who links this file)", icon="TRASH")
-        rev.prop(context.scene, "assetdoctor_dep_target", text="")
-        rev.operator("assetdoctor.check_dependents", text="Check What Links This",
+        rev.prop(context.scene, "filelink_dep_target", text="")
+        rev.operator("filelink.check_dependents", text="Check What Links This",
                      icon="VIEWZOOM")
-        verdict = wm.assetdoctor_dep_verdict
+        verdict = wm.filelink_dep_verdict
         if verdict == "unsafe":
             vrow = rev.row()
             vrow.alert = True
-            vrow.label(text=wm.assetdoctor_dep_verdict_text, icon="ERROR")
+            vrow.label(text=wm.filelink_dep_verdict_text, icon="ERROR")
         elif verdict == "safe":
-            rev.label(text=wm.assetdoctor_dep_verdict_text, icon="CHECKMARK")
+            rev.label(text=wm.filelink_dep_verdict_text, icon="CHECKMARK")
         elif verdict == "not_scanned":
             vrow = rev.row()
             vrow.alert = True
-            vrow.label(text=wm.assetdoctor_dep_verdict_text, icon="ERROR")
+            vrow.label(text=wm.filelink_dep_verdict_text, icon="ERROR")
 
 
-class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
+class FILELINK_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
     bl_label = "Utilities"
-    bl_idname = "ASSETDOCTOR_PT_utilities"
+    bl_idname = "FILELINK_PT_utilities"
     bl_order = 7
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -1770,14 +1770,14 @@ class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
 
         layout = self.layout
         wm = context.window_manager
-        layout.prop(context.scene, "assetdoctor_debug_log")
-        layout.operator("assetdoctor.open_preferences",
+        layout.prop(context.scene, "filelink_debug_log")
+        layout.operator("filelink.open_preferences",
                         text="Lists & Backups: Add-on Preferences…", icon="PREFERENCES")
 
         prefs = get_prefs(context)
         if prefs is not None and prefs.idle_scan_enabled:
-            secs = getattr(wm, "assetdoctor_idle_seconds", 0.0)
-            detected = getattr(wm, "assetdoctor_idle_detected", False)
+            secs = getattr(wm, "filelink_idle_seconds", 0.0)
+            detected = getattr(wm, "filelink_idle_detected", False)
             layout.separator()
             layout.label(text=f"Idle-scan prototype — {secs:.0f}s since input"
                         + (" (idle)" if detected else ""), icon="TIME")
@@ -1786,7 +1786,7 @@ class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         # measure/probe rather than "is something broken," relocated here from the old
         # Results holding pen / Analyze panel.
         layout.separator()
-        _analyze_row(layout, wm, "", "assetdoctor.profile_render",
+        _analyze_row(layout, wm, "", "filelink.profile_render",
                      "Profile Render (Real RAM)", "RENDER_STILL", _profile_render_summary(wm))
 
         layout.separator()
@@ -1796,7 +1796,7 @@ class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
             drow = dry.row()
             drow.alert = True
             drow.label(text="Unsaved changes — save first (renders from disk)", icon="ERROR")
-        dry.operator("assetdoctor.dryrun_render", text="Run Dry-Run Render",
+        dry.operator("filelink.dryrun_render", text="Run Dry-Run Render",
                      icon="RENDER_STILL")
         # Group 11 #46, 2026-06-26: the render-warnings result, previously only
         # reachable via the now-deleted generic Reports selector.
@@ -1811,38 +1811,38 @@ class ASSETDOCTOR_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         then another already-loaded library — falling back to Make Local or a
         per-row manual file+item pick. Grouped by KIND, mirrors the Duplicate
         Data-blocks section's shape. Virtualized (Group 12 Phase 3 item 4,
-        2026-07-03) via ASSETDOCTOR_UL_examine_picker over
-        wm.assetdoctor_examine_picker_rows."""
-        rows = wm.assetdoctor_examine_rows
-        scanned = wm.assetdoctor_examine_scanned
+        2026-07-03) via FILELINK_UL_examine_picker over
+        wm.filelink_examine_picker_rows."""
+        rows = wm.filelink_examine_rows
+        scanned = wm.filelink_examine_scanned
 
         box = layout.box().column(align=True)
         box.label(text="Examine Library", icon="LIBRARY_DATA_DIRECT")
         box.label(text="Retarget everything a library provides to your local file or "
                   "another library (e.g. to break a circular reference).", icon="INFO")
         pick = box.row(align=True)
-        pick.prop_search(wm, "assetdoctor_examine_library_pick", bpy.data, "libraries", text="")
-        pick.operator("assetdoctor.examine_library", text="Examine", icon="VIEWZOOM")
+        pick.prop_search(wm, "filelink_examine_library_pick", bpy.data, "libraries", text="")
+        pick.operator("filelink.examine_library", text="Examine", icon="VIEWZOOM")
 
         if scanned and len(rows):
             staged = sum(1 for r in rows if r.selected)
             suggested = sum(1 for r in rows if r.suggested_kind != "none")
-            box.label(text=f"{len(rows)} data-block(s) from {wm.assetdoctor_examine_library} — "
+            box.label(text=f"{len(rows)} data-block(s) from {wm.filelink_examine_library} — "
                       f"{suggested} in-memory match(es), {staged} staged",
                       icon="LIBRARY_DATA_OVERRIDE")
-            box.operator("assetdoctor.examine_apply_selected",
+            box.operator("filelink.examine_apply_selected",
                          text="Apply Selected (Backup)", icon="LINKED")
         elif scanned:
             box.label(text="✓ Nothing currently links from that library", icon="CHECKMARK")
         if not (scanned and len(rows)):
             return
 
-        n = len(wm.assetdoctor_examine_picker_rows)
+        n = len(wm.filelink_examine_picker_rows)
         if n:
             box.template_list(
-                "ASSETDOCTOR_UL_examine_picker", "",
-                wm, "assetdoctor_examine_picker_rows",
-                wm, "assetdoctor_examine_picker_active",
+                "FILELINK_UL_examine_picker", "",
+                wm, "filelink_examine_picker_rows",
+                wm, "filelink_examine_picker_active",
                 rows=min(12, max(3, n)),
             )
 
@@ -1868,24 +1868,24 @@ def _libraries_at_a_glance():
 
 def _draw_progress(layout, wm):
     """Shared progress bar + Pause/Resume + ESC hint, drawn while a modal runs."""
-    if not getattr(wm, "assetdoctor_op_active", False):
+    if not getattr(wm, "filelink_op_active", False):
         return False
     col = layout.column()
     col.progress(
-        factor=wm.assetdoctor_op_progress,
+        factor=wm.filelink_op_progress,
         type="BAR",
-        text=wm.assetdoctor_op_status or "Working…",
+        text=wm.filelink_op_status or "Working…",
     )
     row = col.row(align=True)
-    paused = getattr(wm, "assetdoctor_op_paused", False)
-    row.operator("assetdoctor.toggle_pause",
+    paused = getattr(wm, "filelink_op_paused", False)
+    row.operator("filelink.toggle_pause",
                  text="Resume" if paused else "Pause",
                  icon="PLAY" if paused else "PAUSE")
-    row.operator("assetdoctor.request_cancel", text="Cancel (or ESC)", icon="X")
+    row.operator("filelink.request_cancel", text="Cancel (or ESC)", icon="X")
     return True
 
 
-class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
+class FILELINK_PT_scene_deps(bpy.types.Panel):
     """The whole add-on, in Properties > Scene (this is scene-data hygiene, not a
     3D/render activity). Started as the F7 Link & Dependency Doctor hub; the
     legacy VIEW_3D N-panel features (Make Local, Duplicate Materials, Orphans,
@@ -1895,8 +1895,8 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
     (its by-type breakdown rolled up directly below, like the Flatten
     Characters picker's rollup) and deleted as its own section."""
 
-    bl_label = "AssetDoctor"
-    bl_idname = "ASSETDOCTOR_PT_scene_deps"
+    bl_label = "File & Link Utilities"
+    bl_idname = "FILELINK_PT_scene_deps"
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
     bl_context = "scene"
@@ -1928,7 +1928,7 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
         # else lives here anymore: every section (Current File Data, Analyze,
         # the legacy Make Local/Materials/Orphans/Geometry/Utilities panels,
         # AND the former inline "Duplicate Data-blocks...
-        # Reports" block — now its own ASSETDOCTOR_PT_results panel) is a real
+        # Reports" block — now its own FILELINK_PT_results panel) is a real
         # bl_order'd child, so they all draw AFTER this, in order, every time —
         # user-reported regression (2026-06-25): the inline block used to render
         # here, ahead of every child panel including Current File Data/Analyze,
@@ -1936,12 +1936,12 @@ class ASSETDOCTOR_PT_scene_deps(bpy.types.Panel):
         # against each other, never against the parent's own draw() body.
         _draw_progress(layout, wm)
 
-        if wm.assetdoctor_last_result:
+        if wm.filelink_last_result:
             res = layout.row()
-            if not wm.assetdoctor_last_result_ok:
+            if not wm.filelink_last_result_ok:
                 res.alert = True
-            res.label(text=wm.assetdoctor_last_result,
-                      icon="CHECKMARK" if wm.assetdoctor_last_result_ok else "ERROR")
+            res.label(text=wm.filelink_last_result,
+                      icon="CHECKMARK" if wm.filelink_last_result_ok else "ERROR")
 
 
 def _draw_group_header(layout, *, key: str, prop: str, is_exp: bool, label: str, icon: str,
@@ -1968,7 +1968,7 @@ def _draw_group_header(layout, *, key: str, prop: str, is_exp: bool, label: str,
     row = layout.row(align=True)
     if indent_factor:
         row.separator(factor=indent_factor)
-    tog = row.operator("assetdoctor.row_toggle", text="",
+    tog = row.operator("filelink.row_toggle", text="",
                        icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
     tog.key, tog.prop = key, prop
     lab = row.row()
@@ -1985,17 +1985,17 @@ def _draw_kept_separate(layout, wm, key: str, conflict_lines: list[str], *,
     type section (docs/TODO.md #16, 2026-06-27): a name-family matched on
     naming but not content, so it was never merged/instanced/remapped —
     content identity alone still gates every actual apply, unchanged. Uses
-    the one shared inline-detail toggle (``assetdoctor.row_toggle``
-    / ``assetdoctor_detail_expanded``) like every other inline disclosure in
+    the one shared inline-detail toggle (``filelink.row_toggle``
+    / ``filelink_detail_expanded``) like every other inline disclosure in
     this panel; ``key`` already embeds its own section tag so it can't
     collide with another section's. ``label``/``icon`` let a caller reuse this
     same collapsible-list widget for a differently-worded case (e.g. "skipped,
     unsafe to read" rather than "kept separate, content differs")."""
     if not conflict_lines:
         return
-    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
     is_exp = key in expanded
-    _draw_group_header(layout, key=key, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+    _draw_group_header(layout, key=key, prop="filelink_detail_expanded", is_exp=is_exp,
                        label=label or f"Kept separate — name matches, content differs ({len(conflict_lines)})",
                        icon=icon)
     if is_exp:
@@ -2012,19 +2012,19 @@ def _draw_datablock_dups(layout, wm) -> None:
     pick a keeper per family, Merge Selected. One section of the shared "Find
     Duplicates" results area (docs/TODO.md #16, 2026-06-27) — no longer its
     own standalone box, so every type reads the same way."""
-    families = wm.assetdoctor_datablock_families
-    if not wm.assetdoctor_datablock_scanned:
+    families = wm.filelink_datablock_families
+    if not wm.filelink_datablock_scanned:
         return
-    conflicts = wm.assetdoctor_datablock_conflicts
+    conflicts = wm.filelink_datablock_conflicts
     layout.label(text=_datablock_dups_headline(wm), icon="LIBRARY_DATA_OVERRIDE")
-    has_skipped = bool(wm.assetdoctor_datablock_skipped_text)
+    has_skipped = bool(wm.filelink_datablock_skipped_text)
     if not (len(families) or conflicts or has_skipped):
         return
     if len(families):
-        layout.operator("assetdoctor.merge_datablock_selected",
+        layout.operator("filelink.merge_datablock_selected",
                         text="Merge Selected (Backup)", icon="AREA_JOIN")
 
-    expanded = set(filter(None, wm.assetdoctor_datablock_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_datablock_expanded.split("\n")))
     groups: dict[str, list] = {}
     for row in families:
         groups.setdefault(row.kind, []).append(row)
@@ -2033,7 +2033,7 @@ def _draw_datablock_dups(layout, wm) -> None:
         members = groups[kind]
         removable_here = sum(r.removable for r in members)
         is_exp = kind in expanded
-        _draw_group_header(layout, key=kind, prop="assetdoctor_datablock_expanded", is_exp=is_exp,
+        _draw_group_header(layout, key=kind, prop="filelink_datablock_expanded", is_exp=is_exp,
                            label=f"{kind}  ({len(members)} family, −{removable_here})",
                            icon="LIBRARY_DATA_OVERRIDE")
         if not is_exp:
@@ -2049,10 +2049,10 @@ def _draw_datablock_dups(layout, wm) -> None:
             keep.label(text="keep", icon="PINNED")
             keep.prop(row, "keeper", text="")
 
-    conflict_lines = [ln for ln in wm.assetdoctor_datablock_conflicts_text.split("\n") if ln]
+    conflict_lines = [ln for ln in wm.filelink_datablock_conflicts_text.split("\n") if ln]
     _draw_kept_separate(layout, wm, "dupdb:conflicts", conflict_lines)
 
-    skipped_lines = [ln for ln in wm.assetdoctor_datablock_skipped_text.split("\n") if ln]
+    skipped_lines = [ln for ln in wm.filelink_datablock_skipped_text.split("\n") if ln]
     _draw_kept_separate(layout, wm, "dupdb:skipped", skipped_lines,
                         label=f"Skipped — unsafe to read ({len(skipped_lines)})", icon="ERROR")
 
@@ -2064,7 +2064,7 @@ def _res_variants_headline(wm) -> str:
     Data-blocks)."""
     if not _feature_has_run(wm, "f6res"):
         return ""
-    coll = wm.assetdoctor_res_variant_members
+    coll = wm.filelink_res_variant_members
     groups = {item.group for item in coll}
     if not groups:
         return "✓ No multi-resolution texture variants found"
@@ -2084,7 +2084,7 @@ def _draw_res_variants(layout, wm) -> None:
     every group's HIGHEST resolution isn't a quality loss (just wastes memory
     re-pointing lower-res users at a bigger file), so the warning would be
     misleading there."""
-    coll = wm.assetdoctor_res_variant_members
+    coll = wm.filelink_res_variant_members
     if not len(coll):
         return
 
@@ -2105,12 +2105,12 @@ def _draw_res_variants(layout, wm) -> None:
         box.label(text="Standardizing is LOSSY — the removed resolution's users "
                   "switch to the kept one.", icon="INFO")
     brow = box.row(align=True)
-    brow.operator("assetdoctor.res_variant_select", text="Select High Resolution").which = "HIGH"
-    brow.operator("assetdoctor.res_variant_select", text="Select Low Resolution").which = "LOW"
-    box.operator("assetdoctor.remove_excess_variants",
+    brow.operator("filelink.res_variant_select", text="Select High Resolution").which = "HIGH"
+    brow.operator("filelink.res_variant_select", text="Select Low Resolution").which = "LOW"
+    box.operator("filelink.remove_excess_variants",
                  text="Remove Excess Variants (Backup)", icon="TRASH")
 
-    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
     for group_key in order:
         members = groups[group_key]
         ckey = f"resvar:{group_key}"
@@ -2119,14 +2119,14 @@ def _draw_res_variants(layout, wm) -> None:
         label = f"{group_key}  ({len(members)} resolutions)"
         if kept:
             label += f" — keeping {kept}"
-        _draw_group_header(box, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+        _draw_group_header(box, key=ckey, prop="filelink_detail_expanded", is_exp=is_exp,
                            label=label, icon="IMAGE_DATA")
         if not is_exp:
             continue
         for idx, item in members:
             frow = box.row(align=True)
             frow.separator(factor=2.0)
-            sop = frow.operator("assetdoctor.res_variant_keep", text="",
+            sop = frow.operator("filelink.res_variant_keep", text="",
                                 icon="RADIOBUT_ON" if item.selected else "RADIOBUT_OFF",
                                 emboss=False)
             sop.index = idx
@@ -2137,16 +2137,16 @@ def _material_dups_headline(wm) -> str:
     """The Find Duplicate Materials Analyze row's own summary (replaces the
     generic _report_feature_summary line — user feedback, 2026-06-25: the
     old report gave no way to act on what it found, this section does)."""
-    if not wm.assetdoctor_mat_scanned:
+    if not wm.filelink_mat_scanned:
         return ""
-    groups = wm.assetdoctor_mat_families
-    conflicts = wm.assetdoctor_mat_conflicts
+    groups = wm.filelink_mat_families
+    conflicts = wm.filelink_mat_conflicts
     if not len(groups) and not conflicts:
         return "Materials — ✓ none found"
     bits = []
     if len(groups):
-        removable = wm.assetdoctor_mat_removable
-        linked = wm.assetdoctor_mat_linked
+        removable = wm.filelink_mat_removable
+        linked = wm.filelink_mat_linked
         bits += [f"{len(groups)} group(s)", f"{removable} material(s) remappable"]
         if linked:
             bits.append(f"{linked} linked (stay in library)")
@@ -2162,15 +2162,15 @@ def _draw_material_dups(layout, wm) -> None:
     information"). Flat list, no kind-grouping needed (every row is already
     one fingerprint-identical material group). One section of the shared
     "Find Duplicates" results area (docs/TODO.md #16, 2026-06-27)."""
-    groups = wm.assetdoctor_mat_families
-    if not wm.assetdoctor_mat_scanned:
+    groups = wm.filelink_mat_families
+    if not wm.filelink_mat_scanned:
         return
-    conflicts = wm.assetdoctor_mat_conflicts
+    conflicts = wm.filelink_mat_conflicts
     layout.label(text=_material_dups_headline(wm), icon="MATERIAL")
     if not (len(groups) or conflicts):
         return
     if len(groups):
-        layout.operator("assetdoctor.merge_material_selected",
+        layout.operator("filelink.merge_material_selected",
                         text="Merge Selected (Backup)", icon="AREA_JOIN")
         for row in groups:
             frow = layout.row(align=True)
@@ -2182,7 +2182,7 @@ def _draw_material_dups(layout, wm) -> None:
             keep.label(text="keep", icon="PINNED")
             keep.prop(row, "keeper", text="")
 
-    conflict_lines = [ln for ln in wm.assetdoctor_mat_conflicts_text.split("\n") if ln]
+    conflict_lines = [ln for ln in wm.filelink_mat_conflicts_text.split("\n") if ln]
     _draw_kept_separate(layout, wm, "dupmat:conflicts", conflict_lines)
 
 
@@ -2191,17 +2191,17 @@ def _geo_dups_headline(wm) -> str:
     2026-06-26) — replaces the generic tree disclosure now that this section
     has its own actionable checkbox UI, mirroring Find Duplicate Materials/
     Data-blocks."""
-    if not wm.assetdoctor_geo_scanned:
+    if not wm.filelink_geo_scanned:
         return ""
-    groups = wm.assetdoctor_geo_families
-    conflicts = wm.assetdoctor_geo_conflicts
+    groups = wm.filelink_geo_families
+    conflicts = wm.filelink_geo_conflicts
     if not len(groups) and not conflicts:
         return "Geometry — ✓ none found"
     bits = []
     if len(groups):
-        bits += [f"{len(groups)} group(s)", f"{wm.assetdoctor_geo_removable} mesh(es) instanceable"]
-        if wm.assetdoctor_geo_linked:
-            bits.append(f"{wm.assetdoctor_geo_linked} linked (stay in library)")
+        bits += [f"{len(groups)} group(s)", f"{wm.filelink_geo_removable} mesh(es) instanceable"]
+        if wm.filelink_geo_linked:
+            bits.append(f"{wm.filelink_geo_linked} linked (stay in library)")
     if conflicts:
         bits.append(f"{conflicts} kept separate")
     return "Geometry — " + ", ".join(bits)
@@ -2216,22 +2216,22 @@ def _draw_geo_dups(layout, wm) -> None:
     identical-mesh group (all "Mesh" today; ``kind`` is kept for future
     geometry types, same shape as Materials' flat list). One section of the
     shared "Find Duplicates" results area (docs/TODO.md #16, 2026-06-27)."""
-    groups = wm.assetdoctor_geo_families
-    if not wm.assetdoctor_geo_scanned:
+    groups = wm.filelink_geo_families
+    if not wm.filelink_geo_scanned:
         return
-    conflicts = wm.assetdoctor_geo_conflicts
+    conflicts = wm.filelink_geo_conflicts
     layout.label(text=_geo_dups_headline(wm), icon="MESH_DATA")
     if not (len(groups) or conflicts):
         return
     if len(groups):
-        layout.operator("assetdoctor.instance_geometry_selected",
+        layout.operator("filelink.instance_geometry_selected",
                         text="Instance Selected (Backup)", icon="AREA_JOIN")
         for row in groups:
             frow = layout.row(align=True)
             frow.prop(row, "selected", text="")
             frow.label(text=f"{row.name}  (−{row.removable})", icon="MESH_DATA")
 
-    conflict_lines = [ln for ln in wm.assetdoctor_geo_conflicts_text.split("\n") if ln]
+    conflict_lines = [ln for ln in wm.filelink_geo_conflicts_text.split("\n") if ln]
     _draw_kept_separate(layout, wm, "dupgeo:conflicts", conflict_lines)
 
 
@@ -2247,34 +2247,34 @@ def _draw_duplicate_textures(layout, wm, narrow: bool) -> None:
     redundant with Find Content Dups, which uses the identical fingerprint
     over a strict superset of images.) The group/member list itself is
     virtualized (Group 12 Phase 3 item 2, 2026-07-03) via
-    ASSETDOCTOR_UL_dup_tex_picker over wm.assetdoctor_duptex_picker_rows —
+    FILELINK_UL_dup_tex_picker over wm.filelink_duptex_picker_rows —
     the "keeper dropdown" row shape, mismatch/effective-material logic now
-    lives in ops.image_dedup (shared with ASSETDOCTOR_OT_dup_material_keeper)."""
-    families = wm.assetdoctor_dup_families
-    if not wm.assetdoctor_dup_scanned:
+    lives in ops.image_dedup (shared with FILELINK_OT_dup_material_keeper)."""
+    families = wm.filelink_dup_families
+    if not wm.filelink_dup_scanned:
         return
-    conflicts = wm.assetdoctor_dup_conflicts
+    conflicts = wm.filelink_dup_conflicts
     layout.label(text=_duplicate_textures_headline(wm, narrow), icon="IMAGE_DATA")
     if not (len(families) or conflicts):
         return
 
     if len(families):
         brow = layout.row(align=True)
-        brow.operator("assetdoctor.merge_dup_selected",
+        brow.operator("filelink.merge_dup_selected",
                       text="Merge Selected (Backup)", icon="AREA_JOIN")
-        brow.operator("assetdoctor.export_report", text="",
+        brow.operator("filelink.export_report", text="",
                       icon="EXPORT").feature = "f6dup"
 
-        n = len(wm.assetdoctor_duptex_picker_rows)
+        n = len(wm.filelink_duptex_picker_rows)
         if n:
             layout.template_list(
-                "ASSETDOCTOR_UL_dup_tex_picker", "",
-                wm, "assetdoctor_duptex_picker_rows",
-                wm, "assetdoctor_duptex_picker_active",
+                "FILELINK_UL_dup_tex_picker", "",
+                wm, "filelink_duptex_picker_rows",
+                wm, "filelink_duptex_picker_active",
                 rows=min(12, max(3, n)),
             )
 
-    conflict_lines = [ln for ln in wm.assetdoctor_dup_conflicts_text.split("\n") if ln]
+    conflict_lines = [ln for ln in wm.filelink_dup_conflicts_text.split("\n") if ln]
     _draw_kept_separate(layout, wm, "dupimg:conflicts", conflict_lines)
 
 
@@ -2308,7 +2308,7 @@ def _draw_orphans(layout, wm) -> None:
     existing design — ``ops.orphans``'s module docstring: clearing fake users
     or merging identical datablocks "reflects intent, not just cleanup", so
     no checkbox/bulk-action for those here) — drawn via the SAME shared
-    ``ASSETDOCTOR_UL_tree`` machinery every other section uses (docs/TODO.md
+    ``FILELINK_UL_tree`` machinery every other section uses (docs/TODO.md
     item 46f, 2026-07-04: these used to be hand-rolled ``box.row()`` loops,
     inconsistently indented and unvirtualized — a real production file with
     1000+ identical-datablock groups instantiated every single row regardless
@@ -2327,21 +2327,21 @@ def _draw_orphans(layout, wm) -> None:
     except Exception:
         return
 
-    rows = wm.assetdoctor_orphan_rows
+    rows = wm.filelink_orphan_rows
     ro_findings = [f for f in report.findings if f.category in ("fake_only", "identical")]
-    skipped_lines = [ln for ln in wm.assetdoctor_orphan_skipped_text.split("\n") if ln]
+    skipped_lines = [ln for ln in wm.filelink_orphan_skipped_text.split("\n") if ln]
     if not (len(rows) or ro_findings or skipped_lines):
         return
 
     box = layout.box().column(align=True)
     if len(rows):
-        box.operator("assetdoctor.purge_orphans_selected",
+        box.operator("filelink.purge_orphans_selected",
                      text="Purge Selected (Backup)", icon="TRASH")
         for row in rows:
             type_name, _, name = row.name.partition("/")
             frow = box.row(align=True)
             frow.prop(row, "selected", text="")
-            op = frow.operator("assetdoctor.select_datablock", text=name,
+            op = frow.operator("filelink.select_datablock", text=name,
                                icon="NONE", emboss=False)
             op.type, op.name = type_name, name
             outcome = get_select_outcome(wm, type_name, name)
@@ -2351,13 +2351,13 @@ def _draw_orphans(layout, wm) -> None:
     if ro_findings:
         ro_report = Report(title=report.title, feature=report.feature, findings=ro_findings)
         ro_nodes = report_to_tree(ro_report)
-        expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+        expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
         report_store.rebuild_inline_detail_rows(wm, "f4", ro_nodes, expanded)
         rows_prop = report_store.inline_rows_prop("f4")
         n = len(getattr(wm, rows_prop))
         if n:
             box.template_list(
-                "ASSETDOCTOR_UL_tree", "inline_f4",
+                "FILELINK_UL_tree", "inline_f4",
                 wm, rows_prop,
                 wm, report_store.inline_active_prop("f4"),
                 rows=min(12, max(3, n)),
@@ -2400,20 +2400,20 @@ def _draw_reconnect(layout, wm) -> None:
     2026-06-26) — Reconnect Selected now lives on that row's right side
     (``_normalize_action_button``-style, wired at the call site), so this
     just keeps the grouped list. Virtualized (Group 12 Phase 3 item 3,
-    2026-07-03) via ASSETDOCTOR_UL_reconnect_picker over
-    wm.assetdoctor_reconnect_picker_rows."""
-    rows = wm.assetdoctor_missing_blocks
-    if not (wm.assetdoctor_missing_scanned and len(rows)):
+    2026-07-03) via FILELINK_UL_reconnect_picker over
+    wm.filelink_reconnect_picker_rows."""
+    rows = wm.filelink_missing_blocks
+    if not (wm.filelink_missing_scanned and len(rows)):
         return
 
-    n = len(wm.assetdoctor_reconnect_picker_rows)
+    n = len(wm.filelink_reconnect_picker_rows)
     if not n:
         return
     box = layout.box().column(align=True)
     box.template_list(
-        "ASSETDOCTOR_UL_reconnect_picker", "",
-        wm, "assetdoctor_reconnect_picker_rows",
-        wm, "assetdoctor_reconnect_picker_active",
+        "FILELINK_UL_reconnect_picker", "",
+        wm, "filelink_reconnect_picker_rows",
+        wm, "filelink_reconnect_picker_active",
         rows=min(12, max(3, n)),
     )
 
@@ -2422,12 +2422,12 @@ def _draw_broken_links(layout, wm) -> None:
     """Find Broken Library Links' drill-down list. Relocated under its
     Analyze row (Group 11 #43, 2026-06-26) — Relink Selected now lives on
     that row's right side; this just keeps the UIList."""
-    if not len(wm.assetdoctor_broken_libs):
+    if not len(wm.filelink_broken_libs):
         return
     layout.template_list(
-        "ASSETDOCTOR_UL_broken_libs", "brokenlibs",
-        wm, "assetdoctor_broken_libs",
-        wm, "assetdoctor_broken_index", rows=4)
+        "FILELINK_UL_broken_libs", "brokenlibs",
+        wm, "filelink_broken_libs",
+        wm, "filelink_broken_index", rows=4)
 
 
 def _draw_duplicate_library_paths(layout, wm) -> None:
@@ -2438,7 +2438,7 @@ def _draw_duplicate_library_paths(layout, wm) -> None:
     group — Blender has no native radio-checkbox, so a toggle operator
     enforces it); a per-group "Use Selected Paths" button merges
     everything the OTHER form(s) provide onto the ticked one."""
-    coll = wm.assetdoctor_dup_lib_members
+    coll = wm.filelink_dup_lib_members
     if not len(coll):
         return
 
@@ -2454,7 +2454,7 @@ def _draw_duplicate_library_paths(layout, wm) -> None:
     hrow = layout.row(align=True)
     hrow.label(text=f"Duplicate library paths — {len(order)} group(s)",
               icon="LIBRARY_DATA_BROKEN")
-    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
     for group_key in order:
         members = groups[group_key]
         ckey = f"duplib:{group_key}"
@@ -2462,10 +2462,10 @@ def _draw_duplicate_library_paths(layout, wm) -> None:
         fname = os.path.basename(members[0][1].stored.rstrip("/\\")) or members[0][1].stored
 
         def _use_selected_paths_action(row):
-            row.operator("assetdoctor.merge_duplicate_libraries", text="Use Selected Paths",
+            row.operator("filelink.merge_duplicate_libraries", text="Use Selected Paths",
                         icon="AREA_JOIN").group = group_key
 
-        _draw_group_header(layout, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+        _draw_group_header(layout, key=ckey, prop="filelink_detail_expanded", is_exp=is_exp,
                            label=f"{fname} — {len(members)} forms", icon="FILE_BLEND",
                            action=_use_selected_paths_action)
         if not is_exp:
@@ -2473,7 +2473,7 @@ def _draw_duplicate_library_paths(layout, wm) -> None:
         for idx, item in members:
             frow = layout.row(align=True)
             frow.separator(factor=2.0)
-            sop = frow.operator("assetdoctor.dup_lib_select", text="",
+            sop = frow.operator("filelink.dup_lib_select", text="",
                                 icon="RADIOBUT_ON" if item.selected else "RADIOBUT_OFF",
                                 emboss=False)
             sop.index = idx
@@ -2486,7 +2486,7 @@ def _draw_absolute_paths(layout, wm) -> None:
     subset can be converted) and ONE "Make Selected Relative" button on
     its own title line; a cross-drive group is shown read-only — there is
     no relative path between Windows drives, so nothing is selectable."""
-    coll = wm.assetdoctor_abs_path_members
+    coll = wm.filelink_abs_path_members
     if not len(coll):
         return
 
@@ -2500,7 +2500,7 @@ def _draw_absolute_paths(layout, wm) -> None:
 
     layout.separator()
     layout.label(text=f"Absolute paths — {len(order)} drive(s)", icon="FILE_FOLDER")
-    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
     for group_key in order:
         members = groups[group_key]
         fixable = members[0][1].target != ""
@@ -2509,16 +2509,16 @@ def _draw_absolute_paths(layout, wm) -> None:
         label = f"{group_key} — {len(members)} librar{'y' if len(members) == 1 else 'ies'}"
 
         def _make_relative_action(row):
-            row.operator("assetdoctor.make_selected_relative",
+            row.operator("filelink.make_selected_relative",
                          text="Make Selected Relative", icon="FILE_REFRESH")
 
         if fixable:
-            _draw_group_header(layout, key=ckey, prop="assetdoctor_detail_expanded",
+            _draw_group_header(layout, key=ckey, prop="filelink_detail_expanded",
                                is_exp=is_exp, label=label, icon="CHECKMARK",
                                action=_make_relative_action)
         else:
             _draw_group_header(
-                layout, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
+                layout, key=ckey, prop="filelink_detail_expanded", is_exp=is_exp,
                 label=label + "  (different drive — can't be made relative)", icon="ERROR")
         if not is_exp:
             continue
@@ -2553,9 +2553,9 @@ def _draw_missing_textures(layout, wm, narrow: bool) -> None:
     pen, right after its own trigger via the existing _missing_textures_headline
     helper that already fed the Analyze row's summary. The category/member list
     itself is virtualized (Group 12 Phase 3, 2026-07-03) via
-    ASSETDOCTOR_UL_missing_tex_picker over wm.assetdoctor_missingtex_picker_rows."""
-    n_missing = len(wm.assetdoctor_broken_imgs)
-    scanned = wm.assetdoctor_tex_scanned
+    FILELINK_UL_missing_tex_picker over wm.filelink_missingtex_picker_rows."""
+    n_missing = len(wm.filelink_broken_imgs)
+    scanned = wm.filelink_tex_scanned
 
     tex = layout.box().column(align=True)
     headline = _missing_textures_headline(wm, narrow)
@@ -2571,36 +2571,36 @@ def _draw_missing_textures(layout, wm, narrow: bool) -> None:
     # Exact-basename first; the fuzzy matcher is the FALLBACK for vendor-renamed
     # files (proposals land in the Possible Matches sub-section below).
     srow = tex.row(align=True)
-    srow.operator("assetdoctor.search_textures_folder",
+    srow.operator("filelink.search_textures_folder",
                   text="Search a Folder (Recursive)…", icon="FILEBROWSER")
-    srow.operator("assetdoctor.suggest_fuzzy_matches",
+    srow.operator("filelink.suggest_fuzzy_matches",
                   text="Suggest Matches…", icon="ZOOM_SELECTED")
     # B4 eyedropper: borrow a WORKING material's existing textures as substitute
     # candidates for the missing ones (matched by name → staged as Possible
     # Matches). The picker is the standard material datablock field + eyedropper.
     tex.label(text="Substitute from a material's textures:", icon="EYEDROPPER")
     mrow = tex.row(align=True)
-    mrow.prop(wm, "assetdoctor_tex_source_material", text="")
-    mrow.operator("assetdoctor.suggest_from_material", text="Suggest",
+    mrow.prop(wm, "filelink_tex_source_material", text="")
+    mrow.operator("filelink.suggest_from_material", text="Suggest",
                   icon="ZOOM_SELECTED")
     # …or borrow the texture files another .blend references (offline BAT harvest).
-    tex.operator("assetdoctor.suggest_from_blend",
+    tex.operator("filelink.suggest_from_blend",
                  text="Substitute from Another .blend…", icon="FILE_BLEND")
     tex.separator()
     hrow = tex.row(align=True)
     hrow.label(text="Missing Textures", icon="IMAGE_DATA")
-    hrow.operator("assetdoctor.relink_textures_selected", text="Relink Selected",
+    hrow.operator("filelink.relink_textures_selected", text="Relink Selected",
                   icon="FILE_REFRESH")
 
     # Virtualized (Group 12 Phase 3): grouped by MATERIAL, rebuilt by
     # ops.image_relink.rebuild_missing_tex_picker_rows after every scan/pick/
     # accept/relink — never recomputed here on each redraw.
-    n = len(wm.assetdoctor_missingtex_picker_rows)
+    n = len(wm.filelink_missingtex_picker_rows)
     if n:
         tex.template_list(
-            "ASSETDOCTOR_UL_missing_tex_picker", "",
-            wm, "assetdoctor_missingtex_picker_rows",
-            wm, "assetdoctor_missingtex_picker_active",
+            "FILELINK_UL_missing_tex_picker", "",
+            wm, "filelink_missingtex_picker_rows",
+            wm, "filelink_missingtex_picker_active",
             rows=min(12, max(3, n)),
         )
 
@@ -2614,7 +2614,7 @@ def _draw_linked_missing_textures(tex, wm) -> None:
     by library so the user knows exactly which file to go fix. No checkboxes,
     no file pickers, no Relink button — purely visibility (see
     ops.image_relink._gather_linked_missing_images for why this exists)."""
-    rows = list(wm.assetdoctor_linked_missing_imgs)
+    rows = list(wm.filelink_linked_missing_imgs)
     if not rows:
         return
     tex.separator()
@@ -2624,7 +2624,7 @@ def _draw_linked_missing_textures(tex, wm) -> None:
     from ..core.datablock_links import basename as _lib_basename
 
     LM = "\x03"  # namespaced so these keys don't collide with the lists above
-    expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_tex_expanded.split("\n")))
     groups: dict[str, list] = {}
     for item in rows:
         groups.setdefault(item.library or "(unknown library)", []).append(item)
@@ -2633,7 +2633,7 @@ def _draw_linked_missing_textures(tex, wm) -> None:
         members = groups[lib]
         ckey = LM + lib
         is_exp = ckey in expanded
-        _draw_group_header(tex, key=ckey, prop="assetdoctor_tex_expanded", is_exp=is_exp,
+        _draw_group_header(tex, key=ckey, prop="filelink_tex_expanded", is_exp=is_exp,
                            label=f"{_lib_basename(lib)}  ({len(members)})", icon="FILE_BLEND")
         if not is_exp:
             continue
@@ -2659,7 +2659,7 @@ def _draw_possible_matches(tex, wm) -> None:
     materials ordered by their best confidence (high first). Accept one row, a
     whole material, or all; accepting moves the proposal into the Missing Textures
     list above (ticked)."""
-    proposals = [(idx, item) for idx, item in enumerate(wm.assetdoctor_broken_imgs)
+    proposals = [(idx, item) for idx, item in enumerate(wm.filelink_broken_imgs)
                  if item.proposal and not item.target]
     if not proposals:
         return
@@ -2667,13 +2667,13 @@ def _draw_possible_matches(tex, wm) -> None:
     tex.separator()
     hrow = tex.row(align=True)
     hrow.label(text=f"Possible Matches — {len(proposals)}", icon="ZOOM_SELECTED")
-    hrow.operator("assetdoctor.accept_all_matches", text="Accept All", icon="CHECKMARK")
+    hrow.operator("filelink.accept_all_matches", text="Accept All", icon="CHECKMARK")
     tex.label(text="Name-similarity guesses — review before accepting.", icon="INFO")
 
     # Category keys are namespaced ("\x01" + material) so they don't collide with
     # the Missing list's material keys in the shared expanded-set.
     PM = "\x01"
-    expanded = set(filter(None, wm.assetdoctor_tex_expanded.split("\n")))
+    expanded = set(filter(None, wm.filelink_tex_expanded.split("\n")))
 
     groups: dict[str, list] = {}
     for idx, item in proposals:
@@ -2696,10 +2696,10 @@ def _draw_possible_matches(tex, wm) -> None:
         def _accept_material_action(row):
             # Material-level accept (the whole rolled-up group) — CHECKMARK marks the
             # group action, distinct from the single-row IMPORT below.
-            row.operator("assetdoctor.accept_material_matches", text="",
+            row.operator("filelink.accept_material_matches", text="",
                         icon="CHECKMARK").material = key
 
-        _draw_group_header(tex, key=ckey, prop="assetdoctor_tex_expanded", is_exp=is_exp,
+        _draw_group_header(tex, key=ckey, prop="filelink_tex_expanded", is_exp=is_exp,
                            label=f"{key}  ({len(members)}, {best_lbl})", icon="MATERIAL",
                            action=_accept_material_action)
         if not is_exp:
@@ -2713,5 +2713,5 @@ def _draw_possible_matches(tex, wm) -> None:
             icon, conf, _r = _TEX_CONF.get(item.proposal_confidence, ("DOT", "?", 0))
             tag = f"{conf}, diff res" if item.proposal_res_mismatch else conf
             prop.label(text=f"{os.path.basename(item.proposal)}  ({tag})", icon=icon)
-            frow.operator("assetdoctor.accept_match", text="",
+            frow.operator("filelink.accept_match", text="",
                           icon="IMPORT").index = idx

@@ -2,7 +2,7 @@
 
 F5's "Profile Render" renders IN-PROCESS (the live file, the live UI) to measure
 real RAM. This is a different job: catch render-TIME problems that don't show up
-in any of AssetDoctor's static scans (missing textures only Blender's image loader
+in any of File & Link Utilities' static scans (missing textures only Blender's image loader
 notices, driver exceptions, etc.) — without touching the user's open session at
 all. That means a SEPARATE headless Blender, launched as a subprocess against the
 file on disk, rendering one throwaway low-res frame; its console output is the

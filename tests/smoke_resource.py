@@ -35,12 +35,12 @@ def main():
         me.from_pydata([(i, 0, 0) for i in range(50)], [], [])
         me.update()
 
-        res = bpy.ops.assetdoctor.analyze_resources("EXEC_DEFAULT")
+        res = bpy.ops.filelink.analyze_resources("EXEC_DEFAULT")
         wm = bpy.context.window_manager
         checks.append(("FINISHED", res == {"FINISHED"}))
-        checks.append(("resource tree stored", bool(wm.assetdoctor_resource_tree)))
+        checks.append(("resource tree stored", bool(wm.filelink_resource_tree)))
 
-        nodes = nodes_from_json(wm.assetdoctor_resource_tree)
+        nodes = nodes_from_json(wm.filelink_resource_tree)
         labels = [n.label for n in nodes]
         checks.append(("has Image + Mesh type nodes",
                        any(l.startswith("Image") for l in labels)
@@ -52,15 +52,15 @@ def main():
                        wood is not None and wood.ref == {"type": "Image", "name": "wood"}
                        and wood.ram))
         checks.append(("auto-expanded type keys",
-                       set(wm.assetdoctor_resource_expanded.split("\n")) >= {n.key for n in nodes}))
+                       set(wm.filelink_resource_expanded.split("\n")) >= {n.key for n in nodes}))
 
         # docs/TODO.md #15 (2026-06-27): clicking a column header re-sorts the
         # type groups cheaply (cached items, no re-scan) instead of always RAM.
-        checks.append(("items cached for cheap re-sort", bool(wm.assetdoctor_resource_items_json)))
-        res_sort = bpy.ops.assetdoctor.resource_sort_by("EXEC_DEFAULT", metric="VRAM")
+        checks.append(("items cached for cheap re-sort", bool(wm.filelink_resource_items_json)))
+        res_sort = bpy.ops.filelink.resource_sort_by("EXEC_DEFAULT", metric="VRAM")
         checks.append(("sort-by-VRAM FINISHED", res_sort == {"FINISHED"}))
-        checks.append(("sort preference persisted", wm.assetdoctor_resource_sort == "vram"))
-        nodes_after = nodes_from_json(wm.assetdoctor_resource_tree)
+        checks.append(("sort preference persisted", wm.filelink_resource_sort == "vram"))
+        nodes_after = nodes_from_json(wm.filelink_resource_tree)
         checks.append(("re-sorted without losing type nodes",
                        {n.label for n in nodes_after} == set(labels)))
 

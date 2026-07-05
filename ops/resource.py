@@ -20,10 +20,10 @@ from ..core.resource_tree import SORT_KEYS, build_resource_tree
 from ..core.tree import nodes_to_json, top_level_keys
 from .progress import ModalProgressMixin
 
-RESOURCE_PROP = "assetdoctor_resource_tree"
-RESOURCE_EXPANDED = "assetdoctor_resource_expanded"
-RESOURCE_TOTALS = "assetdoctor_resource_totals"
-RESOURCE_ITEMS = "assetdoctor_resource_items_json"
+RESOURCE_PROP = "filelink_resource_tree"
+RESOURCE_EXPANDED = "filelink_resource_expanded"
+RESOURCE_TOTALS = "filelink_resource_totals"
+RESOURCE_ITEMS = "filelink_resource_items_json"
 
 _EST_CHUNK = 64  # datablocks estimated between progress yields
 
@@ -83,8 +83,8 @@ def _gather(context):
         return done.value
 
 
-class ASSETDOCTOR_OT_analyze_resources(ModalProgressMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.analyze_resources"
+class FILELINK_OT_analyze_resources(ModalProgressMixin, bpy.types.Operator):
+    bl_idname = "filelink.analyze_resources"
     bl_label = "Analyze Resource Usage"
     bl_description = (
         "Estimate System Memory / Video Memory and disk use by datablock type "
@@ -104,7 +104,7 @@ class ASSETDOCTOR_OT_analyze_resources(ModalProgressMixin, bpy.types.Operator):
         yield (0.9, "Building resource tree…")
         wm = context.window_manager
         setattr(wm, RESOURCE_ITEMS, json.dumps(items))
-        nodes, totals = build_resource_tree(items, sort_by=wm.assetdoctor_resource_sort)
+        nodes, totals = build_resource_tree(items, sort_by=wm.filelink_resource_sort)
         setattr(wm, RESOURCE_PROP, nodes_to_json(nodes))
         setattr(wm, RESOURCE_EXPANDED, "\n".join(top_level_keys(nodes)))
         from .report_store import rebuild_resource_rows
@@ -120,12 +120,12 @@ class ASSETDOCTOR_OT_analyze_resources(ModalProgressMixin, bpy.types.Operator):
         self.report({"INFO"}, msg + " (estimates; see Resource panel)")
 
 
-class ASSETDOCTOR_OT_resource_sort_by(bpy.types.Operator):
+class FILELINK_OT_resource_sort_by(bpy.types.Operator):
     """Re-sort the Resource Usage type groups by a column header click
     (docs/TODO.md #15, 2026-06-27). Cheap: re-groups the already-gathered
     ``items`` cached by the last scan — never re-walks bpy.data."""
 
-    bl_idname = "assetdoctor.resource_sort_by"
+    bl_idname = "filelink.resource_sort_by"
     bl_label = "Sort Resource Usage"
     bl_description = "Re-sort the type groups by this column (RAM/VRAM/disk)"
     bl_options = {"INTERNAL"}
@@ -138,9 +138,9 @@ class ASSETDOCTOR_OT_resource_sort_by(bpy.types.Operator):
         raw = getattr(wm, RESOURCE_ITEMS, "")
         if not raw:
             return {"CANCELLED"}
-        wm.assetdoctor_resource_sort = self.metric.lower()
+        wm.filelink_resource_sort = self.metric.lower()
         items = json.loads(raw)
-        nodes, _totals = build_resource_tree(items, sort_by=wm.assetdoctor_resource_sort)
+        nodes, _totals = build_resource_tree(items, sort_by=wm.filelink_resource_sort)
         setattr(wm, RESOURCE_PROP, nodes_to_json(nodes))
         setattr(wm, RESOURCE_EXPANDED, "\n".join(top_level_keys(nodes)))
         from .report_store import rebuild_resource_rows
@@ -150,8 +150,8 @@ class ASSETDOCTOR_OT_resource_sort_by(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_profile_render(bpy.types.Operator):
-    bl_idname = "assetdoctor.profile_render"
+class FILELINK_OT_profile_render(bpy.types.Operator):
+    bl_idname = "filelink.profile_render"
     bl_label = "Profile Render (real RAM)"
     bl_description = (
         "Render the current frame and report Blender's REAL peak system RAM "
@@ -175,7 +175,7 @@ class ASSETDOCTOR_OT_profile_render(bpy.types.Operator):
 
         peak = peak_process_ram_bytes()
         text = human_bytes(peak) if peak else "unavailable"
-        context.window_manager.assetdoctor_profiled_ram = text
+        context.window_manager.filelink_profiled_ram = text
         log.info("F5 profile render: peak process RAM = %s", text)
         self.report({"INFO"}, f"Render done — real peak RAM: {text} (whole process)")
         return {"FINISHED"}

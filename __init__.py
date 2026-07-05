@@ -1,4 +1,4 @@
-"""AssetDoctor — Blender 5+ asset dependency & dedup addon.
+"""File & Link Utilities — Blender 5+ asset dependency & dedup addon.
 
 Top-level registration. Keep this file thin: it only wires up the operator,
 panel and preferences classes plus a couple of Scene properties. All real logic
@@ -21,7 +21,7 @@ def _debug_update(self, context):
 
     from .log import set_debug_enabled
 
-    set_debug_enabled(self.assetdoctor_debug_log, bpy.data.filepath)
+    set_debug_enabled(self.filelink_debug_log, bpy.data.filepath)
 
 
 def _debug_log_on_load(_dummy):
@@ -34,7 +34,7 @@ def _debug_log_on_load(_dummy):
     from .log import set_debug_enabled
 
     scene = bpy.context.scene
-    if scene and getattr(scene, "assetdoctor_debug_log", False):
+    if scene and getattr(scene, "filelink_debug_log", False):
         set_debug_enabled(False)  # detach any stale handler
         set_debug_enabled(True, bpy.data.filepath)  # fresh log for the opened file
 
@@ -47,27 +47,27 @@ def register() -> None:
     from .ui import REGISTER_CLASSES as ui_classes
 
     # Order matters: preferences first, then operators, then panels.
-    classes = (prefs.AssetDoctorPreferences, *op_classes, *ui_classes)
+    classes = (prefs.FileLinkPreferences, *op_classes, *ui_classes)
     for cls in classes:
         bpy.utils.register_class(cls)
         _REGISTERED.append(cls)
 
-    bpy.types.Scene.assetdoctor_scan_dir = bpy.props.StringProperty(
+    bpy.types.Scene.filelink_scan_dir = bpy.props.StringProperty(
         name="Project Folder",
         description="Folder to recursively scan for .blend link relationships",
         subtype="DIR_PATH",
         default="",
     )
-    bpy.types.Scene.assetdoctor_dep_target = bpy.props.StringProperty(
+    bpy.types.Scene.filelink_dep_target = bpy.props.StringProperty(
         name="File to check",
         description="The .blend you're considering deleting — the reverse-dependency "
         "check scans the Project Folder above and lists who links TO this file",
         subtype="FILE_PATH",
         default="",
     )
-    bpy.types.Scene.assetdoctor_debug_log = bpy.props.BoolProperty(
+    bpy.types.Scene.filelink_debug_log = bpy.props.BoolProperty(
         name="Enable Debug Log",
-        description="Write AssetDoctorDebugLog.txt next to the .blend (or Blender's temp folder "
+        description="Write FileLinkDebugLog.txt next to the .blend (or Blender's temp folder "
         "if unsaved) capturing detailed activity, to help diagnose issues. A fresh log starts "
         "each time it's enabled or a file is opened",
         default=False,
@@ -82,71 +82,71 @@ def register() -> None:
 
     # Live progress for any modal operation (folder scan, make-local, …) shown as
     # one shared progress bar at the top of the panel. See ops.progress.
-    bpy.types.WindowManager.assetdoctor_op_active = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_op_progress = bpy.props.FloatProperty(
+    bpy.types.WindowManager.filelink_op_active = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_op_progress = bpy.props.FloatProperty(
         default=0.0, min=0.0, max=1.0
     )
-    bpy.types.WindowManager.assetdoctor_op_status = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_op_status = bpy.props.StringProperty(default="")
     # Pause flag for the running modal op (held between steps; ESC still cancels).
-    bpy.types.WindowManager.assetdoctor_op_paused = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_op_paused = bpy.props.BoolProperty(default=False)
     # Cancel flag, set by the panel's Cancel button; the modal stops at the next step.
-    bpy.types.WindowManager.assetdoctor_op_cancel = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_op_cancel = bpy.props.BoolProperty(default=False)
     # Sticky last-result line: unlike the transient self.report() toast (gone once
     # you move the mouse) or the progress bar (hidden once the op finishes), this
     # STAYS in the panel until the next action overwrites it — user feedback
     # (2026-06-24): Reconnect Selected gave no in-panel confirmation of what
     # happened. See ops.progress.set_result.
-    bpy.types.WindowManager.assetdoctor_last_result = bpy.props.StringProperty(default="")
-    bpy.types.WindowManager.assetdoctor_last_result_ok = bpy.props.BoolProperty(default=True)
+    bpy.types.WindowManager.filelink_last_result = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_last_result_ok = bpy.props.BoolProperty(default=True)
     # Persistent click-to-select outcome per datablock (JSON dict, "Type/Name" ->
     # "found"/"no_user"/"unresolved"), docs/TODO.md Group 10 #37 (2026-07-04) — lets
     # a row show a STICKY outcome icon instead of relying on a one-shot toast.
-    bpy.types.WindowManager.assetdoctor_select_outcomes = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_select_outcomes = bpy.props.StringProperty(default="")
 
     # Persistent per-feature reports: data JSON + expanded keys per feature, plus
     # the currently-shown feature key. See ops/report_store.FEATURES.
     from .ops.report_store import FEATURES
 
     for key, _label in FEATURES:
-        setattr(bpy.types.WindowManager, f"assetdoctor_rep_{key}",
+        setattr(bpy.types.WindowManager, f"filelink_rep_{key}",
                 bpy.props.StringProperty(default=""))
-        setattr(bpy.types.WindowManager, f"assetdoctor_repx_{key}",
+        setattr(bpy.types.WindowManager, f"filelink_repx_{key}",
                 bpy.props.StringProperty(default=""))
-    bpy.types.WindowManager.assetdoctor_active_report = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_active_report = bpy.props.StringProperty(default="")
 
     # F5 resource tree (JSON) + its expanded node keys.
-    bpy.types.WindowManager.assetdoctor_resource_tree = bpy.props.StringProperty(default="")
-    bpy.types.WindowManager.assetdoctor_resource_expanded = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_resource_tree = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_resource_expanded = bpy.props.StringProperty(default="")
     # Estimated RAM/VRAM/disk totals from the last Analyze Memory/Disk run
     # (human-readable string), persisted so the Analyze button's inline
     # summary survives after the operator-report popup fades.
-    bpy.types.WindowManager.assetdoctor_resource_totals = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_resource_totals = bpy.props.StringProperty(default="")
     # Real peak RAM from the last Profile Render (human-readable string).
-    bpy.types.WindowManager.assetdoctor_profiled_ram = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_profiled_ram = bpy.props.StringProperty(default="")
     # docs/TODO.md #15 (2026-06-27): the last scan's raw per-datablock items
     # (JSON), cached so clicking a column header can cheaply re-sort/re-group
     # without re-walking bpy.data; the chosen sort column persists too.
-    bpy.types.WindowManager.assetdoctor_resource_items_json = bpy.props.StringProperty(default="")
-    bpy.types.WindowManager.assetdoctor_resource_sort = bpy.props.EnumProperty(
+    bpy.types.WindowManager.filelink_resource_items_json = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_resource_sort = bpy.props.EnumProperty(
         items=[("ram", "RAM", ""), ("vram", "VRAM", ""), ("disk", "Disk", "")], default="ram")
 
     # Materialised, flattened tree rows that the Report/Resource UILists draw
     # (virtualized + scrollable — fixes blank rows on large reports). Rebuilt by
     # ops.report_store from the JSON above whenever a report or its expansion
     # changes. WM-scoped (ephemeral), matching the report JSON's lifetime.
-    from .ui.panels import (ASSETDOCTOR_PG_analyze_step, ASSETDOCTOR_PG_broken_lib,
-                            ASSETDOCTOR_PG_datablock_family, ASSETDOCTOR_PG_dup_family,
-                            ASSETDOCTOR_PG_examine_row, ASSETDOCTOR_PG_flatten_candidate,
-                            ASSETDOCTOR_PG_geo_family, ASSETDOCTOR_PG_material_family,
-                            ASSETDOCTOR_PG_missing_block, ASSETDOCTOR_PG_orphan_row,
-                            ASSETDOCTOR_PG_picker_row, ASSETDOCTOR_PG_tree_row)
+    from .ui.panels import (FILELINK_PG_analyze_step, FILELINK_PG_broken_lib,
+                            FILELINK_PG_datablock_family, FILELINK_PG_dup_family,
+                            FILELINK_PG_examine_row, FILELINK_PG_flatten_candidate,
+                            FILELINK_PG_geo_family, FILELINK_PG_material_family,
+                            FILELINK_PG_missing_block, FILELINK_PG_orphan_row,
+                            FILELINK_PG_picker_row, FILELINK_PG_tree_row)
 
-    bpy.types.WindowManager.assetdoctor_report_rows = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_tree_row)
-    bpy.types.WindowManager.assetdoctor_report_index = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_resource_rows = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_tree_row)
-    bpy.types.WindowManager.assetdoctor_resource_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_report_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_tree_row)
+    bpy.types.WindowManager.filelink_report_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_resource_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_tree_row)
+    bpy.types.WindowManager.filelink_resource_index = bpy.props.IntProperty(default=0)
 
     # Group 12 Phase 4: one small virtualized rows collection PER inline-detail
     # feature (ops.report_store.INLINE_DETAIL_FEATURES) — several of these can
@@ -155,45 +155,45 @@ def register() -> None:
     from .ops.report_store import INLINE_DETAIL_FEATURES
 
     for _feature in INLINE_DETAIL_FEATURES:
-        setattr(bpy.types.WindowManager, f"assetdoctor_inline_rows_{_feature}",
-                bpy.props.CollectionProperty(type=ASSETDOCTOR_PG_tree_row))
-        setattr(bpy.types.WindowManager, f"assetdoctor_inline_active_{_feature}",
+        setattr(bpy.types.WindowManager, f"filelink_inline_rows_{_feature}",
+                bpy.props.CollectionProperty(type=FILELINK_PG_tree_row))
+        setattr(bpy.types.WindowManager, f"filelink_inline_active_{_feature}",
                 bpy.props.IntProperty(default=0))
 
     # F7 per-link relink list: the current file's broken/missing library links,
     # each with a relink target + a per-row checkbox. See ops.relink.
-    bpy.types.WindowManager.assetdoctor_broken_libs = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_broken_lib)
-    bpy.types.WindowManager.assetdoctor_broken_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_broken_libs = bpy.props.CollectionProperty(
+        type=FILELINK_PG_broken_lib)
+    bpy.types.WindowManager.filelink_broken_index = bpy.props.IntProperty(default=0)
     # F6 per-texture relink list: the current file's missing image textures (same
-    # row shape, reusing ASSETDOCTOR_PG_broken_lib). See ops.image_relink.
-    bpy.types.WindowManager.assetdoctor_broken_imgs = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_broken_lib)
-    bpy.types.WindowManager.assetdoctor_broken_imgs_index = bpy.props.IntProperty(default=0)
+    # row shape, reusing FILELINK_PG_broken_lib). See ops.image_relink.
+    bpy.types.WindowManager.filelink_broken_imgs = bpy.props.CollectionProperty(
+        type=FILELINK_PG_broken_lib)
+    bpy.types.WindowManager.filelink_broken_imgs_index = bpy.props.IntProperty(default=0)
     # Group 12 Phase 3: virtualized picker rows for Missing Textures (rebuilt by
     # ops.image_relink.rebuild_missing_tex_picker_rows after scan/pick/accept/relink).
-    bpy.types.WindowManager.assetdoctor_missingtex_picker_rows = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_picker_row)
-    bpy.types.WindowManager.assetdoctor_missingtex_picker_active = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_missingtex_picker_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_picker_row)
+    bpy.types.WindowManager.filelink_missingtex_picker_active = bpy.props.IntProperty(default=0)
     # F6 read-only companion list: missing textures whose Image is LINKED (owned by
     # another library) — can't be relinked from here, but the user asked for them
     # to be visible (a render-time dry run found far more missing images than this
     # scan counted, because linked images were silently excluded). See
     # ops.image_relink._gather_linked_missing_images.
-    bpy.types.WindowManager.assetdoctor_linked_missing_imgs = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_broken_lib)
+    bpy.types.WindowManager.filelink_linked_missing_imgs = bpy.props.CollectionProperty(
+        type=FILELINK_PG_broken_lib)
     # Items 6/7/11, 2026-06-25: three more actionable lists, all reusing the
     # same generic row shape. See ops.relink (items 6/7) / ops.image_dedup
     # (item 11). None use a template_list, so no "active index" prop needed.
-    bpy.types.WindowManager.assetdoctor_dup_lib_members = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_broken_lib)  # item 6: duplicate-library-path groups
-    bpy.types.WindowManager.assetdoctor_abs_path_members = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_broken_lib)  # item 7: absolute-path rows grouped by drive
-    bpy.types.WindowManager.assetdoctor_res_variant_members = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_broken_lib)  # item 11: resolution-variant rows grouped by texture set
+    bpy.types.WindowManager.filelink_dup_lib_members = bpy.props.CollectionProperty(
+        type=FILELINK_PG_broken_lib)  # item 6: duplicate-library-path groups
+    bpy.types.WindowManager.filelink_abs_path_members = bpy.props.CollectionProperty(
+        type=FILELINK_PG_broken_lib)  # item 7: absolute-path rows grouped by drive
+    bpy.types.WindowManager.filelink_res_variant_members = bpy.props.CollectionProperty(
+        type=FILELINK_PG_broken_lib)  # item 11: resolution-variant rows grouped by texture set
     # F6 B1: how the missing-texture categories group (by original folder or by
     # the material that uses each texture).
-    bpy.types.WindowManager.assetdoctor_tex_group_by = bpy.props.EnumProperty(
+    bpy.types.WindowManager.filelink_tex_group_by = bpy.props.EnumProperty(
         name="Group by",
         items=[("DIR", "Folder", "Group by each texture's original folder"),
                ("MATERIAL", "Material", "Group by the material that uses each texture "
@@ -202,12 +202,12 @@ def register() -> None:
     # Missing-texture section state: whether a scan has run (drives the header
     # summary), the count at scan time (so "found" = initial − still-missing), and
     # the expanded category keys (newline-joined) for the collapsible list.
-    bpy.types.WindowManager.assetdoctor_tex_scanned = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_tex_initial_missing = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_tex_expanded = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_tex_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_tex_initial_missing = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_tex_expanded = bpy.props.StringProperty(default="")
     # B4 — eyedropper source: pick a material whose (on-disk) textures become the
     # candidate corpus for proposing matches to the still-unplaced missing textures.
-    bpy.types.WindowManager.assetdoctor_tex_source_material = bpy.props.PointerProperty(
+    bpy.types.WindowManager.filelink_tex_source_material = bpy.props.PointerProperty(
         type=bpy.types.Material,
         name="Source material",
         description="A material whose existing textures are offered as substitutes for "
@@ -216,157 +216,157 @@ def register() -> None:
     # F6 Layer 2 — redesigned Duplicate Materials/Textures list: one row per content-
     # identical .NNN family (with a keeper dropdown), grouped by material; plus the
     # scan state + summary counts that drive the inline header (no separate report).
-    bpy.types.WindowManager.assetdoctor_dup_families = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_dup_family)
-    bpy.types.WindowManager.assetdoctor_dup_index = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_dup_scanned = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_dup_expanded = bpy.props.StringProperty(default="")
-    bpy.types.WindowManager.assetdoctor_dup_removable = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_dup_conflicts = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_dup_conflicts_text = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_dup_families = bpy.props.CollectionProperty(
+        type=FILELINK_PG_dup_family)
+    bpy.types.WindowManager.filelink_dup_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_dup_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_dup_expanded = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_dup_removable = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_dup_conflicts = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_dup_conflicts_text = bpy.props.StringProperty(default="")
     # Group 12 Phase 3 item 2: virtualized picker rows for Duplicate Textures
     # (rebuilt by ops.image_dedup.rebuild_dup_tex_picker_rows after scan/merge/
     # toggle, and by material_override's own update callback).
-    bpy.types.WindowManager.assetdoctor_duptex_picker_rows = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_picker_row)
-    bpy.types.WindowManager.assetdoctor_duptex_picker_active = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_duptex_picker_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_picker_row)
+    bpy.types.WindowManager.filelink_duptex_picker_active = bpy.props.IntProperty(default=0)
 
     # Batch 3 reverse-dep check: a small verdict the panel colors without having
     # to re-parse the stashed f7rev report JSON on every redraw. "" = not run yet.
-    bpy.types.WindowManager.assetdoctor_dep_verdict = bpy.props.StringProperty(default="")
-    bpy.types.WindowManager.assetdoctor_dep_verdict_text = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_dep_verdict = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_dep_verdict_text = bpy.props.StringProperty(default="")
 
     # Batch C #2: missing-data-block RECONNECT list. Rows group by their broken/
     # renamed source library; ops.datablock_reconnect fills/enumerates/applies it.
-    bpy.types.WindowManager.assetdoctor_missing_blocks = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_missing_block)
-    bpy.types.WindowManager.assetdoctor_missing_index = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_missing_scanned = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_missing_expanded = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_missing_blocks = bpy.props.CollectionProperty(
+        type=FILELINK_PG_missing_block)
+    bpy.types.WindowManager.filelink_missing_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_missing_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_missing_expanded = bpy.props.StringProperty(default="")
     # Group 12 Phase 3 item 3: virtualized picker rows for Datablock Reconnect
     # (rebuilt by ops.datablock_reconnect.rebuild_reconnect_picker_rows after
     # scan/pick-source/reconnect-selected).
-    bpy.types.WindowManager.assetdoctor_reconnect_picker_rows = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_picker_row)
-    bpy.types.WindowManager.assetdoctor_reconnect_picker_active = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_reconnect_picker_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_picker_row)
+    bpy.types.WindowManager.filelink_reconnect_picker_active = bpy.props.IntProperty(default=0)
 
     # Batch C #3: generic Duplicate Data-blocks list (any type, via ID.user_remap).
-    bpy.types.WindowManager.assetdoctor_datablock_families = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_datablock_family)
-    bpy.types.WindowManager.assetdoctor_datablock_index = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_datablock_scanned = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_datablock_removable = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_datablock_conflicts = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_datablock_conflicts_text = bpy.props.StringProperty(default="")
-    bpy.types.WindowManager.assetdoctor_datablock_skipped_text = bpy.props.StringProperty(default="")
-    bpy.types.WindowManager.assetdoctor_datablock_expanded = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_datablock_families = bpy.props.CollectionProperty(
+        type=FILELINK_PG_datablock_family)
+    bpy.types.WindowManager.filelink_datablock_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_datablock_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_datablock_removable = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_datablock_conflicts = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_datablock_conflicts_text = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_datablock_skipped_text = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_datablock_expanded = bpy.props.StringProperty(default="")
 
     # F3 reformat (user feedback, 2026-06-25): Find Duplicate Materials gets the
     # same keeper-dropdown/Merge Selected shape as the other dedup tools instead
     # of a single blind "Dedup & Remap (Apply)" button.
-    bpy.types.WindowManager.assetdoctor_mat_families = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_material_family)
-    bpy.types.WindowManager.assetdoctor_mat_index = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_mat_scanned = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_mat_removable = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_mat_linked = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_mat_families = bpy.props.CollectionProperty(
+        type=FILELINK_PG_material_family)
+    bpy.types.WindowManager.filelink_mat_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_mat_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_mat_removable = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_mat_linked = bpy.props.IntProperty(default=0)
     # Find Duplicates display unification (docs/TODO.md #16, 2026-06-27): same-
     # name-family materials that didn't merge cleanly, kept separate.
-    bpy.types.WindowManager.assetdoctor_mat_conflicts = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_mat_conflicts_text = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_mat_conflicts = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_mat_conflicts_text = bpy.props.StringProperty(default="")
 
     # Group 11 #44 (2026-06-26): Find Duplicate Geometry gets the same
     # selective checkbox/Instance-Selected shape as the other dedup tools,
     # instead of the old blunt "Instance & Merge (Apply everything)" button.
-    bpy.types.WindowManager.assetdoctor_geo_families = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_geo_family)
-    bpy.types.WindowManager.assetdoctor_geo_index = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_geo_scanned = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_geo_removable = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_geo_families = bpy.props.CollectionProperty(
+        type=FILELINK_PG_geo_family)
+    bpy.types.WindowManager.filelink_geo_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_geo_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_geo_removable = bpy.props.IntProperty(default=0)
     # docs/TODO.md #21 (2026-06-27): linked victims that stay in their library
     # (only their local users get repointed) -- tracked separately from
-    # assetdoctor_geo_removable, mirroring core.f3_materials' linked accounting.
-    bpy.types.WindowManager.assetdoctor_geo_linked = bpy.props.IntProperty(default=0)
+    # filelink_geo_removable, mirroring core.f3_materials' linked accounting.
+    bpy.types.WindowManager.filelink_geo_linked = bpy.props.IntProperty(default=0)
     # Find Duplicates display unification (docs/TODO.md #16, 2026-06-27): same-
     # name-family meshes that didn't merge cleanly, kept separate.
-    bpy.types.WindowManager.assetdoctor_geo_conflicts = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_geo_conflicts_text = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_geo_conflicts = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_geo_conflicts_text = bpy.props.StringProperty(default="")
 
     # Group 11 #45 (2026-06-26): Find Orphans gets a checkbox/Purge-Selected
     # shape for TRUE orphans (no keeper — purge is binary). Fake-user-only and
     # identical-cluster findings stay read-only, drawn straight from the f4
     # report (deliberate, existing design — see ops.orphans).
-    bpy.types.WindowManager.assetdoctor_orphan_rows = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_orphan_row)
-    bpy.types.WindowManager.assetdoctor_orphan_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_orphan_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_orphan_row)
+    bpy.types.WindowManager.filelink_orphan_index = bpy.props.IntProperty(default=0)
     # 2026-07-04: datablocks skipped during fingerprinting because reading them
     # risked a native crash (missing placeholder / Library Override) — see
     # ops.orphans._gather_steps / extract.datablock_risk_reason.
-    bpy.types.WindowManager.assetdoctor_orphan_skipped_text = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_orphan_skipped_text = bpy.props.StringProperty(default="")
 
     # Examine Library: retarget AWAY from a chosen (working) library.
-    bpy.types.WindowManager.assetdoctor_examine_library_pick = bpy.props.StringProperty(
+    bpy.types.WindowManager.filelink_examine_library_pick = bpy.props.StringProperty(
         name="Library", description="The library to examine (prop_search over bpy.data.libraries)")
-    bpy.types.WindowManager.assetdoctor_examine_library = bpy.props.StringProperty(default="")
-    bpy.types.WindowManager.assetdoctor_examine_rows = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_examine_row)
-    bpy.types.WindowManager.assetdoctor_examine_index = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_examine_scanned = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_examine_expanded = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_examine_library = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_examine_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_examine_row)
+    bpy.types.WindowManager.filelink_examine_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_examine_scanned = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_examine_expanded = bpy.props.StringProperty(default="")
     # Group 12 Phase 3 item 4: virtualized picker rows for Examine Library
     # (rebuilt by ops.examine_library.rebuild_examine_picker_rows after
     # Examine/Apply Selected).
-    bpy.types.WindowManager.assetdoctor_examine_picker_rows = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_picker_row)
-    bpy.types.WindowManager.assetdoctor_examine_picker_active = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_examine_picker_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_picker_row)
+    bpy.types.WindowManager.filelink_examine_picker_active = bpy.props.IntProperty(default=0)
 
     # Phase 3a — Analyze section's "Analyze All" sequencer: per-step status
     # (pending/running/done/error), rebuilt by ops.analyze_all at the start of
     # each run so the panel can show a per-step icon while it works.
-    bpy.types.WindowManager.assetdoctor_analyze_steps = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_analyze_step)
-    bpy.types.WindowManager.assetdoctor_analyze_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_analyze_steps = bpy.props.CollectionProperty(
+        type=FILELINK_PG_analyze_step)
+    bpy.types.WindowManager.filelink_analyze_index = bpy.props.IntProperty(default=0)
 
     # F7 Phase 4-B: the character picker for Build Flatten Plan. Scanning caches
-    # every candidate's full plan as JSON (assetdoctor_flatten_plans_json) so
+    # every candidate's full plan as JSON (filelink_flatten_plans_json) so
     # picking one row later doesn't require rescanning the whole file. See
     # ops.linkchain.
-    bpy.types.WindowManager.assetdoctor_flatten_candidates = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_flatten_candidate)
-    bpy.types.WindowManager.assetdoctor_flatten_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_flatten_candidates = bpy.props.CollectionProperty(
+        type=FILELINK_PG_flatten_candidate)
+    bpy.types.WindowManager.filelink_flatten_index = bpy.props.IntProperty(default=0)
     # Group 12 Phase 2: virtualized picker rows (rebuilt by ops.linkchain.
     # rebuild_flatten_picker_rows after every scan/toggle/evaluate/flatten).
-    bpy.types.WindowManager.assetdoctor_flatten_picker_rows = bpy.props.CollectionProperty(
-        type=ASSETDOCTOR_PG_picker_row)
-    bpy.types.WindowManager.assetdoctor_flatten_picker_active = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_flatten_plans_json = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_flatten_picker_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_picker_row)
+    bpy.types.WindowManager.filelink_flatten_picker_active = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_flatten_plans_json = bpy.props.StringProperty(default="")
     # Full per-file object hierarchy census (core.linkchain.posing_list_to_dict),
     # cached by Find Flattenable Link Chains so the picker can resolve each
     # remote character's rig (parent/Armature-modifier/Hook-modifier/Child-Of-
     # constraint relationships) without re-scanning every file -- 2026-06-27
     # redesign, docs/TODO.md.
-    bpy.types.WindowManager.assetdoctor_flatten_hierarchy_json = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_flatten_hierarchy_json = bpy.props.StringProperty(default="")
     # Which rig/character groups are expanded in the picker (newline-joined
     # rig names), mirroring every other collapsible-group list in this addon.
-    bpy.types.WindowManager.assetdoctor_flatten_expanded = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_flatten_expanded = bpy.props.StringProperty(default="")
     # Set when a scan finds zero LOCAL candidates but Find Flattenable Link
     # Chains already found some elsewhere in the chain — "" otherwise.
-    bpy.types.WindowManager.assetdoctor_flatten_remote_note = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_flatten_remote_note = bpy.props.StringProperty(default="")
 
     # Flatten v2 (docs/TODO.md Group 11 #47). Per-group selection is tracked
     # as DESELECTED keys (newline-joined) -- absence means selected, so every
     # group starts checked by default without needing to pre-populate a set.
-    bpy.types.WindowManager.assetdoctor_flatten_deselected = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_flatten_deselected = bpy.props.StringProperty(default="")
     # The single shared Make Local / Make Copy toggle pair on the
     # "Flattenable overrides" subgroup's own title line (not per-character).
-    bpy.types.WindowManager.assetdoctor_flatten_make_local = bpy.props.BoolProperty(default=False)
-    bpy.types.WindowManager.assetdoctor_flatten_make_copy = bpy.props.BoolProperty(default=True)
+    bpy.types.WindowManager.filelink_flatten_make_local = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_flatten_make_copy = bpy.props.BoolProperty(default=True)
     # Persistent outcome counts so the subgroup title AND the top overview
     # line can both show "AA of YY flattenable" after every Flatten Selected
     # run, per the standing summary-propagation rule -- not just a one-shot
     # operator message.
-    bpy.types.WindowManager.assetdoctor_flatten_done = bpy.props.IntProperty(default=0)
-    bpy.types.WindowManager.assetdoctor_flatten_failed = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_flatten_done = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_flatten_failed = bpy.props.IntProperty(default=0)
 
     # Per-node expand state for the Analyze panel's inline report disclosure
     # (item a/c, 2026-06-25) — deliberately separate from each feature's own
@@ -374,11 +374,11 @@ def register() -> None:
     # one always starts empty/collapsed). One flat newline-joined key set
     # shared across every feature's inline view (node keys already embed
     # their own report's feature tag, so no collisions).
-    bpy.types.WindowManager.assetdoctor_detail_expanded = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_detail_expanded = bpy.props.StringProperty(default="")
 
     # Batch E — idle-scan feasibility prototype (gated off by default in prefs).
-    bpy.types.WindowManager.assetdoctor_idle_seconds = bpy.props.FloatProperty(default=0.0)
-    bpy.types.WindowManager.assetdoctor_idle_detected = bpy.props.BoolProperty(default=False)
+    bpy.types.WindowManager.filelink_idle_seconds = bpy.props.FloatProperty(default=0.0)
+    bpy.types.WindowManager.filelink_idle_detected = bpy.props.BoolProperty(default=False)
     from .ops.idle_scan import register_idle_timer
 
     register_idle_timer()
@@ -396,73 +396,73 @@ def unregister() -> None:
         bpy.app.handlers.load_post.remove(_load_post_handler)
     _load_post_handler = None
 
-    for attr in ("assetdoctor_scan_dir", "assetdoctor_dep_target", "assetdoctor_debug_log"):
+    for attr in ("filelink_scan_dir", "filelink_dep_target", "filelink_debug_log"):
         if hasattr(bpy.types.Scene, attr):
             delattr(bpy.types.Scene, attr)
     from .ops.report_store import FEATURES, INLINE_DETAIL_FEATURES
 
-    wm_attrs = ["assetdoctor_op_active", "assetdoctor_op_progress", "assetdoctor_op_status",
-                "assetdoctor_op_paused", "assetdoctor_op_cancel",
-                "assetdoctor_last_result", "assetdoctor_last_result_ok",
-                "assetdoctor_select_outcomes",
-                "assetdoctor_active_report", "assetdoctor_resource_tree",
-                "assetdoctor_resource_expanded", "assetdoctor_resource_totals",
-                "assetdoctor_profiled_ram",
-                "assetdoctor_resource_items_json", "assetdoctor_resource_sort",
-                "assetdoctor_report_rows", "assetdoctor_report_index",
-                "assetdoctor_resource_rows", "assetdoctor_resource_index",
-                "assetdoctor_broken_libs", "assetdoctor_broken_index",
-                "assetdoctor_broken_imgs", "assetdoctor_broken_imgs_index",
-                "assetdoctor_missingtex_picker_rows", "assetdoctor_missingtex_picker_active",
-                "assetdoctor_linked_missing_imgs",
-                "assetdoctor_dup_lib_members", "assetdoctor_abs_path_members",
-                "assetdoctor_res_variant_members",
-                "assetdoctor_tex_group_by", "assetdoctor_tex_scanned",
-                "assetdoctor_tex_initial_missing", "assetdoctor_tex_expanded",
-                "assetdoctor_tex_source_material",
-                "assetdoctor_dup_families", "assetdoctor_dup_index",
-                "assetdoctor_dup_scanned",
-                "assetdoctor_duptex_picker_rows", "assetdoctor_duptex_picker_active",
-                "assetdoctor_dup_expanded",
-                "assetdoctor_dup_removable", "assetdoctor_dup_conflicts",
-                "assetdoctor_dup_conflicts_text",
-                "assetdoctor_dep_verdict", "assetdoctor_dep_verdict_text",
-                "assetdoctor_missing_blocks", "assetdoctor_missing_index",
-                "assetdoctor_missing_scanned", "assetdoctor_missing_expanded",
-                "assetdoctor_reconnect_picker_rows", "assetdoctor_reconnect_picker_active",
-                "assetdoctor_datablock_families", "assetdoctor_datablock_index",
-                "assetdoctor_datablock_scanned", "assetdoctor_datablock_removable",
-                "assetdoctor_datablock_conflicts", "assetdoctor_datablock_conflicts_text",
-                "assetdoctor_datablock_skipped_text",
-                "assetdoctor_datablock_expanded",
-                "assetdoctor_mat_families", "assetdoctor_mat_index",
-                "assetdoctor_mat_scanned", "assetdoctor_mat_removable",
-                "assetdoctor_mat_linked",
-                "assetdoctor_mat_conflicts", "assetdoctor_mat_conflicts_text",
-                "assetdoctor_geo_families", "assetdoctor_geo_index",
-                "assetdoctor_geo_scanned", "assetdoctor_geo_removable",
-                "assetdoctor_geo_linked",
-                "assetdoctor_geo_conflicts", "assetdoctor_geo_conflicts_text",
-                "assetdoctor_orphan_rows", "assetdoctor_orphan_index",
-                "assetdoctor_orphan_skipped_text",
-                "assetdoctor_examine_library_pick", "assetdoctor_examine_library",
-                "assetdoctor_examine_rows", "assetdoctor_examine_index",
-                "assetdoctor_examine_scanned", "assetdoctor_examine_expanded",
-                "assetdoctor_examine_picker_rows", "assetdoctor_examine_picker_active",
-                "assetdoctor_analyze_steps", "assetdoctor_analyze_index",
-                "assetdoctor_flatten_candidates", "assetdoctor_flatten_index",
-                "assetdoctor_flatten_picker_rows", "assetdoctor_flatten_picker_active",
-                "assetdoctor_flatten_plans_json", "assetdoctor_flatten_hierarchy_json",
-                "assetdoctor_flatten_expanded",
-                "assetdoctor_flatten_remote_note", "assetdoctor_flatten_deselected",
-                "assetdoctor_flatten_make_local", "assetdoctor_flatten_make_copy",
-                "assetdoctor_flatten_done", "assetdoctor_flatten_failed",
-                "assetdoctor_detail_expanded",
-                "assetdoctor_idle_seconds", "assetdoctor_idle_detected"]
+    wm_attrs = ["filelink_op_active", "filelink_op_progress", "filelink_op_status",
+                "filelink_op_paused", "filelink_op_cancel",
+                "filelink_last_result", "filelink_last_result_ok",
+                "filelink_select_outcomes",
+                "filelink_active_report", "filelink_resource_tree",
+                "filelink_resource_expanded", "filelink_resource_totals",
+                "filelink_profiled_ram",
+                "filelink_resource_items_json", "filelink_resource_sort",
+                "filelink_report_rows", "filelink_report_index",
+                "filelink_resource_rows", "filelink_resource_index",
+                "filelink_broken_libs", "filelink_broken_index",
+                "filelink_broken_imgs", "filelink_broken_imgs_index",
+                "filelink_missingtex_picker_rows", "filelink_missingtex_picker_active",
+                "filelink_linked_missing_imgs",
+                "filelink_dup_lib_members", "filelink_abs_path_members",
+                "filelink_res_variant_members",
+                "filelink_tex_group_by", "filelink_tex_scanned",
+                "filelink_tex_initial_missing", "filelink_tex_expanded",
+                "filelink_tex_source_material",
+                "filelink_dup_families", "filelink_dup_index",
+                "filelink_dup_scanned",
+                "filelink_duptex_picker_rows", "filelink_duptex_picker_active",
+                "filelink_dup_expanded",
+                "filelink_dup_removable", "filelink_dup_conflicts",
+                "filelink_dup_conflicts_text",
+                "filelink_dep_verdict", "filelink_dep_verdict_text",
+                "filelink_missing_blocks", "filelink_missing_index",
+                "filelink_missing_scanned", "filelink_missing_expanded",
+                "filelink_reconnect_picker_rows", "filelink_reconnect_picker_active",
+                "filelink_datablock_families", "filelink_datablock_index",
+                "filelink_datablock_scanned", "filelink_datablock_removable",
+                "filelink_datablock_conflicts", "filelink_datablock_conflicts_text",
+                "filelink_datablock_skipped_text",
+                "filelink_datablock_expanded",
+                "filelink_mat_families", "filelink_mat_index",
+                "filelink_mat_scanned", "filelink_mat_removable",
+                "filelink_mat_linked",
+                "filelink_mat_conflicts", "filelink_mat_conflicts_text",
+                "filelink_geo_families", "filelink_geo_index",
+                "filelink_geo_scanned", "filelink_geo_removable",
+                "filelink_geo_linked",
+                "filelink_geo_conflicts", "filelink_geo_conflicts_text",
+                "filelink_orphan_rows", "filelink_orphan_index",
+                "filelink_orphan_skipped_text",
+                "filelink_examine_library_pick", "filelink_examine_library",
+                "filelink_examine_rows", "filelink_examine_index",
+                "filelink_examine_scanned", "filelink_examine_expanded",
+                "filelink_examine_picker_rows", "filelink_examine_picker_active",
+                "filelink_analyze_steps", "filelink_analyze_index",
+                "filelink_flatten_candidates", "filelink_flatten_index",
+                "filelink_flatten_picker_rows", "filelink_flatten_picker_active",
+                "filelink_flatten_plans_json", "filelink_flatten_hierarchy_json",
+                "filelink_flatten_expanded",
+                "filelink_flatten_remote_note", "filelink_flatten_deselected",
+                "filelink_flatten_make_local", "filelink_flatten_make_copy",
+                "filelink_flatten_done", "filelink_flatten_failed",
+                "filelink_detail_expanded",
+                "filelink_idle_seconds", "filelink_idle_detected"]
     for key, _label in FEATURES:
-        wm_attrs += [f"assetdoctor_rep_{key}", f"assetdoctor_repx_{key}"]
+        wm_attrs += [f"filelink_rep_{key}", f"filelink_repx_{key}"]
     for feature in INLINE_DETAIL_FEATURES:
-        wm_attrs += [f"assetdoctor_inline_rows_{feature}", f"assetdoctor_inline_active_{feature}"]
+        wm_attrs += [f"filelink_inline_rows_{feature}", f"filelink_inline_active_{feature}"]
     for attr in wm_attrs:
         if hasattr(bpy.types.WindowManager, attr):
             delattr(bpy.types.WindowManager, attr)

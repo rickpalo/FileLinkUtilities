@@ -1,4 +1,10 @@
-# AssetDoctor — TODO / backlog
+# File & Link Utilities — TODO / backlog
+
+## 🏷️ RENAMED (2026-07-05): AssetDoctor → File & Link Utilities, v0.2.106 (Phase R). Package
+## id, class prefixes, operator category, WM/Scene props, GitHub repo, and gh-pages URL all
+## changed — see CHANGELOG.md's [0.2.106] entry. Everything BELOW this note that predates the
+## rename still uses the old `ASSETDOCTOR_*`/`assetdoctor.*` names as originally written — kept
+## as historical record, not updated.
 
 ## ✅ CURRENT STATE (2026-07-04): v0.2.105 PUBLISHED. Group 12 (UI virtualization, all 4
 ## phases), the Phase 1/3 backlog batch, and the Phase 2 live-verify fixes (items 45/46 —

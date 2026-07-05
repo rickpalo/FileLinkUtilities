@@ -2,7 +2,7 @@
 
     blender --background --factory-startup --python tests/smoke_image_dedup.py
 
-Covers the real operator (assetdoctor.scan_content_dups), not just the
+Covers the real operator (filelink.scan_content_dups), not just the
 bpy-free core logic (already covered by tests/test_imagededup.py): content-
 identical images merge regardless of name, and a .NNN-name-family pair with
 genuinely different content is reported "kept separate" (docs/TODO.md #16,
@@ -56,17 +56,17 @@ def main():
         _packed_image(bpy, "Stone", 4, (0.6, 0.6, 0.6, 1.0))
         _packed_image(bpy, "Stone.001", 4, (0.1, 0.1, 0.1, 1.0))
 
-        res = bpy.ops.assetdoctor.scan_content_dups("EXEC_DEFAULT")
+        res = bpy.ops.filelink.scan_content_dups("EXEC_DEFAULT")
         wm = bpy.context.window_manager
         checks.append(("scan FINISHED", res == {"FINISHED"}))
         checks.append(("content-identical images merged into one group",
-                       len(wm.assetdoctor_dup_families) == 1))
+                       len(wm.filelink_dup_families) == 1))
         checks.append(("merge group covers Leather_a/Leather_b",
-                       set(wm.assetdoctor_dup_families[0].members.split("\n"))
+                       set(wm.filelink_dup_families[0].members.split("\n"))
                        == {"Leather_a", "Leather_b"}))
         checks.append(("2 name-family conflicts reported (Wood + Stone)",
-                       wm.assetdoctor_dup_conflicts == 2))
-        text = wm.assetdoctor_dup_conflicts_text
+                       wm.filelink_dup_conflicts == 2))
+        text = wm.filelink_dup_conflicts_text
         checks.append(("Wood family: different dimensions",
                        "Wood —" in text and "different dimensions" in text))
         checks.append(("Stone family: same dimensions, different content",

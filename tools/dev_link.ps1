@@ -31,7 +31,7 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ExtRoot = Join-Path $env:APPDATA "Blender Foundation\Blender\$BlenderVersion\extensions\user_default"
-$Link = Join-Path $ExtRoot "assetdoctor"
+$Link = Join-Path $ExtRoot "file_link_utilities"
 
 if (-not (Test-Path $ExtRoot)) {
     throw "User Default extensions folder not found: $ExtRoot. Install once via dev_install.ps1 first."
@@ -55,6 +55,6 @@ if ($LASTEXITCODE -ne 0) { throw "mklink /J failed (exit $LASTEXITCODE)" }
 Write-Host "Linked $Link  ->  $RepoRoot" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next:" -ForegroundColor Green
-Write-Host "  1. Start Blender; enable 'AssetDoctor' under User Default if needed." -ForegroundColor Green
+Write-Host "  1. Start Blender; enable 'File & Link Utilities' under User Default if needed." -ForegroundColor Green
 Write-Host "  2. After code edits: F3 > Reload Scripts (or restart Blender)." -ForegroundColor Green
 Write-Host "     No rebuild needed — the install now points at your source tree." -ForegroundColor Green

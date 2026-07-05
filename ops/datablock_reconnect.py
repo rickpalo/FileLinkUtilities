@@ -27,7 +27,7 @@ from .pickers import FilePickerMixin, resolve_existing_file
 
 
 def _populate_missing_blocks(context) -> list[missingdata.MissingBlock]:
-    """Refill ``assetdoctor_missing_blocks`` from the current file's placeholder
+    """Refill ``filelink_missing_blocks`` from the current file's placeholder
     (``is_missing``) data-blocks. A library group that already had a source .blend
     picked keeps that source string across a re-scan, so the user doesn't have to
     re-pick it — but candidates/confidence are NOT auto-recomputed for it here.
@@ -35,7 +35,7 @@ def _populate_missing_blocks(context) -> list[missingdata.MissingBlock]:
     Why not: a crash (EXCEPTION_ACCESS_VIOLATION inside core.imagematch.tokenize,
     real repro 2026-06-24) traced back to this re-scan calling _enumerate_group
     -> bpy.data.libraries.load(source, link=True) as a PEEK against a library that
-    ASSETDOCTOR_OT_reconnect_selected had, moments earlier, just REALLY linked
+    FILELINK_OT_reconnect_selected had, moments earlier, just REALLY linked
     real data-blocks from (same source path) on a file independently known to have
     Blender-core fragility around missing/override data (see docs/TODO.md). Re-
     peeking an already-linked library right after a real link from it is the
@@ -75,7 +75,7 @@ def _populate_missing_blocks(context) -> list[missingdata.MissingBlock]:
     anywhere in this session" from "found via the original path" or "found via
     a sibling" — the user separately asked for this differentiation."""
     wm = context.window_manager
-    coll = wm.assetdoctor_missing_blocks
+    coll = wm.filelink_missing_blocks
     old_sources = {item.library: item.source_blend for item in coll if item.source_blend}
 
     # Every already-loaded library that resolves on THIS machine — the sibling-
@@ -124,8 +124,8 @@ def _populate_missing_blocks(context) -> list[missingdata.MissingBlock]:
             source = library_auto_source.get(b.library, "")
         item.source_blend = source
         item.library_found = library_found.get(b.library, False)
-    wm.assetdoctor_missing_index = 0
-    wm.assetdoctor_missing_scanned = True
+    wm.filelink_missing_index = 0
+    wm.filelink_missing_scanned = True
 
     for library in new_groups:
         _enumerate_group(context, library)
@@ -138,7 +138,7 @@ def _enumerate_group(context, library: str) -> str:
     ``selected`` per row. Returns an error message, or ``""`` on success (including
     the no-op case where the group has no rows or no source picked yet)."""
     wm = context.window_manager
-    coll = wm.assetdoctor_missing_blocks
+    coll = wm.filelink_missing_blocks
     rows = [item for item in coll if item.library == library]
     if not rows:
         return ""
@@ -177,24 +177,24 @@ def _group_info_line(source: str, lib_found: bool) -> tuple[str, str]:
 
 
 def rebuild_reconnect_picker_rows(wm) -> None:
-    """Rebuild ``wm.assetdoctor_reconnect_picker_rows`` (Group 12 Phase 3,
-    item 3) from the current ``assetdoctor_missing_blocks`` + expand state.
+    """Rebuild ``wm.filelink_reconnect_picker_rows`` (Group 12 Phase 3,
+    item 3) from the current ``filelink_missing_blocks`` + expand state.
 
     Called after every op that changes group membership (scan / reconnect
     selected) or a group's ``source_blend``/candidates/confidence (pick
     source) — the header's matched/stuck/external counts and the info line
     would otherwise go stale. A bare ``selected``/``target`` edit needs no
-    rebuild (drawn live by ``ASSETDOCTOR_UL_reconnect_picker`` straight off
+    rebuild (drawn live by ``FILELINK_UL_reconnect_picker`` straight off
     the real row, same as Missing Textures)."""
     from ..core import picker as picker_mod
     from .report_store import get_expanded
 
-    coll = wm.assetdoctor_missing_blocks
+    coll = wm.filelink_missing_blocks
     if not len(coll):
-        wm.assetdoctor_reconnect_picker_rows.clear()
+        wm.filelink_reconnect_picker_rows.clear()
         return
 
-    expanded = get_expanded(wm, "assetdoctor_missing_expanded")
+    expanded = get_expanded(wm, "filelink_missing_expanded")
     groups: dict[str, list[int]] = {}
     for i, item in enumerate(coll):
         groups.setdefault(item.library, []).append(i)
@@ -229,9 +229,9 @@ def rebuild_reconnect_picker_rows(wm) -> None:
             info_icon=info_icon,
         ))
     picker_rows = picker_mod.flatten_group_member_rows(
-        specs, expanded, ref_prop="assetdoctor_missing_blocks")
+        specs, expanded, ref_prop="filelink_missing_blocks")
 
-    picker_coll = wm.assetdoctor_reconnect_picker_rows
+    picker_coll = wm.filelink_reconnect_picker_rows
     picker_coll.clear()
     for pr in picker_rows:
         item = picker_coll.add()
@@ -248,8 +248,8 @@ def rebuild_reconnect_picker_rows(wm) -> None:
         item.is_expanded = pr.is_expanded
 
 
-class ASSETDOCTOR_OT_scan_reconnect_targets(bpy.types.Operator):
-    bl_idname = "assetdoctor.scan_reconnect_targets"
+class FILELINK_OT_scan_reconnect_targets(bpy.types.Operator):
+    bl_idname = "filelink.scan_reconnect_targets"
     bl_label = "Find Reconnectable Data-blocks"
     bl_description = (
         "List this file's missing (placeholder) data-blocks, grouped by their "
@@ -266,7 +266,7 @@ class ASSETDOCTOR_OT_scan_reconnect_targets(bpy.types.Operator):
             context.area.tag_redraw()
         if blocks:
             libs = len({b.library for b in blocks})
-            coll = context.window_manager.assetdoctor_missing_blocks
+            coll = context.window_manager.filelink_missing_blocks
             matched = sum(1 for item in coll if item.confidence != "none")
             tail = (f" — {matched} auto-matched from their original library; pick a "
                     "source for the rest" if matched else
@@ -278,8 +278,8 @@ class ASSETDOCTOR_OT_scan_reconnect_targets(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_reconnect_pick_source(FilePickerMixin, bpy.types.Operator):
-    bl_idname = "assetdoctor.reconnect_pick_source"
+class FILELINK_OT_reconnect_pick_source(FilePickerMixin, bpy.types.Operator):
+    bl_idname = "filelink.reconnect_pick_source"
     bl_label = "Pick Source .blend"
     bl_description = (
         "Choose the .blend that should now provide this group's data-blocks (e.g. "
@@ -298,7 +298,7 @@ class ASSETDOCTOR_OT_reconnect_pick_source(FilePickerMixin, bpy.types.Operator):
             self.report({"ERROR"}, "Choose a .blend file")
             return {"CANCELLED"}
 
-        coll = context.window_manager.assetdoctor_missing_blocks
+        coll = context.window_manager.filelink_missing_blocks
         for item in coll:
             if item.library == self.library:
                 item.source_blend = path
@@ -318,8 +318,8 @@ class ASSETDOCTOR_OT_reconnect_pick_source(FilePickerMixin, bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
-    bl_idname = "assetdoctor.reconnect_selected"
+class FILELINK_OT_reconnect_selected(bpy.types.Operator):
+    bl_idname = "filelink.reconnect_selected"
     bl_label = "Reconnect Selected"
     bl_options = {"REGISTER"}
 
@@ -335,7 +335,7 @@ class ASSETDOCTOR_OT_reconnect_selected(bpy.types.Operator):
             return {"CANCELLED"}
 
         wm = context.window_manager
-        coll = wm.assetdoctor_missing_blocks
+        coll = wm.filelink_missing_blocks
         chosen = [item for item in coll
                  if item.selected and item.target and item.source_blend]
         if not chosen:
