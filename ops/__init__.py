@@ -24,6 +24,10 @@ from .analyze_all import (
     FILELINK_OT_find_duplicates,
     FILELINK_OT_find_flattenable_links,
 )
+from .cleanup import (
+    FILELINK_OT_cleanup_apply_selected,
+    FILELINK_OT_cleanup_scan,
+)
 from .relink import (
     FILELINK_OT_dup_lib_select,
     FILELINK_OT_make_selected_relative,
@@ -48,6 +52,7 @@ from .examine_library import (
     FILELINK_OT_examine_search_folder,
     FILELINK_OT_examine_apply_selected,
 )
+from .material_search import FILELINK_OT_search_material
 from .image_relink import (
     FILELINK_OT_scan_broken_textures,
     FILELINK_OT_relink_folder_search,
@@ -72,7 +77,7 @@ from .image_dedup import (
     FILELINK_OT_remove_excess_variants,
 )
 from .progress import FILELINK_OT_toggle_pause, FILELINK_OT_request_cancel
-from .make_local import FILELINK_OT_make_local
+from .make_local import FILELINK_OT_make_local, FILELINK_OT_make_local_selected
 from .material_dedup import FILELINK_OT_material_dedup, FILELINK_OT_merge_material_selected
 from .material_diagnostics import FILELINK_OT_check_materials
 from .orphans import FILELINK_OT_purge_orphans_selected, FILELINK_OT_scan_orphans
@@ -124,6 +129,7 @@ REGISTER_CLASSES = (
     FILELINK_OT_examine_pick_source,
     FILELINK_OT_examine_search_folder,
     FILELINK_OT_examine_apply_selected,
+    FILELINK_OT_search_material,
     FILELINK_OT_scan_broken_textures,
     FILELINK_OT_relink_folder_search,
     FILELINK_OT_search_textures_folder,
@@ -146,6 +152,9 @@ REGISTER_CLASSES = (
     FILELINK_OT_toggle_pause,
     FILELINK_OT_request_cancel,
     FILELINK_OT_make_local,
+    FILELINK_OT_make_local_selected,
+    FILELINK_OT_cleanup_scan,
+    FILELINK_OT_cleanup_apply_selected,
     FILELINK_OT_material_dedup,
     FILELINK_OT_merge_material_selected,
     FILELINK_OT_check_materials,

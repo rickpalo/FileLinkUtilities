@@ -14,7 +14,7 @@ import ntpath
 from .report import Finding, Report
 
 
-def _libname(path: str) -> str:
+def libname(path: str) -> str:
     return ntpath.basename(path) or path
 
 
@@ -61,7 +61,7 @@ def build_makelocal_report(items: list[dict], all_names: list[dict] | None = Non
         tag = f" ({n_indirect} indirect)" if n_indirect else ""
         report.add(Finding(
             category="linked_library",
-            message=f"{len(members)} datablock(s) linked from {_libname(lib)}{tag}",
+            message=f"{len(members)} datablock(s) linked from {libname(lib)}{tag}",
             severity="info",
             items=[f"{m['type']}/{m['name']}" for m in members],
             data={"library": lib, "indirect": n_indirect},

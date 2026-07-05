@@ -65,6 +65,12 @@ def register() -> None:
         subtype="FILE_PATH",
         default="",
     )
+    bpy.types.Scene.filelink_material_search_pattern = bpy.props.StringProperty(
+        name="Material Name",
+        description="Material name to search for under the Project Folder above — plain text "
+        "matches as a substring, or use wildcards (* ? [ ]) for a glob match",
+        default="",
+    )
     bpy.types.Scene.filelink_debug_log = bpy.props.BoolProperty(
         name="Enable Debug Log",
         description="Write FileLinkDebugLog.txt next to the .blend (or Blender's temp folder "
@@ -72,6 +78,32 @@ def register() -> None:
         "each time it's enabled or a file is opened",
         default=False,
         update=_debug_update,
+    )
+
+    # docs/TODO.md #22 — Automated Cleanup: per-function include toggles
+    # (persisted in the file, per the locked design) + the post-Apply save
+    # offer. Make Local defaults OFF (more destructive than the other 3,
+    # locked decision); the rest default ON.
+    bpy.types.Scene.filelink_cleanup_include_makelocal = bpy.props.BoolProperty(
+        name="Make Local", description="Include Make Local in Scan / Apply Selected",
+        default=False,
+    )
+    bpy.types.Scene.filelink_cleanup_include_materials = bpy.props.BoolProperty(
+        name="Duplicate Materials",
+        description="Include Duplicate Materials in Scan / Apply Selected", default=True,
+    )
+    bpy.types.Scene.filelink_cleanup_include_geometry = bpy.props.BoolProperty(
+        name="Duplicate Geometry",
+        description="Include Duplicate Geometry in Scan / Apply Selected", default=True,
+    )
+    bpy.types.Scene.filelink_cleanup_include_orphans = bpy.props.BoolProperty(
+        name="Orphans", description="Include Orphans in Scan / Apply Selected", default=True,
+    )
+    bpy.types.Scene.filelink_cleanup_save_after = bpy.props.BoolProperty(
+        name="Save file after Apply",
+        description="Save the file once Apply Selected finishes (skipped if the file has "
+        "never been saved)",
+        default=False,
     )
 
     global _load_post_handler
@@ -137,7 +169,8 @@ def register() -> None:
     from .ui.panels import (FILELINK_PG_analyze_step, FILELINK_PG_broken_lib,
                             FILELINK_PG_datablock_family, FILELINK_PG_dup_family,
                             FILELINK_PG_examine_row, FILELINK_PG_flatten_candidate,
-                            FILELINK_PG_geo_family, FILELINK_PG_material_family,
+                            FILELINK_PG_geo_family, FILELINK_PG_makelocal_row,
+                            FILELINK_PG_material_family,
                             FILELINK_PG_missing_block, FILELINK_PG_orphan_row,
                             FILELINK_PG_picker_row, FILELINK_PG_tree_row)
 
@@ -304,6 +337,18 @@ def register() -> None:
     # ops.orphans._gather_steps / extract.datablock_risk_reason.
     bpy.types.WindowManager.filelink_orphan_skipped_text = bpy.props.StringProperty(default="")
 
+    # docs/TODO.md #22: Make Local gets the same actionable checkbox shape as
+    # Materials/Geometry/Orphans, one row per LINKED DATABLOCK (flat, not
+    # grouped by library — see FILELINK_PG_makelocal_row's docstring).
+    bpy.types.WindowManager.filelink_makelocal_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_makelocal_row)
+    bpy.types.WindowManager.filelink_makelocal_active = bpy.props.IntProperty(default=0)
+
+    # docs/TODO.md #22 — Find Material Across Files: unreadable/corrupt files
+    # hit during the folder walk, same "skipped, unsafe to read" convention
+    # as ops.orphans.
+    bpy.types.WindowManager.filelink_matsearch_skipped_text = bpy.props.StringProperty(default="")
+
     # Examine Library: retarget AWAY from a chosen (working) library.
     bpy.types.WindowManager.filelink_examine_library_pick = bpy.props.StringProperty(
         name="Library", description="The library to examine (prop_search over bpy.data.libraries)")
@@ -396,7 +441,10 @@ def unregister() -> None:
         bpy.app.handlers.load_post.remove(_load_post_handler)
     _load_post_handler = None
 
-    for attr in ("filelink_scan_dir", "filelink_dep_target", "filelink_debug_log"):
+    for attr in ("filelink_scan_dir", "filelink_dep_target", "filelink_debug_log",
+                "filelink_cleanup_include_makelocal", "filelink_cleanup_include_materials",
+                "filelink_cleanup_include_geometry", "filelink_cleanup_include_orphans",
+                "filelink_cleanup_save_after", "filelink_material_search_pattern"):
         if hasattr(bpy.types.Scene, attr):
             delattr(bpy.types.Scene, attr)
     from .ops.report_store import FEATURES, INLINE_DETAIL_FEATURES
@@ -445,6 +493,8 @@ def unregister() -> None:
                 "filelink_geo_conflicts", "filelink_geo_conflicts_text",
                 "filelink_orphan_rows", "filelink_orphan_index",
                 "filelink_orphan_skipped_text",
+                "filelink_makelocal_rows", "filelink_makelocal_active",
+                "filelink_matsearch_skipped_text",
                 "filelink_examine_library_pick", "filelink_examine_library",
                 "filelink_examine_rows", "filelink_examine_index",
                 "filelink_examine_scanned", "filelink_examine_expanded",

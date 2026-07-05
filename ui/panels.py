@@ -479,6 +479,24 @@ class FILELINK_PG_orphan_row(bpy.types.PropertyGroup):
         description="Include this datablock when you Purge Selected")  # type: ignore[valid-type]
 
 
+class FILELINK_PG_makelocal_row(bpy.types.PropertyGroup):
+    """One linked datablock for Make Local's per-item picker (docs/TODO.md
+    #22) — flat (unlike the grouped-by-library report), since a real project
+    can have thousands of linked datablocks and Blender's own UIList filter
+    box already handles narrowing a big flat list; no group/member
+    virtualization layer needed the way Missing/Duplicate Textures required
+    (their underlying data is a genuine tree, this isn't)."""
+
+    # `name` (built-in) = ops.make_local._row_key (unique "Type/Name [library]").
+    item_type: bpy.props.StringProperty()  # type: ignore[valid-type]
+    item_name: bpy.props.StringProperty()  # type: ignore[valid-type]
+    library: bpy.props.StringProperty()  # type: ignore[valid-type]
+    indirect: bpy.props.BoolProperty(default=False)  # type: ignore[valid-type]
+    selected: bpy.props.BoolProperty(
+        default=True, name="",
+        description="Include this datablock when you Make Local Selected")  # type: ignore[valid-type]
+
+
 class FILELINK_PG_datablock_family(bpy.types.PropertyGroup):
     """One content-identical ``.NNN`` duplicate family for the generic Duplicate
     Data-blocks list (Batch C #3) — any datablock type ``ops.datablock_dup``
@@ -764,6 +782,31 @@ class FILELINK_UL_dup_tex_picker(bpy.types.UIList):
         keep.prop(real, "keeper", text="")
 
 
+class FILELINK_UL_makelocal_picker(bpy.types.UIList):
+    """Virtualized picker for Make Local's per-item selection (docs/TODO.md
+    #22) — draws straight off ``wm.filelink_makelocal_rows`` (a real, flat
+    CollectionProperty; template_list virtualizes it natively, no extra
+    group/member indirection layer needed the way the tree-shaped pickers
+    elsewhere in this file require)."""
+
+    bl_idname = "FILELINK_UL_makelocal_picker"
+
+    def draw_item(self, context, layout, data, item, icon,
+                  active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.item_name or "—")
+            return
+
+        row = layout.row(align=True)
+        row.prop(item, "selected", text="")
+        row.label(text=f"{item.item_type}/{item.item_name}",
+                  icon="LIBRARY_DATA_INDIRECT" if item.indirect else "LIBRARY_DATA_DIRECT")
+        lib = row.row()
+        lib.alignment = "RIGHT"
+        lib.label(text=os.path.basename(item.library) or item.library)
+
+
 class FILELINK_UL_reconnect_picker(bpy.types.UIList):
     """Virtualized picker for the Datablock Reconnect section (Group 12 Phase
     3, item 3) — a THIRD member-row family (checkbox + label + a confidence
@@ -903,6 +946,52 @@ class _SceneFeaturePanel:
     bl_region_type = "WINDOW"
     bl_context = "scene"
     bl_parent_id = "FILELINK_PT_scene_deps"
+
+
+class FILELINK_PT_automated_cleanup(_SceneFeaturePanel, bpy.types.Panel):
+    """docs/TODO.md #22 — Automated Cleanup, redesigned to a 3-phase Scan ->
+    Review (tick/untick) -> Apply Selected flow instead of the originally
+    locked Report-Only/Apply-&-Report split. Orchestration layer only: it
+    reuses the SAME wm state and draw functions Make Local/Materials/
+    Geometry/Orphans already have in "Analyze This File" below (those keep
+    working standalone, unchanged) rather than physically moving them into
+    new child panels — same data, same checkboxes, just also surfaced here
+    together with a combined Scan/Apply Selected pair of buttons."""
+
+    bl_label = "Automated Cleanup"
+    bl_idname = "FILELINK_PT_automated_cleanup"
+    bl_order = -1
+
+    def draw(self, context):
+        layout = self.layout
+        wm = context.window_manager
+        scene = context.scene
+
+        col = layout.column(align=True)
+        col.label(text="Include:")
+        row = col.row(align=True)
+        row.prop(scene, "filelink_cleanup_include_makelocal", toggle=True)
+        row.prop(scene, "filelink_cleanup_include_materials", toggle=True)
+        row2 = col.row(align=True)
+        row2.prop(scene, "filelink_cleanup_include_geometry", toggle=True)
+        row2.prop(scene, "filelink_cleanup_include_orphans", toggle=True)
+
+        layout.operator("filelink.cleanup_scan", text="Scan", icon="VIEWZOOM")
+
+        if scene.filelink_cleanup_include_makelocal:
+            _draw_makelocal_picker(layout, wm)
+        if scene.filelink_cleanup_include_materials:
+            _draw_material_dups(layout, wm)
+        if scene.filelink_cleanup_include_geometry:
+            _draw_geo_dups(layout, wm)
+        if scene.filelink_cleanup_include_orphans:
+            _draw_orphans(layout, wm)
+
+        layout.separator()
+        layout.prop(scene, "filelink_cleanup_save_after")
+        layout.operator("filelink.cleanup_apply_selected", text="Apply Selected",
+                        icon="CHECKMARK")
+        _draw_report_detail(layout, wm, "auto")
 
 
 class FILELINK_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
@@ -1709,8 +1798,8 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         # button already names the ANALYSIS it runs, not its effect.
         _analyze_row(layout, wm, "", "filelink.make_local",
                      "Make Local", "LIBRARY_DATA_DIRECT",
-                     has_run=_feature_has_run(wm, "f2")).apply = False
-        _draw_report_detail(layout, wm, "f2")
+                     _makelocal_headline(wm), has_run=_feature_has_run(wm, "f2")).apply = False
+        _draw_makelocal_picker(layout, wm)
         # Profile Render relocated to Utilities (Group 11 #42, 2026-06-26) — it
         # actually renders, more "one-off tool" than "is something broken."
 
@@ -1804,6 +1893,28 @@ class FILELINK_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
 
         layout.separator()
         self._draw_examine_library(context, layout, wm)
+
+        layout.separator()
+        self._draw_material_search(context, layout, wm)
+
+    def _draw_material_search(self, context, layout, wm):
+        """docs/TODO.md #22 — Find Material Across Files: recursively search
+        every .blend under the shared Project Folder (same ``scene.
+        filelink_scan_dir`` "Map a Folder" already uses — no new duplicate
+        directory picker) for a material name, offline via BAT. Results via
+        the standard ``_draw_report_detail`` tree renderer — matches are
+        expected far fewer than the total files scanned, so no dedicated
+        virtualized picker is needed here."""
+        scene = context.scene
+        box = layout.box().column(align=True)
+        box.label(text="Find Material Across Files", icon="MATERIAL")
+        box.prop(scene, "filelink_scan_dir", text="Folder")
+        box.prop(scene, "filelink_material_search_pattern", text="Material")
+        box.operator("filelink.search_material", text="Search", icon="VIEWZOOM")
+        _draw_report_detail(box, wm, "matsearch")
+        skipped_lines = [ln for ln in wm.filelink_matsearch_skipped_text.split("\n") if ln]
+        _draw_kept_separate(box, wm, "matsearch:skipped", skipped_lines,
+                            label=f"Skipped — unreadable ({len(skipped_lines)})", icon="ERROR")
 
     def _draw_examine_library(self, context, layout, wm):
         """Examine Library: list everything the current file links from a chosen
@@ -2365,6 +2476,83 @@ def _draw_orphans(layout, wm) -> None:
 
     _draw_kept_separate(box, wm, "orphans:skipped", skipped_lines,
                         label=f"Skipped — unsafe to read ({len(skipped_lines)})", icon="ERROR")
+
+
+def _makelocal_headline(wm) -> str:
+    """Make Local's own Analyze-row summary (docs/TODO.md #22), mirroring
+    ``_orphans_headline`` now that Make Local has its own actionable
+    checkbox picker instead of the old read-only tree report."""
+    from ..core.report import Report
+    from ..ops.report_store import data_prop
+
+    if not _feature_has_run(wm, "f2"):
+        return ""
+    try:
+        report = Report.from_json(getattr(wm, data_prop("f2"), ""))
+        summary = next(f for f in report.findings if f.category == "summary")
+        d = summary.data
+    except Exception:
+        return ""
+    if not d.get("linked"):
+        return "✓ nothing linked — already fully local"
+    bits = [f"{d.get('linked', 0)} linked datablock(s)", f"{d.get('libraries', 0)} librar(ies)"]
+    if d.get("indirect"):
+        bits.append(f"{d['indirect']} indirect")
+    if d.get("collisions"):
+        bits.append(f"{d['collisions']} name collision(s)")
+    return ", ".join(bits)
+
+
+def _draw_makelocal_picker(layout, wm) -> None:
+    """Make Local — checkbox + Make Local Selected (docs/TODO.md #22),
+    replacing the old read-only tree report with the same actionable shape
+    Materials/Geometry/Orphans already have. Rename-collision warnings (the
+    one WARNING-severity finding this report can carry) stay visible below
+    the picker via the same filtered-mini-report pattern ``_draw_orphans``
+    uses for its own informational findings."""
+    from ..core.report import Report
+    from ..core.tree import report_to_tree
+    from ..ops import report_store
+    from ..ops.report_store import data_prop
+
+    if not _feature_has_run(wm, "f2"):
+        return
+    try:
+        report = Report.from_json(getattr(wm, data_prop("f2"), ""))
+    except Exception:
+        return
+
+    rows = wm.filelink_makelocal_rows
+    risk_findings = [f for f in report.findings if f.category == "rename_risk"]
+    if not (len(rows) or risk_findings):
+        return
+
+    box = layout.box().column(align=True)
+    if len(rows):
+        box.operator("filelink.make_local_selected",
+                     text="Make Local Selected (Backup)", icon="LIBRARY_DATA_DIRECT")
+        n = len(rows)
+        box.template_list(
+            "FILELINK_UL_makelocal_picker", "",
+            wm, "filelink_makelocal_rows",
+            wm, "filelink_makelocal_active",
+            rows=min(12, max(3, n)),
+        )
+
+    if risk_findings:
+        risk_report = Report(title=report.title, feature=report.feature, findings=risk_findings)
+        risk_nodes = report_to_tree(risk_report)
+        expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
+        report_store.rebuild_inline_detail_rows(wm, "f2", risk_nodes, expanded)
+        rows_prop = report_store.inline_rows_prop("f2")
+        n = len(getattr(wm, rows_prop))
+        if n:
+            box.template_list(
+                "FILELINK_UL_tree", "inline_f2",
+                wm, rows_prop,
+                wm, report_store.inline_active_prop("f2"),
+                rows=min(12, max(3, n)),
+            )
 
 
 # Reconnect confidence -> (icon, short label). "none" shows neither — the row

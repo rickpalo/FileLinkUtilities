@@ -8,6 +8,22 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.2.108] — Automated Cleanup (Scan/Review/Apply Selected) + Find Material Across Files
+
+### Added
+- **Automated Cleanup** panel: Scan every included cleanup function (Make Local / Duplicate
+  Materials / Duplicate Geometry / Orphans), review and tick/untick individual results, then
+  Apply Selected — one backup at the start, a before/after savings summary at the end. Make
+  Local gained real per-datablock selection for the first time (previously all-or-nothing).
+- **Find Material Across Files** (Utilities): recursively search every `.blend` under a folder
+  for a material name, wildcard or substring, entirely offline (no Blender launch).
+
+### Fixed
+- Make Local's per-item selective apply now correctly leaves un-ticked linked datablocks (and
+  their library) untouched, retries across multiple passes so a ticked child whose dependency
+  only just went local still gets localized, and reports an accurate localized count instead of
+  the attempted count.
+
 ## [0.2.107] — Multi-hop Link Chains display cleanup
 
 ### Changed

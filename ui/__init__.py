@@ -17,15 +17,18 @@ from .panels import (
     FILELINK_PG_material_family,
     FILELINK_PG_geo_family,
     FILELINK_PG_orphan_row,
+    FILELINK_PG_makelocal_row,
     FILELINK_PG_examine_row,
     FILELINK_UL_tree,
     FILELINK_UL_broken_libs,
     FILELINK_UL_flatten_picker,
     FILELINK_UL_missing_tex_picker,
     FILELINK_UL_dup_tex_picker,
+    FILELINK_UL_makelocal_picker,
     FILELINK_UL_reconnect_picker,
     FILELINK_UL_examine_picker,
     FILELINK_PT_scene_deps,
+    FILELINK_PT_automated_cleanup,
     FILELINK_PT_current_file_data,
     FILELINK_PT_analyze,
     FILELINK_PT_analyze_external,
@@ -35,11 +38,11 @@ from .panels import (
 # PropertyGroup + UIList first (panels' template_list draws them, and the WM
 # CollectionProperty in register() needs the PropertyGroup to exist), then the
 # parent Scene panel (must register BEFORE its bl_parent_id children below),
-# then its collapsible children (bl_order: Current File Data=0, Analyze This
-# File=1, Analyze External Files=2, Utilities=7 — the legacy Batch-5 panels 3-6
-# were folded into Analyze/Utilities one by one and deleted, Results=8 last
-# of all, deleted in the Group 11 panel-consolidation pass, 2026-06-26 — see
-# each remaining class for its number).
+# then its collapsible children (bl_order: Automated Cleanup=-1, Current File
+# Data=0, Analyze This File=1, Analyze External Files=2, Utilities=7 — the
+# legacy Batch-5 panels 3-6 were folded into Analyze/Utilities one by one and
+# deleted, Results=8 last of all, deleted in the Group 11 panel-consolidation
+# pass, 2026-06-26 — see each remaining class for its number).
 REGISTER_CLASSES = (
     FILELINK_PG_tree_row,
     FILELINK_PG_analyze_step,
@@ -52,15 +55,18 @@ REGISTER_CLASSES = (
     FILELINK_PG_material_family,
     FILELINK_PG_geo_family,
     FILELINK_PG_orphan_row,
+    FILELINK_PG_makelocal_row,
     FILELINK_PG_examine_row,
     FILELINK_UL_tree,
     FILELINK_UL_broken_libs,
     FILELINK_UL_flatten_picker,
     FILELINK_UL_missing_tex_picker,
     FILELINK_UL_dup_tex_picker,
+    FILELINK_UL_makelocal_picker,
     FILELINK_UL_reconnect_picker,
     FILELINK_UL_examine_picker,
     FILELINK_PT_scene_deps,
+    FILELINK_PT_automated_cleanup,
     FILELINK_PT_current_file_data,
     FILELINK_PT_analyze,
     FILELINK_PT_analyze_external,

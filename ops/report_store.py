@@ -43,6 +43,8 @@ FEATURES = [
     ("f6res", "Resolution Variants"),
     ("f9", "Dry-Run Render Warnings"),
     ("matdiag", "Material Diagnostics"),
+    ("auto", "Automated Cleanup Savings"),
+    ("matsearch", "Find Material Across Files"),
 ]
 
 
@@ -55,7 +57,8 @@ TREE_FEATURES = {"f7"}
 # site), each needing its OWN virtualized rows collection since several of
 # these can be expanded SIMULTANEOUSLY in the same Analyze panel (unlike the
 # Reports tab, which only ever shows one active feature at a time).
-INLINE_DETAIL_FEATURES = ("f1", "f2", "f4", "f7", "f7chain", "f7flatten", "f7live", "f9", "matdiag")
+INLINE_DETAIL_FEATURES = ("f1", "f2", "f4", "f7", "f7chain", "f7flatten", "f7live", "f9", "matdiag",
+                         "auto", "matsearch")
 
 
 def data_prop(feature: str) -> str:

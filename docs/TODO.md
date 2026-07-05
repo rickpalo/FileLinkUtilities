@@ -6,17 +6,16 @@
 ## rename still uses the old `ASSETDOCTOR_*`/`assetdoctor.*` names as originally written — kept
 ## as historical record, not updated.
 
-## ✅ CURRENT STATE (2026-07-04): v0.2.105 PUBLISHED. Group 12 (UI virtualization, all 4
-## phases), the Phase 1/3 backlog batch, and the Phase 2 live-verify fixes (items 45/46 —
-## see below for the full per-item digest) are all live-verified, committed, tagged, and
-## on the gh-pages auto-update feed. Group 13's Analyze-All sequencer progress gap (#41
-## below) remains logged but needs a design decision, not guesswork — not resumed unless
-## asked. Flatten v2 is shipped but still imperfect — not the priority.
+## ✅ CURRENT STATE (2026-07-05): v0.2.108 built, NOT yet live-verified/published. Item #22
+## (Automated Cleanup, redesigned to Scan -> Review -> Apply Selected) and item #49 (Find
+## Material Across Files) both built this session — see their full digests below. Suite 544,
+## clean py_compile, clean headless registration; 3 real bugs caught and fixed via live
+## headless probes (see #22's digest) before this was called done.
 ##
-## ⏩ NEXT SESSION: **Phase R, the full addon rename** (see
-## `C:\Users\Rick\.claude\plans\delightful-singing-tome.md` for the exact scope/sequence)
-## — do this BEFORE any further new backlog work so it's written under the new name from
-## the start.
+## ⏩ NEXT SESSION: **live-Blender click-through** of the new Automated Cleanup panel (tick/
+## untick across all 4 functions, Apply Selected, savings summary) and Find Material Across
+## Files (a real project folder, both a plain-substring and a wildcard pattern) — the probes
+## this session verified the OPERATORS directly, not the panel UI paths.
 
 ## ✅ Duplicate Textures / Datablock Reconnect / Examine Library (v0.2.97/0.2.99/0.2.100)
 ## were all covered by the 2026-07-03 "Live verify looks good" confirmation above —
@@ -851,9 +850,121 @@ what's still unverified; don't re-derive from scratch, read it first.**
 
 ### Group 8 — Bigger ROADMAP features (genuinely new work, several need a design discussion
 ### before any code; ordered roughly cheapest-to-scope first)
-22. **Automated Cleanup pipeline** — unlike the others below, the FULL design is already locked
+22. ~~**Automated Cleanup pipeline** — unlike the others below, the FULL design is already locked
     (nested panels, run order, backup-once, savings metrics) — implementation-ready once the
-    individual modal sections it depends on are live-verified, not a "needs discussion" item.
+    individual modal sections it depends on are live-verified, not a "needs discussion" item.~~
+    **BUILT 2026-07-05 (v0.2.108), redesigned per the user's request into a real Scan -> Review
+    (tick/untick) -> Apply Selected flow** instead of the originally-locked Report-Only/Apply-&-
+    Report split. Materials/Geometry/Orphans already had per-row `selected` checkboxes + a
+    ticked-respecting apply operator; the one new mechanism needed was Make Local's, which had
+    ZERO per-item selection anywhere before this (whole-file bulk `bpy.ops.object.make_local(
+    type='ALL')` + an unconditional per-ID mop-up). User's call: full per-datablock granularity
+    for Make Local too (not per-library), accepting the trade-off that ticked-selection mode
+    can't use the fast bulk operator (no per-item filter) and falls back to pure per-ID `make_
+    local()` calls only for ticked rows.
+
+    **Built:**
+    - `core/f2_makelocal.py::_libname` promoted to public `libname()` (now used cross-module).
+    - New `FILELINK_PG_makelocal_row` + `wm.filelink_makelocal_rows` (flat, NOT grouped by
+      library — a real project can have thousands of linked datablocks, and Blender's own
+      UIList text filter already handles narrowing a big flat list, so no group/member
+      virtualization layer was needed the way Missing/Duplicate Textures required).
+      `ops/make_local.py::_populate_makelocal_rows` fills it every `_prepare()` (scan) call.
+    - New `ops/make_local.py::localize_selected_steps` + `FILELINK_OT_make_local_selected`
+      (`filelink.make_local_selected`) — modal (unlike the other 3 "_selected" ops, which are
+      plain single-shot `execute()`; this is the one apply path already known to be slow on
+      large ticked sets). **Multi-pass, same shape as the bulk `localize_steps`'s own retry
+      loop** — confirmed via a live headless probe that a single pass silently under-localizes:
+      `ID.make_local()` needs an already-LOCAL user to attach the new local copy to, so a
+      material used only by a mesh that itself only just became local THIS pass no-ops until
+      the next pass re-checks it.
+    - New `ops/make_local.py::_purge_empty_libraries_only` — **a live probe caught a real data-
+      loss bug**: reusing the bulk flow's `_purge_libraries()` (which force-removes any library
+      its `user_map()` check doesn't flag as used) silently deleted a still-linked, still-in-
+      use Object the user had deliberately left un-ticked, because `user_map()` doesn't count a
+      plain `.library` reference as "using" the Library block at all — that helper is only safe
+      because the bulk flow has already localized EVERYTHING by the time it runs. The selective
+      path now only removes a library if literally zero remaining datablocks point `.library`
+      at it (checked directly), and skips purging linked orphans entirely (only touches what
+      was actually ticked).
+    - `FILELINK_OT_make_local_selected._finalize` reports the actual localized COUNT (checked
+      via `.library is None` after the fact), not the attempted count — a ticked child whose
+      owning object was left un-ticked can never actually localize (a real Blender constraint,
+      not a bug), so "attempted" would silently overstate what happened; now reports a WARNING
+      naming how many failed and why when that happens.
+    - New `FILELINK_UL_makelocal_picker` (virtualized `template_list`, no group/member
+      indirection needed) + `_draw_makelocal_picker`/`_makelocal_headline` in `ui/panels.py`,
+      replacing the old read-only `_draw_report_detail(wm, "f2")` call — Make Local now has the
+      same actionable checkbox shape as Materials/Geometry/Orphans (rename-collision warnings
+      still shown below the picker via the same filtered-mini-report pattern `_draw_orphans`
+      uses for its own informational findings).
+    - New `FILELINK_PT_automated_cleanup` panel (`bl_order = -1`, sorts above "Current File
+      Data") — 4 include toggles (`scene.filelink_cleanup_include_*`, Make Local off by default
+      per the original locked decision, the other 3 on), a "Scan" button, each included
+      function's own picker section (reused verbatim, not rebuilt — same `_draw_material_dups`/
+      `_draw_geo_dups`/`_draw_orphans`/`_draw_makelocal_picker` calls the standalone buttons in
+      "Analyze This File" already use), "Save file after Apply" toggle, and "Apply Selected".
+      **Deviates from the original locked note** ("Manual Cleanup parents the existing sub-
+      panels as nested children") — those 4 functions are inline sections in ONE `FILELINK_PT_
+      analyze.draw()`, not separate Panel classes; physically extracting them into new child
+      panels would have been a bigger, riskier restructure than this feature needed, so the new
+      panel is a thin orchestration layer reusing the same `wm` state and draw functions
+      instead — the standalone buttons keep working exactly as before, unchanged.
+    - New `core/analyze_steps.py::CLEANUP_SCAN_STEPS`/`CLEANUP_APPLY_STEPS` + `ops/cleanup.py`
+      (`FILELINK_OT_cleanup_scan`/`FILELINK_OT_cleanup_apply_selected`) — same `_
+      AnalyzeSequencerMixin`/`ModalProgressMixin` dispatch pattern as Analyze All/Find
+      Duplicates/Find Flattenable Links (real `bpy.ops` calls, not direct Python calls), with
+      `_steps` computed per-instance from the 4 include toggles rather than a fixed class
+      attribute. Apply Selected brackets the 4 apply steps with a single `auto_backup` call, a
+      before/after resource+datablock-count snapshot (reusing `ops/resource.py::_gather_steps`
+      + `core/resource_tree.build_resource_tree`, rescaled into the outer generator's own
+      progress range via a new `_run_nested` helper — properly solving, for this one sequencer,
+      the "how much of a sub-step's progress to surface" question left open for Analyze All's
+      own black-box `bpy.ops` dispatch), and a new merged savings-summary `Report` (feature key
+      `"auto"`, added to `report_store.FEATURES`/`INLINE_DETAIL_FEATURES`) — deltas aren't
+      attributed per-function (a savings SUMMARY, not a per-step audit trail), confirmed
+      correct behavior via a live probe (an Orphans purge incidentally removing a Material
+      showed up in the material-count delta, which is accurate, just not per-step-attributed).
+    - +9 pytest for `core/material_search.py` (see item #49 below); no new bpy-free tests for
+      `ops/cleanup.py` itself (it's pure dispatch/orchestration — verified via live headless
+      probes instead, see below). Suite 544.
+    - **Verified via live headless Blender probes** (registration smoke test + targeted
+      scripted probes against the real `tests/fixtures/linkproj` project, not guessed): caught
+      and fixed the `_libname` NameError, the library-purge data-loss bug, and the single-pass
+      under-localization bug above — all three would have shipped silently broken without this.
+      **Still NEEDS the user's own live-Blender click-through** of the new Automated Cleanup
+      panel UI (the probes exercised the operators directly, not the panel's draw code paths).
+
+49. **NEW, 2026-07-05 — Find Material Across Files (Utilities).** User's ask: given a root
+    directory, recursively search all `.blend` files for a specified material, wildcard-
+    supported. **BUILT same session as #22 (v0.2.108).** Entirely offline via BAT (`blender_
+    asset_tracer`), same mechanism `core/blendscan.py` already uses for the folder-wide link
+    map — no Blender launch, no library linking. New `core/material_search.py` (bpy-free):
+    `make_matcher` ported verbatim from the dev-only `tools/find_datablocks.py::_make_matcher`
+    (excluded from the packaged extension per `blender_manifest.toml`, so the CLI script itself
+    isn't shipped) — plain text matches as a case-insensitive substring, wildcards (`* ? [`)
+    match as a glob; `find_materials(path, pattern)` mirrors `core.blendscan.scan_file`'s open/
+    read/close shape against `MA` DNA blocks instead of `LI` ones. New `ops/material_search.py`
+    (`FILELINK_OT_search_material`, `filelink.search_material`) walks `core.blendscan.
+    iter_blend_files` over the SAME shared `scene.filelink_scan_dir` "Map a Folder" already
+    uses (no new duplicate directory picker) + a new `scene.filelink_material_search_pattern`;
+    builds a `Report` (new feature key `matsearch`) with one Finding per matching file (bare
+    material names, deliberately NOT "Material/Name" formatted — `core.tree._parse_ref` would
+    otherwise wrongly offer a click-to-select affordance for a datablock in a file that was
+    never opened) + an overview summary + an unreadable-files list (same "Skipped — unsafe to
+    read" convention as `ops/orphans.py`). UI: new box in the Utilities panel, right after
+    Examine Library. +9 pytest (5 pure-matcher + 4 real-BAT-read against the committed
+    `tests/fixtures/linkproj` fixtures, mirroring `tests/test_blendscan.py`'s pattern).
+    **Caught via a live probe and fixed**: the operator was missing the same upfront `bat_
+    available()` guard every other BAT-using operator has (`scan_folder.py`/`image_relink.py`/
+    `reversedep.py`/`linkchain.py`/`dep_scan.py`) — without it, a raw `ModuleNotFoundError`
+    propagated into the per-file "unreadable" list with a confusing message instead of the
+    established clean "Blender Asset Tracer unavailable; reinstall the extension" error; fixed
+    to match. **NEEDS the user's live-Blender confirm** (verified via headless probes with the
+    BAT wheel manually put on sys.path, simulating a properly-installed extension — a raw
+    `--python` script bypasses Blender's own extension-wheel provisioning, so this couldn't be
+    fully confirmed without that manual step; a real installed copy should just work).
+
 48. **NEW (2026-07-04) — Categorized file-load warnings.** User's ask: capture Blender's own
     load-time errors/warnings (missing library datablocks, silent node-link repairs, disabled
     embedded scripts, dependency-relation-build failures, etc.), categorize/prioritize them, and

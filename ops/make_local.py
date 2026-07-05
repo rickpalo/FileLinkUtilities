@@ -20,7 +20,7 @@ import os
 
 import bpy
 
-from ..core.f2_makelocal import build_makelocal_report
+from ..core.f2_makelocal import build_makelocal_report, libname
 
 
 def _id_collections():
@@ -72,6 +72,58 @@ def _remaining_linked():
     ]
 
 
+def _row_key(item: dict) -> str:
+    """Unique per-row key for a linked item dict — matches
+    :func:`_resolve_selected` below (same 3 fields identify a real
+    datablock unambiguously: name collisions across libraries are exactly
+    why ``library`` is part of the key, not just ``type``/``name``)."""
+    return f"{item['type']}/{item['name']} [{libname(item['library'])}]"
+
+
+def _populate_makelocal_rows(context, items: list[dict]) -> None:
+    """Refill ``filelink_makelocal_rows`` (one row per linked datablock,
+    docs/TODO.md #22) — the same actionable checkbox shape Materials/
+    Geometry/Orphans already have, so Make Local can be ticked item-by-item
+    instead of all-or-nothing. Flat (not grouped by library): a real project
+    can have thousands of linked datablocks, and Blender's own UIList filter
+    box already handles narrowing a big flat list down, so a custom group/
+    member virtualization (like Missing Textures') isn't needed here."""
+    wm = context.window_manager
+    coll = wm.filelink_makelocal_rows
+    coll.clear()
+    for item in items:
+        row = coll.add()
+        row.name = _row_key(item)
+        row.item_type = item["type"]
+        row.item_name = item["name"]
+        row.library = item["library"]
+        row.indirect = bool(item.get("indirect"))
+        row.selected = True
+    wm.filelink_makelocal_active = 0
+
+
+def _resolve_selected(rows) -> list:
+    """Ticked rows -> the real, currently-live datablocks they name (a row
+    can go stale between scan and apply if the file changed in between —
+    silently skip anything that no longer matches, same tolerance the other
+    3 "_selected" operators already have via their id_to_mat.get(...) is
+    None checks)."""
+    wanted = {
+        (r.item_type, r.item_name, r.library) for r in rows if r.selected
+    }
+    if not wanted:
+        return []
+    out = []
+    for coll in _id_collections():
+        for db in coll:
+            if db.library is None:
+                continue
+            key = (type(db).__name__, db.name, db.library.filepath)
+            if key in wanted:
+                out.append(db)
+    return out
+
+
 def _bulk_make_local(log) -> None:
     """Fast bulk pass: make all objects / obdata / materials local in one
     operator call. Best-effort — anything it can't reach (linked collections,
@@ -108,6 +160,33 @@ def _purge_libraries(log):
         if not bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True):
             break
     log.info("F2 purge: %d librar(ies) remain", len(bpy.data.libraries))
+
+
+def _purge_empty_libraries_only(log):
+    """Remove a Library block ONLY if literally zero datablocks still point
+    ``.library`` at it — unlike :func:`_purge_libraries` (which force-removes
+    ANY library its ``user_map()`` check misses, safe only because the bulk
+    flow has already localized EVERYTHING by the time it runs), this is the
+    one safe for a deliberately PARTIAL/selective localize pass: some rows
+    were left ticked-off on purpose (still linked), and must survive (docs/
+    TODO.md #22 — confirmed via a live probe that the shared helper silently
+    deleted a still-linked, still-in-use Object left un-ticked, because
+    ``user_map()`` doesn't count a plain ``.library`` reference as "using"
+    the Library block at all). Also skips purging linked orphans (``do_
+    linked_ids=False``) for the same reason — only touch what was actually
+    selected."""
+    for _ in range(20):
+        if not bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=False, do_recursive=True):
+            break
+    still_used = {db.library for coll in _id_collections() for db in coll
+                 if db.library is not None}
+    for lib in list(bpy.data.libraries):
+        if lib not in still_used:
+            try:
+                bpy.data.libraries.remove(lib)
+            except RuntimeError:
+                pass
+    log.info("F2 purge (selected): %d librar(ies) remain", len(bpy.data.libraries))
 
 
 def localize_steps(log, max_passes: int = 50):
@@ -150,6 +229,49 @@ def localize_steps(log, max_passes: int = 50):
 
     yield (0.95, "Purging libraries…")
     _purge_libraries(log)
+    yield (1.0, "Done")
+
+
+def localize_selected_steps(log, targets: list, max_passes: int = 50):
+    """Make ONLY ``targets`` (already-resolved datablocks) local, chunked.
+    Unlike :func:`localize_steps`, this deliberately skips the fast bulk
+    ``bpy.ops.object.make_local(type='ALL')`` pass — that operator has no
+    per-item filter, so it would localize things the user un-ticked. Pure
+    per-ID ``make_local()`` calls are the only mechanism with real per-item
+    granularity (docs/TODO.md #22) — slower on a huge ticked set than the
+    bulk path, a known, accepted trade-off of selective apply.
+
+    Multi-pass, same shape as :func:`localize_steps`'s own retry loop —
+    confirmed via a live probe that a SINGLE pass isn't enough: ``ID.
+    make_local()`` on a datablock needs at least one already-LOCAL user to
+    attach the new local copy to, so e.g. a material used only by a mesh
+    that itself only just became local THIS pass silently no-ops until the
+    next pass re-checks it. Scoped to the ORIGINAL ticked set only (re-
+    deriving "remaining" from the whole file, like the bulk version does,
+    would silently pull in un-ticked items too)."""
+    total = len(targets) or 1
+    prev = None
+    for n in range(1, max_passes + 1):
+        remaining = [db for db in targets if db.library is not None]
+        count = len(remaining)
+        log.info("F2 localize (selected) pass %d: %d/%d remaining", n, count, total)
+        if count == 0:
+            break
+        if prev is not None and count >= prev:
+            log.warning("F2 localize (selected): no progress at %d remaining — stopping "
+                       "(likely circular links or un-resolvable overrides)", count)
+            break
+        prev = count
+        for i, db in enumerate(remaining, 1):
+            log.debug("F2 make_local (selected): %s", db.name)
+            try:
+                db.make_local(clear_liboverride=True)
+            except (RuntimeError, ReferenceError):
+                pass
+            if i % 100 == 0 or i == count:
+                yield (0.05 + 0.85 * (i / count), f"Localizing {i}/{count} (selected, pass {n})")
+    yield (0.95, "Purging libraries…")
+    _purge_empty_libraries_only(log)
     yield (1.0, "Done")
 
 
@@ -211,6 +333,7 @@ class FILELINK_OT_make_local(bpy.types.Operator):
         from .report_store import stash_report
 
         stash_report(context, report, "f2")
+        _populate_makelocal_rows(context, items)
         for f in report.findings:
             log.info("F2 [%s] %s: %s", f.severity, f.category, f.message)
         summary = next((f for f in report.findings if f.category == "summary"), None)
@@ -380,4 +503,128 @@ class FILELINK_OT_make_local(bpy.types.Operator):
             tail = f" Backup: {self._backup}" if self._backup else ""
             self.report({"WARNING"},
                         f"Make Local cancelled — this file is partially localized.{tail}")
+        return {"CANCELLED"}
+
+
+class FILELINK_OT_make_local_selected(bpy.types.Operator):
+    """Per-datablock Make Local (docs/TODO.md #22) — the ticked-selection
+    counterpart to "Make All Local", same shape as ``filelink.merge_
+    material_selected``/``instance_geometry_selected``/``purge_orphans_
+    selected``. Modal (unlike those 3): this is the one apply path in the
+    codebase already known to be slow on large ticked sets (it can't use the
+    fast bulk operator — see :func:`localize_selected_steps`), so it needs
+    its own progress bar + ESC rather than a plain single-shot ``execute``."""
+
+    bl_idname = "filelink.make_local_selected"
+    bl_label = "Make Local Selected"
+    bl_description = ("Make each ticked linked datablock local (per-item, not the fast bulk "
+                      "pass). Takes a backup first. Runs with a progress bar — press ESC to cancel")
+    bl_options = {"REGISTER"}
+
+    _timer = None
+    _gen = None
+    _log = None
+    _backup = None
+    _targets: list = []
+
+    def cancel_message(self):
+        return "Make Local Selected cancelled (backup preserved)"
+
+    def _apply_steps(self, context, log):
+        from .safety import auto_backup
+
+        self._targets = _resolve_selected(context.window_manager.filelink_makelocal_rows)
+        yield (0.0, "Backing up…")
+        self._backup = auto_backup(context)
+        yield from localize_selected_steps(log, self._targets)
+
+    def invoke(self, context, event):
+        from ..log import get_logger
+        from .progress import set_progress
+
+        self._log = log = get_logger()
+        targets = _resolve_selected(context.window_manager.filelink_makelocal_rows)
+        if not targets:
+            self.report({"WARNING"}, "Tick at least one linked datablock")
+            return {"CANCELLED"}
+
+        self._gen = self._apply_steps(context, log)
+        wm = context.window_manager
+        wm.progress_begin(0, 100)
+        set_progress(context, 0.0, "Starting make-local (selected)…")
+        context.workspace.status_text_set("FileLink: making selected local… (ESC to cancel)")
+        self._timer = wm.event_timer_add(0.05, window=context.window)
+        wm.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        from ..log import get_logger
+
+        self._log = log = get_logger()
+        targets = _resolve_selected(context.window_manager.filelink_makelocal_rows)
+        if not targets:
+            self.report({"WARNING"}, "Tick at least one linked datablock")
+            return {"CANCELLED"}
+        for _ in self._apply_steps(context, log):  # drain synchronously
+            pass
+        return self._finalize(context)
+
+    def modal(self, context, event):
+        if event.type == "ESC":
+            return self._cancel(context)
+        if event.type != "TIMER":
+            return {"PASS_THROUGH"}
+
+        from .progress import set_progress
+
+        try:
+            fraction, status = next(self._gen)
+        except StopIteration:
+            self._teardown(context)
+            return self._finalize(context)
+
+        context.window_manager.progress_update(int(fraction * 100))
+        set_progress(context, fraction, status)
+        return {"RUNNING_MODAL"}
+
+    def _finalize(self, context):
+        wm = context.window_manager
+        # Count ACTUAL successes (.library is None now), not just attempted —
+        # a ticked child (mesh/material) whose OWNING object was left un-
+        # ticked can never actually localize (confirmed via a live probe:
+        # ID.make_local() needs at least one already-local user to attach
+        # the new local copy to), so "attempted" would silently overstate
+        # what really happened.
+        localized = sum(1 for db in self._targets if db.library is None)
+        failed = len(self._targets) - localized
+        wm.filelink_makelocal_rows.clear()
+        wm.filelink_makelocal_active = 0
+        if context.area:
+            context.area.tag_redraw()
+        tail = f" Backup: {self._backup}" if self._backup else " (no backup written)"
+        fail_note = (f" {failed} could NOT be localized — their owning object may still be "
+                    "linked (tick it too) or the reference is circular/unresolvable."
+                    if failed else "")
+        self.report({"WARNING"} if failed else {"INFO"},
+                    f"Localized {localized} selected datablock(s); "
+                    f"{len(bpy.data.libraries)} librar(ies) remain.{tail}{fail_note} "
+                    "Re-run Make Local to see any remaining.")
+        return {"FINISHED"}
+
+    def _teardown(self, context):
+        from .progress import clear_progress
+
+        wm = context.window_manager
+        if self._timer is not None:
+            wm.event_timer_remove(self._timer)
+            self._timer = None
+        wm.progress_end()
+        clear_progress(context)
+        context.workspace.status_text_set(None)
+
+    def _cancel(self, context):
+        self._teardown(context)
+        tail = f" Backup: {self._backup}" if self._backup else ""
+        self.report({"WARNING"},
+                    f"Make Local Selected cancelled — this file is partially localized.{tail}")
         return {"CANCELLED"}

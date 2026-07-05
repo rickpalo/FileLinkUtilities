@@ -91,5 +91,34 @@ FLATTEN_STEPS: tuple[AnalyzeStep, ...] = tuple(
 )
 
 
+# docs/TODO.md #22 — Automated Cleanup, redesigned to a Scan -> Review ->
+# Apply Selected flow. Deliberately a SEPARATE, small step list rather than a
+# STEPS subset (unlike DUPLICATE_STEPS/FLATTEN_STEPS above): Make Local's
+# scan is intentionally excluded from the main "Analyze All" run (it's a
+# footprint/impact measurement, not a "look for problems" check — see this
+# module's own docstring), but it IS one of the 4 cleanup functions, so it
+# needs its own entry here.
+CLEANUP_SCAN_STEPS: tuple[AnalyzeStep, ...] = (
+    AnalyzeStep("cleanup_make_local", "Make Local", "filelink.make_local", {"apply": False}),
+    AnalyzeStep("cleanup_materials", "Duplicate Materials", "filelink.material_dedup",
+                {"apply": False}),
+    AnalyzeStep("cleanup_geometry", "Duplicate Geometry", "filelink.instance_geometry",
+                {"apply": False}),
+    AnalyzeStep("cleanup_orphans", "Orphans", "filelink.scan_orphans", {"purge_orphans": False}),
+)
+
+# The ticked-selection apply counterpart to each CLEANUP_SCAN_STEPS entry —
+# same ``key``s (so a single include-toggle filter works for both scan and
+# apply), different (real, already-existing except Make Local's) operator.
+CLEANUP_APPLY_STEPS: tuple[AnalyzeStep, ...] = (
+    AnalyzeStep("cleanup_make_local", "Make Local", "filelink.make_local_selected", {}),
+    AnalyzeStep("cleanup_materials", "Duplicate Materials", "filelink.merge_material_selected",
+                {}),
+    AnalyzeStep("cleanup_geometry", "Duplicate Geometry", "filelink.instance_geometry_selected",
+                {}),
+    AnalyzeStep("cleanup_orphans", "Orphans", "filelink.purge_orphans_selected", {}),
+)
+
+
 __all__ = ["AnalyzeStep", "STEPS", "step_by_key", "DUPLICATE_STEP_KEYS", "DUPLICATE_STEPS",
-           "FLATTEN_STEP_KEYS", "FLATTEN_STEPS"]
+           "FLATTEN_STEP_KEYS", "FLATTEN_STEPS", "CLEANUP_SCAN_STEPS", "CLEANUP_APPLY_STEPS"]
