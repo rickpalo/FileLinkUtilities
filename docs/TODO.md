@@ -1,84 +1,16 @@
 # AssetDoctor — TODO / backlog
 
-## ✅ CURRENT STATE (2026-07-04): Group 12 (UI virtualization, all 4 phases) is fully
-## built. Phases 1-3 (Missing Textures, Duplicate Textures, Datablock Reconnect, Examine
-## Library, all sharing `core/picker.py`'s `GroupSpec`/`MemberRef`/
-## `flatten_group_member_rows` shell) were **live-verified 2026-07-03** against a real
-## production file — "Live verify looks good," no issues. **Phase 4** (retargeting every
-## inline Analyze-button disclosure — File Map, Circular refs, Multi-hop chains,
-## Flattenable overrides' rollup, Make Local, Dry-Run Render warnings — onto the shared
-## `ASSETDOCTOR_UL_tree` via `ops/report_store.INLINE_DETAIL_FEATURES`) is built but
-## **NOT yet live-verified**.
+## ✅ CURRENT STATE (2026-07-04): v0.2.105 PUBLISHED. Group 12 (UI virtualization, all 4
+## phases), the Phase 1/3 backlog batch, and the Phase 2 live-verify fixes (items 45/46 —
+## see below for the full per-item digest) are all live-verified, committed, tagged, and
+## on the gh-pages auto-update feed. Group 13's Analyze-All sequencer progress gap (#41
+## below) remains logged but needs a design decision, not guesswork — not resumed unless
+## asked. Flatten v2 is shipped but still imperfect — not the priority.
 ##
-## Also done since then, per `C:\Users\Rick\.claude\plans\delightful-singing-tome.md`'s
-## Phase 1 (ready fixes) and Phase 3 (quick decisions):
-## - **Phase 1, v0.2.102**: Fix-at-Source blank-library-name bug (Windows `ntpath`
-##   `//`-prefix bug); Find Orphans mesh-fingerprint crash guard extended to all 3
-##   fingerprint types (smoke-tested); Find Duplicates shape-key crash probed against
-##   the real production file — did NOT reproduce, closed per the user's call, not
-##   guessed at; `datablock_dup.py` chunking fixed to per-item (32-chunk); Broken
-##   Library Links direct/indirect labeling (smoke-tested). Separate, still-open
-##   architectural gap found: running any dedup tool through "Find All Duplicates"
-##   shows zero progress regardless of internal chunking, because the sequencer's
-##   `_call` uses a blocking `EXEC_DEFAULT` that discards nested generators' yields —
-##   needs a design decision before fixing (Group 13 #41 below).
-## - **Phase 3, v0.2.103-0.2.104**: F8 hierarchical layout reverted to root-at-top
-##   (Group 9 #30); click-to-select sticky outcome icon replacing the one-shot toast
-##   (#37, see below); heading/summary audit swept, no fixes needed (#38, see below);
-##   Multi-hop Link Chains scoped to a `has_direct`-only repoint (not full chain-
-##   flattening), and confirmed proxy/tiered link chains are fine on their own — only
-##   circular references are a real problem (#40, decided but NOT built, see below);
-##   new read-only "Check Materials" diagnostic — shader-type grouping, dangling node
-##   links, empty material slots (Group 9 #33, real Blender 5.1 smoke test, 6/6
-##   passed). Group 9 #32 (Resolution Variants auto-standardize) and #29 (crash-stack
-##   names re-check) remain unanswered/unactioned.
-##
-## **✅ COMMITTED as `ec63a4f` (2026-07-04)** — bundles v0.2.101 through v0.2.104
-## (Group 12 Phase 4 + the Phase 1/3 batches above) in one commit. **NOT pushed, NOT
-## published** — publish is still gated on the live-verify pass below.
-##
-## ⏩ NEXT SESSION: **Phase 2** — one combined live-verify session covering Group 12
-## Phase 4's 7 call sites, this session's Phase 3 batch (F8 revert/#37/Check
-## Materials), and the older still-open confirms listed in the plan file — then
-## publish per `docs/RELEASING.md`. **After that: Phase R, the full addon rename**
-## (see the plan file for the exact scope/sequence) — do this BEFORE any further new
-## backlog work so it's written under the new name from the start.
-##
-## Group 13's remaining item (the Analyze-All sequencer progress gap, #41 below) is
-## logged but needs a design decision, not guesswork. Flatten v2 is committed but
-## still imperfect — not the priority, don't resume unless asked.
-##
-## LIVE-VERIFY CHECKLIST — Phase 1 fixes (v0.2.102, 2026-07-04). Items 2/3/5 already
-## have a real headless/smoke-test confirm (see above) but never a live-UI click
-## through; item 1/4 have neither yet:
-## - Missing Textures' "Linked — fix at the source library" list: library names that
-##   used to show blank (materialMaster.blend, ThePiazzaSanMarco - People.blend) now
-##   show correctly. Examine Library's suggested-library display too, if reachable.
-## - Find Orphans on a file with an override mesh: still runs to completion (no
-##   crash), and any skipped mesh appears by name in a new "Skipped — unsafe to read"
-##   collapsible list under the Orphans section.
-## - Find Duplicate Data-blocks (standalone button, not through Analyze All) on a file
-##   with a large single-type family (e.g. hundreds of Actions): progress bar now
-##   advances smoothly and ESC/Pause work mid-scan, instead of one long freeze.
-## - Find Broken Links on a file with an indirect library (one only reachable through
-##   another linked library, not directly): that row now shows an "indirect" flag —
-##   confirm a normal directly-linked broken library does NOT show the flag (no noise
-##   on the common case).
-## LIVE-VERIFY CHECKLIST — Group 12 Phase 4 (v0.2.101, brand new, never tested). This
-## touches 7 DIFFERENT buttons across 3+ panels — check each:
-## - Analyze This File: Check Link Chain ("f7"), Audit This File ("f7live"), Find
-##   Flattenable Links' multi-hop-routes preview ("f7chain") — expand each, confirm
-##   the tree scrolls (try a file with a deep/wide result), triangles expand/collapse,
-##   clicking a leaf row still selects the datablock, and the File Map's "show what
-##   links from here" popup (click a File Map row) still opens
-## - Find Flattenable Links' OWN rollup preview under the picker ("f7flatten")
-## - Make Local's result ("f2"), Project Link Map's Find Broken Links result ("f1"),
-##   Utilities' Dry-Run Render warnings ("f9")
-## - Two of these can plausibly be expanded on screen AT ONCE (e.g. Check Link Chain +
-##   Audit This File both open) — confirm expanding/collapsing ONE doesn't affect the
-##   other's rows or scroll position
-## - Confirm the headline row (arrow + one-line summary) still looks identical to
-##   before — this part didn't change, only what's BELOW it when expanded
+## ⏩ NEXT SESSION: **Phase R, the full addon rename** (see
+## `C:\Users\Rick\.claude\plans\delightful-singing-tome.md` for the exact scope/sequence)
+## — do this BEFORE any further new backlog work so it's written under the new name from
+## the start.
 
 ## ✅ Duplicate Textures / Datablock Reconnect / Examine Library (v0.2.97/0.2.99/0.2.100)
 ## were all covered by the 2026-07-03 "Live verify looks good" confirmation above —
@@ -205,6 +137,177 @@
     so this looks like a one-off/file-specific state on the original file, not a
     general code bug. Documented only, per the user's explicit call — no further
     investigation or fix planned.
+
+45. **Crash A (item 42) REOPENED — fresh crash log, 2026-07-04 Phase 2 live-verify
+    session, real file `ThePiazzaSanMarco - People.blend`.** Log synced as
+    `ThePiazzaSanMarco - People.crash_FindDuplicates.txt`. Python backtrace:
+    `progress.py:137 modal → analyze_all.py:65 run_steps → analyze_all.py:27 _call →
+    progress.py:86 execute → datablock_dup.py:174 run_steps → datablock_dup.py:121
+    _gather_steps → datablock_dup.py:73 _fingerprint_for → fingerprint.py:231
+    fingerprint_shape_key → _sha → _canon → _round` (recursing through the
+    dict→list→dict→list shape-key payload shape, not runaway/infinite — matches
+    the expected nesting depth). **This satisfies item 42's own reopen condition**
+    ("revisit only if the crash recurs with a fresh crash log") — the user's
+    explicit call was not to guess a new `shape_key_risk_reason` condition without
+    evidence, and now there's a second one. Confirmed BY READING THE CODE (not
+    guessed): `datablock_dup.py::_fingerprint_for`'s shape_keys branch already
+    calls `extract.shape_key_risk_reason(block)` and skips (with a listed reason)
+    before ever calling `fingerprint_shape_key` — so the crash proves the existing
+    2-condition check (`datablock_risk_reason`: `is_missing` / Library Override,
+    checked against the shape key's OWNER MESH) let a genuinely risky shape key
+    through. A third risk pattern exists that neither condition catches. Per the
+    user's own established rule for this exact disease class: do NOT add a guessed
+    third condition — needs a live diagnostic probe against this real file (open it,
+    iterate every shape key, print owner/mesh state for ones NOT flagged by the
+    current check, look for what's structurally different) before designing the
+    fix.
+    **Probed 2026-07-04, DID NOT REPRODUCE — same outcome as the first Crash A
+    probe, this time against the ACTUAL file that crashed.** Throwaway script
+    (mirrors `ops/datablock_dup.py::_gather_steps` exactly: local shape keys only,
+    filtered to `.NNN`-family membership via `core.datablock_graph.duplicate_families`)
+    opened `ThePiazzaSanMarco - People.blend` fresh, headless, and ran
+    `shape_key_risk_reason` + `extract_shape_key` + `fingerprint_shape_key` on
+    every one of the 807 local shape keys one at a time with output flushed after
+    each, so a crash's last line would name the culprit. Result: **all 807
+    fingerprinted successfully, 0 flagged by the existing risk check, 0
+    vertex-count mismatches (key_block data length vs. owner mesh vertex count —
+    the specific "third risk pattern" hypothesis this probe was built to catch),
+    0 crashed.** Confirms the crash is NOT a property of any single shape key in
+    isolation, even in the exact file where it happened — reinforcing item 42's
+    standing hypothesis that it's order/state-dependent (something about the live
+    session's sequence: Find Flattenable Links → Make Local → Scan Broken Links →
+    THEN Find Duplicates) or tied to viewport/depsgraph activity that
+    `--background` mode structurally never exercises. **Per the user's own rule:
+    closing again without a guessed fix.** The only remaining diagnostic step
+    would be scripting that exact multi-operator sequence in one headless probe to
+    see if the STATE left behind by the earlier steps (not the file alone) is what
+    triggers it — deferred, ~20-30 min of Blender time, needs the user's call on
+    whether it's worth pursuing further or left as a known, rare, unreproducible
+    crash (the per-type Find Duplicates buttons from item 46j already let the user
+    route around it in practice).
+    **User's call, 2026-07-04: close it again, move on to item 46** — not worth
+    scripting the exact live sequence right now.
+
+46. **2026-07-04 Phase 2 live-verify session — 13 items from clicking through the
+    Group 12 Phase 4 UI + Phase 3 batch changes on the real `ThePiazzaSanMarco -
+    People.blend` / `PSM_Stage_v5.2.blend` files.** ALL FIXED same session, `v0.2.105`
+    (item i/45 handled separately — see that item above). Per-item outcome after the
+    a-m list below:
+    - **a/c FIXED — but the real bug was different from the guess.** Check Materials
+      (`matdiag`) was ALREADY on `ASSETDOCTOR_UL_tree` at the time of this report
+      (built same session as Check Materials itself, v0.2.104) — reading the code
+      disproved the "not ported yet" theory. The REAL cause of (c)'s scroll-jump:
+      `ops/report_store.py`'s `focus_row`/`rebuild_rows_for_prop` had a case for
+      every OTHER virtualized prop family (Reports tab, Resource Usage, the 5
+      pickers) but not for `assetdoctor_detail_expanded` — the ONE prop shared by
+      every Group 12 Phase 4 inline disclosure (Check Materials, Check Link Chain,
+      Make Local, …) — so NONE of them ever re-pointed their list's active index at
+      the row you just clicked. Fixed by adding that missing case (+1 smoke check in
+      `smoke_report.py`). Affects every inline-detail feature, not just Check
+      Materials.
+    - **b FIXED** exactly as scoped: `ops/material_diagnostics.py` now recurses into
+      a Surface-linked node GROUP's own Group Output, and `core.material_diagnostics`
+      gained a `COMBINED_SENTINEL`/`COMBINED_SHADER` bucket. +2 pytest, +3 smoke
+      checks (a synthetic "hair shader" group mixing Principled Hair + Glossy +
+      Transparent, matching the real `HG_Hair_V4.001` case).
+    - **d FIXED — button renamed; the headline bug was also different from the
+      guess.** Tracing `_report_headline`/`core.f2_makelocal.build_makelocal_report`
+      showed the "Summary" node's real text was ALREADY the headline (the existing
+      `summary.children[0].label` branch handled it) — the actual gap was that this
+      ONE branch never set `skip`, so the inline body wasn't excluded and showed a
+      redundant "Summary" row repeating the same text under a pointless arrow. Fixed
+      by setting `skip=summary` there too (+2 smoke checks).
+    - **e** no action needed (already confirmed working).
+    - **f FIXED**: `f4` added to `INLINE_DETAIL_FEATURES`; `_draw_orphans`'s
+      fake_only/identical sections now build a filtered sub-`Report` and draw it via
+      the same `ASSETDOCTOR_UL_tree` machinery (the "orphan" checkbox list and
+      "summary" headline stay bespoke, unchanged) — the real motivator was less
+      "inconsistent styling" and more that a production file's 1093 identical-group
+      findings were ALL instantiated as native rows regardless of scroll position
+      before this. +3 smoke checks (two synthetic fake-user duplicate materials).
+    - **g FIXED**: new `_path_normalization_clean(wm)`; the "Normalize" button's
+      `draw_action` now also requires `not clean`.
+    - **h DEFERRED, not fixed.** The underlying popup (`ASSETDOCTOR_OT_show_linked_from`)
+      already has its own "Nothing found" branch — the gap, if real, is that the
+      TRIGGER for it (a `popup_parent` on a File Map row) may not get wired up when a
+      file has zero links, which needs tracing through `core/depscan.py`'s File Map
+      construction to confirm — not done this session (lower confidence + the user's
+      own note says they plan to re-test on a file that has links first).
+    - **j FIXED** exactly as scoped: `_draw_duplicates` is now a `_draw_group_header`-
+      driven collapsed section (key `"duplicates:all"`) whose header carries the
+      relocated "Find All Duplicates" trigger + a live "N/4 scan(s) run" summary;
+      expanding it shows the 4 individual buttons (`scan_datablock_dups`/
+      `material_dedup`/`instance_geometry`/`scan_content_dups`), each immediately
+      followed by its own already-existing results function (unchanged). +7 smoke
+      checks.
+    - **k (tooltip) FIXED**: `ASSETDOCTOR_OT_row_toggle` gained an explicit short
+      `bl_description` instead of falling back to its class docstring.
+    - **k (popup) not reproducible** — no code change, matches the original note.
+    - **l FIXED**: the "no_user" outcome message in `ops/report_store.py` now leads
+      with "exists, but has no object instance in the current view layer" instead of
+      "no user found," which read the same as the separate "doesn't exist at all"
+      case above it.
+    - **m FIXED — two distinct triangles, two distinct causes.** (1) `f7chain`'s
+      all-zero case adds BOTH an "overview" Finding (always) AND a "clean" Finding
+      (`core.linkchain.build_chain_report`'s own fallback, kept for its existing test
+      coverage) — only the overview node was ever skipped from the inline body, so
+      `_f7chain_headline` now returns BOTH as `skip` (a list; `_draw_report_detail`
+      generalized to accept either shape). (2) The `f7flatten` "No
+      override_with_transform characters found" row: traced the code and this ALREADY
+      renders as a plain non-expandable row today (a lone flat "clean" node in the
+      generic `_report_headline` path already produces `remaining=[]`) — the
+      screenshot most likely reflects a stale installed build, not current source; no
+      change made here, flagged for the user to re-confirm live. +2 smoke checks for
+      (1).
+    
+    Original 13-item list (kept for context):
+    a. **Check Materials** doesn't use the shared results-tree UI (Group 12 Phase 4's
+       `ASSETDOCTOR_UL_tree`) yet — left-align/indent/click-to-select needs porting
+       in, same as the other inline-disclosure sections got.
+    b. **Check Materials shader-type classification is shallow** — doesn't look
+       inside node groups, so a node group wrapping multiple BSDFs (e.g.
+       `HG_Hair_V4.001`, a Principled Hair + Glossy + Transparent mix) gets listed
+       as its own "shader type" instead of being recognized as a combined shader.
+       Decided fix (not built): any material whose graph combines shader types —
+       including through a node group — lumps into one "Combined Shader" bucket.
+    c. Clicking a material row **near the bottom of Check Materials' list jumps
+       the view to the top** — same scroll-position bug the shared results-tree UI
+       already solved elsewhere; folds into (a)'s port.
+    d. **Make Local**: button label "Make Local Impact" is confusing in the Analyze
+       section — rename to "Make Local". Its result's summary line is empty; the
+       actual summary text is on the line below it — needs to follow the standard
+       summary-on-the-headline-row convention used everywhere else ([[feedback_summary_propagation]]).
+    e. Find Orphans' progress bar now updates live — confirmed working, no action.
+    f. **Find Orphans results** need to move onto the shared results-tree UI too
+       (same reasons as a/c).
+    g. **Path Normalization**: when the result is already-clean (nothing to
+       normalize), hide the "Normalize" button instead of showing a no-op action.
+    h. **Check Link Chain** never showed a "what links from here" popup on this
+       file because there genuinely were no links — but a negative case still needs
+       its own visible popup/result ([[feedback_negative_output]]: every scan needs a
+       visible "nothing found" result, not silence).
+    i. **Find Duplicates crashed** — see item 45 above, needs the diagnostic probe
+       before any fix.
+    j. **Find Duplicates restructure**: replace the single "Find All Duplicates"
+       button with a collapsed-by-default sub-section; expanding it reveals the
+       individual per-type buttons (Duplicate Textures / Materials / Geometry /
+       etc. — recover the original breakdown) each with its own icon, button, and
+       its own results sub-sub-section. "Find All" then runs each in sequence,
+       waiting for one's results/UI update before starting the next. Also lets the
+       user avoid the specific crashing sub-scanner (item 45) by running the others
+       individually meanwhile.
+    k. Confirmed **not reproduced**: the Check Link Chain "What Links from Here"
+       popup not appearing — likely cursor position, needs a re-test on a file that
+       actually has links. Separately, the expand/collapse tooltip text (screenshot
+       `assetdoctor_detail_expanded`'s docstring-as-tooltip) is too long/low-value —
+       needs a short user-facing string instead of the implementation docstring.
+    l. **Audit This File's dependency-loop click-to-select result is ambiguous** —
+       doesn't make clear whether the reported problem is "object not in this view
+       layer" vs. "object doesn't exist at all"; the outcome message needs to
+       distinguish the two.
+    m. **Find Flattenable Links**: expand/collapse triangles are drawn on rows with
+       nothing to expand (the "2 multi-hop routes" and "no override_with_transform"
+       rows) — should only show the triangle when there's actually a child list.
 
 ## ✅ Group 12 Phase 3 (1 of 4) — Missing Textures virtualized, v0.2.96 (2026-07-03,
 ## NOT committed, NOT live-verified). New shape-B (single-level group→member) picker,

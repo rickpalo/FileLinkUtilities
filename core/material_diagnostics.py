@@ -38,6 +38,21 @@ NO_NODES = "No Nodes (legacy)"
 NO_OUTPUT = "No Output Node"
 NO_SURFACE = "No Surface Shader"
 MIXED_SHADER = "Mixed Shader"
+COMBINED_SHADER = "Combined Shader"
+
+# Sentinel ``surface_idname`` the ops layer returns when a node GROUP's own
+# internal graph mixes multiple shaders (docs/TODO.md item 46b, 2026-07-04) --
+# distinct from ``MIXED_SHADER`` (a Mix/Add Shader wired directly at the
+# material's own surface) so the two discovery paths stay tellable apart if
+# that's ever useful, per the user's own naming for this new case.
+COMBINED_SENTINEL = "__COMBINED__"
+
+
+def is_mix_idname(idname: str) -> bool:
+    """Whether ``idname`` is a Mix/Add Shader node -- exposed so the ops
+    layer's node-group traversal (docs/TODO.md item 46b) can recognise a
+    combining node without reaching into this module's private set."""
+    return idname in _MIX_IDNAMES
 
 
 def classify_shader_label(surface_idname: str | None, group_tree_name: str | None = None) -> str:
@@ -46,6 +61,8 @@ def classify_shader_label(surface_idname: str | None, group_tree_name: str | Non
     unlinked (caller has already ruled out the no-nodes/no-output cases)."""
     if surface_idname is None:
         return NO_SURFACE
+    if surface_idname == COMBINED_SENTINEL:
+        return COMBINED_SHADER
     if surface_idname in _MIX_IDNAMES:
         return MIXED_SHADER
     if surface_idname == "ShaderNodeGroup":

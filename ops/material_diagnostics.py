@@ -13,17 +13,57 @@ import os
 
 import bpy
 
-from ..core.material_diagnostics import build_material_diagnostics_report, classify_shader_label
+from ..core.material_diagnostics import (
+    COMBINED_SENTINEL,
+    build_material_diagnostics_report,
+    classify_shader_label,
+    is_mix_idname,
+)
 from .progress import ModalProgressMixin
 
 _CHUNK = 64  # materials+objects processed between progress yields
 _FILE_SOURCES = {"FILE", "SEQUENCE", "MOVIE", "TILED"}
 
 
+def _group_output_surface_node(node_tree):
+    """The node feeding a node GROUP's own Group Output "Shader" socket, or
+    ``None`` if there's no output node or no linked shader socket."""
+    out = next((n for n in node_tree.nodes if n.type == "GROUP_OUTPUT"), None)
+    if out is None:
+        return None
+    for sock in out.inputs:
+        if sock.type == "SHADER" and sock.is_linked:
+            return sock.links[0].from_node
+    return None
+
+
+def _group_combines_shaders(node_tree, visited: set) -> bool:
+    """Whether ``node_tree`` (a node GROUP's own internal graph) ultimately
+    feeds its Group Output from a Mix/Add Shader -- descending through any
+    further-nested groups too (docs/TODO.md item 46b, 2026-07-04: a
+    convenience group like "HG_Hair_V4.001" can wrap a Principled Hair +
+    Glossy + Transparent mix, which used to be lumped under its own group
+    name as if it were one single shader type). ``visited`` guards against a
+    group that contains itself, directly or via nesting."""
+    if node_tree is None or node_tree.name in visited:
+        return False
+    visited.add(node_tree.name)
+    node = _group_output_surface_node(node_tree)
+    if node is None:
+        return False
+    if is_mix_idname(node.bl_idname):
+        return True
+    if node.bl_idname == "ShaderNodeGroup":
+        return _group_combines_shaders(node.node_tree, visited)
+    return False
+
+
 def _surface_shader_idname(mat):
     """``(idname, group_tree_name)`` for the node feeding Surface, or
     ``(None, None)`` if there's no linked Surface shader to trace (no nodes,
-    no output node, or the Surface socket itself is unlinked)."""
+    no output node, or the Surface socket itself is unlinked). ``idname`` is
+    ``core.material_diagnostics.COMBINED_SENTINEL`` when a Surface-linked
+    node GROUP mixes multiple shaders internally (item 46b above)."""
     if not getattr(mat, "use_nodes", False) or mat.node_tree is None:
         return None, None
     out = mat.node_tree.get_output_node("ALL")
@@ -38,6 +78,8 @@ def _surface_shader_idname(mat):
         return None, None
     node = surface.links[0].from_node
     if node.bl_idname == "ShaderNodeGroup":
+        if node.node_tree and _group_combines_shaders(node.node_tree, set()):
+            return COMBINED_SENTINEL, None
         return node.bl_idname, (node.node_tree.name if node.node_tree else None)
     return node.bl_idname, None
 

@@ -1036,14 +1036,21 @@ def _feature_tree_nodes(wm, feature: str) -> tuple[bool, list]:
     return True, nodes
 
 
-def _f7chain_headline(wm, nodes) -> tuple[str, object | None]:
+def _f7chain_headline(wm, nodes) -> tuple[str, list]:
     """f7chain's flat overview line, with the flattenable count made LIVE
     (docs/TODO.md Group 11 #47, the standing summary-propagation rule) —
     "AA of YY flattenable" instead of the static YY baked in at scan time,
     where AA is however many are still pending after any Flatten Selected
     run. Substitutes the known exact substring `core.linkchain.
     build_chain_report` writes rather than a generic parse -- this module
-    authors both sides of that string, so an exact match is reliable."""
+    authors both sides of that string, so an exact match is reliable.
+
+    Skips BOTH the overview node AND the trailing "clean" node (docs/TODO.md
+    item 46m, 2026-07-04) when nothing was found — `core.linkchain.
+    build_chain_report` still adds a "No multi-hop link chains or flattenable
+    overrides found" Finding for that case (kept for its own test coverage),
+    but the overview line above already spells out the same zero counts, so
+    showing it again in the inline body just earns a pointless expand arrow."""
     first = nodes[0]
     label = first.label
     from ..core.report import Report
@@ -1060,7 +1067,11 @@ def _f7chain_headline(wm, nodes) -> tuple[str, object | None]:
         old = f"{total} flattenable (override+transform)"
         new = f"{remaining} of {total} flattenable (override+transform)"
         label = label.replace(old, new, 1)
-    return label, first
+    skip = [first]
+    clean = next((n for n in nodes if n.key.startswith("f7chain:clean")), None)
+    if clean is not None:
+        skip.append(clean)
+    return label, skip
 
 
 def _report_headline(nodes, feature: str, wm) -> tuple[str, object | None]:
@@ -1098,7 +1109,16 @@ def _report_headline(nodes, feature: str, wm) -> tuple[str, object | None]:
     if not cats:
         summary = next((n for n in nodes if n.key == summary_key), None)
         if summary and summary.children:
-            return summary.children[0].label, None
+            # docs/TODO.md item 46d, 2026-07-04: when the ONLY node is the
+            # "Summary" category wrapper (e.g. Make Local's own single count
+            # line, nothing else found), `skip=summary` so the inline body
+            # doesn't ALSO show a redundant "Summary" row repeating the exact
+            # same text underneath a pointless expand arrow — same standard
+            # every other single-line clean/overview headline already follows.
+            # Previously `skip=None` here, the one place that didn't.
+            return summary.children[0].label, summary
+        if summary:
+            return summary.label, summary
         return "✓ nothing found", None
     parts = [_fmt_count(n.label, n.detail) for n in cats[:4]]
     if len(cats) > 4:
@@ -1146,7 +1166,10 @@ def _draw_report_detail(layout, wm, feature: str) -> None:
         return
 
     headline, skip = _report_headline(nodes, feature, wm)
-    remaining = [n for n in nodes if n is not skip]
+    # `skip` is usually one node; f7chain's own headline (item 46m) can name
+    # several (the overview line AND a now-redundant trailing "clean" node).
+    skip_nodes = skip if isinstance(skip, list) else ([] if skip is None else [skip])
+    remaining = [n for n in nodes if not any(n is s for s in skip_nodes)]
     if not remaining:
         row.label(text=headline)
         return
@@ -1239,23 +1262,54 @@ def _duplicates_has_run(wm) -> bool:
                 or _feature_has_run(wm, "geo") or wm.assetdoctor_dup_scanned)
 
 
-def _draw_duplicates(layout, wm, narrow: bool) -> None:
-    """Find Duplicates — ONE results area for all 4 scans this trigger runs
-    (Data-blocks/Materials/Geometry/Image Content). Restructured 2026-06-27
-    (docs/TODO.md #16): each scan keeps its own merge/instance logic — the
-    four engines verify "identical" differently (node-tree hash, mesh/cluster
-    hash, dims+pixel hash, generic content hash), so that stays separate by
-    design — but they now draw as one consistent results area (a header line
-    per type, its own actionable rows, and the same "kept separate" treatment
-    everywhere) instead of 4 separately-styled boxes plus a floating
-    duplicate headline above them."""
+def _duplicates_overview_summary(wm) -> str:
+    """"Find Duplicates" collapsed-header summary (docs/TODO.md item 46j,
+    2026-07-04) — how many of the 4 folded-in scans have run, not each one's
+    own removable-count breakdown (each keeps its OWN live headline, visible
+    once this section is expanded)."""
     if not _duplicates_has_run(wm):
-        return
+        return "Find Duplicates"
+    scanned = sum([bool(wm.assetdoctor_datablock_scanned), bool(wm.assetdoctor_mat_scanned),
+                   _feature_has_run(wm, "geo"), bool(wm.assetdoctor_dup_scanned)])
+    return f"Find Duplicates — {scanned}/4 scan(s) run"
+
+
+def _draw_duplicates(layout, wm, narrow: bool) -> None:
+    """Find Duplicates — a collapsed-by-default sub-section (docs/TODO.md
+    item 46j, 2026-07-04) wrapping the 4 scans this trigger used to run as
+    one black box (Data-blocks/Materials/Geometry/Image Content). Expanding
+    it reveals each scan's OWN button — so a crash-prone scanner (item 45)
+    doesn't block running the other 3 — plus its own results area, unchanged
+    internally: each ``_draw_*_dups`` already gates on its own ``*_scanned``
+    flag and draws nothing until ITS OWN button has been clicked. "Find All
+    Duplicates" (the header's own action button) still runs all 4 in
+    sequence via the existing ``assetdoctor.find_duplicates`` sequencer,
+    waiting for each step's UI update before starting the next — unchanged,
+    just relocated from its own top-level row into this header."""
+    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+    key = "duplicates:all"
+    is_open = key in expanded
     outer = layout.box().column(align=True)
-    _draw_datablock_dups(outer, wm)
-    _draw_material_dups(outer, wm)
-    _draw_geo_dups(outer, wm)
-    _draw_duplicate_textures(outer, wm, narrow)
+    _draw_group_header(
+        outer, key=key, prop="assetdoctor_detail_expanded", is_exp=is_open,
+        label=_duplicates_overview_summary(wm), icon="LIBRARY_DATA_OVERRIDE",
+        action=lambda r: r.operator("assetdoctor.find_duplicates",
+                                    text="Find All Duplicates", icon="PLAY"))
+    if not is_open:
+        return
+    col = outer.column(align=True)
+    col.operator("assetdoctor.scan_datablock_dups",
+                 text="Find Duplicate Data-blocks", icon="LIBRARY_DATA_OVERRIDE")
+    _draw_datablock_dups(col, wm)
+    col.separator()
+    col.operator("assetdoctor.material_dedup", text="Find Duplicate Materials", icon="MATERIAL")
+    _draw_material_dups(col, wm)
+    col.separator()
+    col.operator("assetdoctor.instance_geometry", text="Find Duplicate Geometry", icon="MESH_DATA")
+    _draw_geo_dups(col, wm)
+    col.separator()
+    col.operator("assetdoctor.scan_content_dups", text="Find Duplicate Textures", icon="IMAGE_DATA")
+    _draw_duplicate_textures(col, wm, narrow)
 
 
 def _datablock_dups_headline(wm) -> str:
@@ -1348,6 +1402,27 @@ def _path_normalization_headline(wm) -> str:
     if abs_groups:
         bits.append(f"{abs_groups} absolute-path drive group(s)")
     return "Path Normalization — " + ", ".join(bits)
+
+
+def _path_normalization_clean(wm) -> bool:
+    """Whether the LAST Check Library Paths scan found nothing to normalize —
+    docs/TODO.md item 46g, 2026-07-04: the "Normalize" action button used to
+    stay visible even on a clean result, offering a no-op. Recomputes the
+    same three counts as :func:`_path_normalization_headline` rather than
+    string-matching its "✓ clean" text."""
+    from ..core.report import Report
+    from ..ops.report_store import data_prop
+
+    if not _feature_has_run(wm, "f7fix"):
+        return False
+    try:
+        report = Report.from_json(getattr(wm, data_prop("f7fix"), ""))
+        renames = sum(1 for f in report.findings if f.category == "normalize_path")
+    except Exception:
+        renames = 0
+    dup_groups = len({item.group for item in wm.assetdoctor_dup_lib_members})
+    abs_groups = len({item.group for item in wm.assetdoctor_abs_path_members})
+    return not renames and not dup_groups and not abs_groups
 
 
 def _normalize_action_button(row) -> None:
@@ -1571,9 +1646,10 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         # combined summary followed by what each individual button would have
         # shown. Resolution Variants stays its OWN separate button (a
         # different kind of analysis — multi-res footprint, not duplicates).
-        _analyze_row(layout, wm, "find_duplicate_datablocks", "assetdoctor.find_duplicates",
-                     "Find Duplicates", "LIBRARY_DATA_OVERRIDE",
-                     has_run=_duplicates_has_run(wm))
+        # Restructured into a collapsed-by-default sub-section (docs/TODO.md
+        # item 46j, 2026-07-04) — the "Find All Duplicates" trigger now lives
+        # in `_draw_duplicates`'s own collapsible header, alongside the 4
+        # individual per-type buttons its expanded body reveals.
         _draw_duplicates(layout, wm, narrow)
 
         _analyze_row(layout, wm, "find_reconnectable", "assetdoctor.scan_reconnect_targets",
@@ -1590,7 +1666,8 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
                      "Check Library Paths", "FILE_REFRESH",
                      _path_normalization_headline(wm),
                      draw_action=_normalize_action_button
-                     if _feature_has_run(wm, "f7fix") else None).apply = False
+                     if _feature_has_run(wm, "f7fix") and not _path_normalization_clean(wm)
+                     else None).apply = False
         _draw_path_normalization(layout, wm)
 
         _analyze_row(layout, wm, "find_missing_textures", "assetdoctor.scan_broken_textures",
@@ -1623,12 +1700,15 @@ class ASSETDOCTOR_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         _analyze_row(layout, wm, "analyze_memory_disk", "assetdoctor.analyze_resources",
                      "Analyze Memory/Disk", "VIEWZOOM", _resource_summary(wm))
         _draw_resource_breakdown(layout, wm)
-        # "Make Local Impact" = the old Make Local panel's "Report (Dry Run)"
-        # button, relocated here for now (user request, 2026-06-25) — it will
-        # replace that panel once a Fix-it/Apply button joins it in Cleanup &
-        # Fixes (Phase 3c), at which point the whole Make Local panel can go.
+        # "Make Local" = the old Make Local panel's "Report (Dry Run)" button,
+        # relocated here for now (user request, 2026-06-25) — it will replace
+        # that panel once a Fix-it/Apply button joins it in Cleanup & Fixes
+        # (Phase 3c), at which point the whole Make Local panel can go.
+        # Renamed from "Make Local Impact" (docs/TODO.md item 46d,
+        # 2026-07-04) — confusing in the Analyze section, where every other
+        # button already names the ANALYSIS it runs, not its effect.
         _analyze_row(layout, wm, "", "assetdoctor.make_local",
-                     "Make Local Impact", "LIBRARY_DATA_DIRECT",
+                     "Make Local", "LIBRARY_DATA_DIRECT",
                      has_run=_feature_has_run(wm, "f2")).apply = False
         _draw_report_detail(layout, wm, "f2")
         # Profile Render relocated to Utilities (Group 11 #42, 2026-06-26) — it
@@ -2227,8 +2307,17 @@ def _draw_orphans(layout, wm) -> None:
     and identical-cluster findings stay informational/read-only (deliberate,
     existing design — ``ops.orphans``'s module docstring: clearing fake users
     or merging identical datablocks "reflects intent, not just cleanup", so
-    no checkbox/bulk-action for those here), drawn straight from the report."""
+    no checkbox/bulk-action for those here) — drawn via the SAME shared
+    ``ASSETDOCTOR_UL_tree`` machinery every other section uses (docs/TODO.md
+    item 46f, 2026-07-04: these used to be hand-rolled ``box.row()`` loops,
+    inconsistently indented and unvirtualized — a real production file with
+    1000+ identical-datablock groups instantiated every single row regardless
+    of scroll position). "orphan" (the checkbox list above) and "summary"
+    (already the button's own headline) are deliberately excluded from this
+    sub-report."""
     from ..core.report import Report
+    from ..core.tree import report_to_tree
+    from ..ops import report_store
     from ..ops.report_store import SELECT_OUTCOME_ICON, data_prop, get_select_outcome
 
     if not _feature_has_run(wm, "f4"):
@@ -2239,10 +2328,9 @@ def _draw_orphans(layout, wm) -> None:
         return
 
     rows = wm.assetdoctor_orphan_rows
-    fakes = next((f for f in report.findings if f.category == "fake_only"), None)
-    identical = [f for f in report.findings if f.category == "identical"]
+    ro_findings = [f for f in report.findings if f.category in ("fake_only", "identical")]
     skipped_lines = [ln for ln in wm.assetdoctor_orphan_skipped_text.split("\n") if ln]
-    if not (len(rows) or (fakes and fakes.items) or identical or skipped_lines):
+    if not (len(rows) or ro_findings or skipped_lines):
         return
 
     box = layout.box().column(align=True)
@@ -2260,49 +2348,20 @@ def _draw_orphans(layout, wm) -> None:
             if outcome:
                 frow.label(text="", icon=SELECT_OUTCOME_ICON.get(outcome, "NONE"))
 
-    expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
-
-    if fakes and fakes.items:
-        ckey = "orphans:fake_only"
-        is_exp = ckey in expanded
-        _draw_group_header(box, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
-                           label=fakes.message, icon="INFO")
-        if is_exp:
-            for label in fakes.items:
-                type_name, _, name = label.partition("/")
-                frow = box.row(align=True)
-                frow.separator(factor=2.0)
-                op = frow.operator("assetdoctor.select_datablock", text=name,
-                                   icon="NONE", emboss=False)
-                op.type, op.name = type_name, name
-                outcome = get_select_outcome(wm, type_name, name)
-                if outcome:
-                    frow.label(text="", icon=SELECT_OUTCOME_ICON.get(outcome, "NONE"))
-
-    if identical:
-        ckey = "orphans:identical"
-        is_exp = ckey in expanded
-        _draw_group_header(box, key=ckey, prop="assetdoctor_detail_expanded", is_exp=is_exp,
-                           label=f"{len(identical)} identical-datablock group(s)", icon="INFO")
-        if is_exp:
-            for i, f in enumerate(identical):
-                fkey = f"orphans:identical:{i}"
-                f_is_exp = fkey in expanded
-                _draw_group_header(box, key=fkey, prop="assetdoctor_detail_expanded",
-                                   is_exp=f_is_exp, label=f.message, icon="NONE",
-                                   indent_factor=2.0)
-                if not f_is_exp:
-                    continue
-                for label in f.items:
-                    type_name, _, name = label.partition("/")
-                    mrow = box.row(align=True)
-                    mrow.separator(factor=3.0)
-                    op = mrow.operator("assetdoctor.select_datablock", text=name,
-                                       icon="NONE", emboss=False)
-                    op.type, op.name = type_name, name
-                    outcome = get_select_outcome(wm, type_name, name)
-                    if outcome:
-                        mrow.label(text="", icon=SELECT_OUTCOME_ICON.get(outcome, "NONE"))
+    if ro_findings:
+        ro_report = Report(title=report.title, feature=report.feature, findings=ro_findings)
+        ro_nodes = report_to_tree(ro_report)
+        expanded = set(filter(None, wm.assetdoctor_detail_expanded.split("\n")))
+        report_store.rebuild_inline_detail_rows(wm, "f4", ro_nodes, expanded)
+        rows_prop = report_store.inline_rows_prop("f4")
+        n = len(getattr(wm, rows_prop))
+        if n:
+            box.template_list(
+                "ASSETDOCTOR_UL_tree", "inline_f4",
+                wm, rows_prop,
+                wm, report_store.inline_active_prop("f4"),
+                rows=min(12, max(3, n)),
+            )
 
     _draw_kept_separate(box, wm, "orphans:skipped", skipped_lines,
                         label=f"Skipped — unsafe to read ({len(skipped_lines)})", icon="ERROR")

@@ -55,7 +55,7 @@ TREE_FEATURES = {"f7"}
 # site), each needing its OWN virtualized rows collection since several of
 # these can be expanded SIMULTANEOUSLY in the same Analyze panel (unlike the
 # Reports tab, which only ever shows one active feature at a time).
-INLINE_DETAIL_FEATURES = ("f1", "f2", "f7", "f7chain", "f7flatten", "f7live", "f9", "matdiag")
+INLINE_DETAIL_FEATURES = ("f1", "f2", "f4", "f7", "f7chain", "f7flatten", "f7live", "f9", "matdiag")
 
 
 def data_prop(feature: str) -> str:
@@ -294,6 +294,24 @@ def focus_row(wm, prop: str, key: str) -> None:
             if item.key == key:
                 wm.assetdoctor_examine_picker_active = i
                 return
+    elif prop == "assetdoctor_detail_expanded":
+        # Group 12 Phase 4's inline Analyze-button disclosures (docs/TODO.md
+        # item 46c, 2026-07-04 live-verify: clicking a row deep in Check
+        # Materials' list jumped back to the top) — omitted when Phase 4 added
+        # this shared prop, same disease this function was originally written
+        # to fix for the other collections above. A toggled node's OWN row
+        # survives the toggle unchanged (only ITS CHILDREN appear/disappear),
+        # so it's safe to search the not-yet-rebuilt collection here (the real
+        # rebuild happens lazily on the next `_draw_report_detail` draw, per
+        # that function's own docstring).
+        feature = key.split(":", 1)[0]
+        coll = getattr(wm, inline_rows_prop(feature), None)
+        if coll is None:
+            return
+        for i, item in enumerate(coll):
+            if item.key == key:
+                setattr(wm, inline_active_prop(feature), i)
+                return
 
 
 class ASSETDOCTOR_OT_row_toggle(bpy.types.Operator):
@@ -321,6 +339,12 @@ class ASSETDOCTOR_OT_row_toggle(bpy.types.Operator):
 
     bl_idname = "assetdoctor.row_toggle"
     bl_label = "Expand/Collapse"
+    # Explicit and short (docs/TODO.md item 46k, 2026-07-04 live-verify) — an
+    # operator with no `bl_description` falls back to its class docstring as
+    # the tooltip, and that docstring is implementation detail for developers
+    # reading this file, not a useful hover hint for the user clicking a
+    # triangle.
+    bl_description = "Expand or collapse this row"
     bl_options = {"INTERNAL"}
 
     key: bpy.props.StringProperty()  # type: ignore[valid-type]
@@ -508,9 +532,16 @@ class ASSETDOCTOR_OT_select_datablock(bpy.types.Operator):
             # 2026-07-04: ALSO now recorded per-row (`_save_select_outcome`)
             # so the row itself keeps showing this outcome after you've
             # scrolled past the message, not just this one-shot toast.
-            msg = (f"{self.type}/{self.name}: no user found in the current view "
-                   "layer (it may be unused, or its collection is excluded) — "
-                   "check Outliner → Display Mode → Blender File / Orphan Data")
+            # Reworded (docs/TODO.md item 46l, 2026-07-04 live-verify: "is the
+            # object not found in this view layer, or is the object itself
+            # not found?") — this branch only runs once `_resolve_target()`
+            # already succeeded above, so the datablock ITSELF definitely
+            # still exists; make that explicit instead of leading with "no
+            # user found," which reads the same as the unresolved case above.
+            msg = (f"{self.type}/{self.name}: exists, but has no object instance in "
+                   "the current view layer (it may be unused, or its collection is "
+                   "excluded from this view layer) — check Outliner → Display Mode → "
+                   "Blender File / Orphan Data")
             _save_select_outcome(wm, self.type, self.name, "no_user")
             self.report({"INFO"}, msg)
             set_result(context, msg, ok=False)

@@ -5,6 +5,41 @@ major. From 0.2.x onward, entries below are grouped by feature area rather than 
 version bump (the project moved to much more frequent small bumps) — see `docs/TODO.md` for
 the detailed session-by-session build history behind any entry.
 
+## [0.2.105] — Phase 2 live-verify fixes
+
+### Changed
+- **Find Orphans'** fake-user-only and identical-datablock sections now share the same
+  virtualized `ASSETDOCTOR_UL_tree` every other diagnostic uses, instead of hand-rolled,
+  unindented row loops — matters most on a real production file (1000+ identical-datablock
+  groups instantiated every row regardless of scroll position before this).
+- **Find Duplicates** is now a collapsed-by-default sub-section: expanding it reveals the 4
+  individual scan buttons (Data-blocks / Materials / Geometry / Textures) each with their own
+  results area, so one problematic scanner doesn't block running the other 3. "Find All
+  Duplicates" still runs all 4 in sequence from the section's own header.
+- **Check Materials** now looks inside node GROUPS: a group that internally mixes shaders
+  (e.g. a "hair shader" convenience group wrapping Principled Hair + Glossy + Transparent) is
+  classified as "Combined Shader" instead of being lumped under its group's own name as if it
+  were one single shader type.
+- "Make Local Impact" renamed to "Make Local" (the Analyze section already names the analysis,
+  not its effect).
+- Path Normalization's "Normalize" button now hides once the result is clean instead of
+  offering a no-op.
+
+### Fixed
+- Every inline Analyze-button disclosure (Check Materials, Check Link Chain, Make Local, …)
+  could jump back to the top of its list on any click — the shared expand-state prop these
+  sections all share was never wired into the existing scroll-position-preservation logic.
+- Make Local's own result line showed a generic "nothing found" instead of the real linked/
+  library count when nothing needed making local, with the real text only visible one row
+  down inside a pointless expand arrow.
+- Find Flattenable Links' summary line kept an expand arrow with nothing real behind it when
+  no flattenable characters were found.
+- The Audit This File dependency-loop "no user found" message could read as "this datablock
+  doesn't exist" when it actually meant "exists, but has no object instance in the current
+  view layer."
+- The expand/collapse triangle's tooltip was a multi-paragraph developer docstring instead of
+  a short user-facing hint.
+
 ## [0.2.90 – 0.2.104] — UI virtualization + backlog cleanup
 
 ### Changed

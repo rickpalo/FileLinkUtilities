@@ -73,6 +73,45 @@ def main():
         tree.links.new(b2.outputs[0], mix.inputs[2])
         tree.links.new(mix.outputs["Shader"], out.inputs["Surface"])
 
+        # Node group that internally mixes shaders (docs/TODO.md item 46b,
+        # 2026-07-04 -- the real "HG_Hair_V4.001" case: a convenience group
+        # wrapping Principled Hair + Glossy + Transparent). Must classify as
+        # "Combined Shader", not "Node Group: HairGroup".
+        hair_tree = bpy.data.node_groups.new("HairGroup", "ShaderNodeTree")
+        hair_tree.interface.new_socket(name="Shader", in_out="OUTPUT", socket_type="NodeSocketShader")
+        g_out = hair_tree.nodes.new("NodeGroupOutput")
+        g_b1 = hair_tree.nodes.new("ShaderNodeBsdfHairPrincipled")
+        g_b2 = hair_tree.nodes.new("ShaderNodeBsdfGlossy")
+        g_mix = hair_tree.nodes.new("ShaderNodeMixShader")
+        hair_tree.links.new(g_b1.outputs[0], g_mix.inputs[1])
+        hair_tree.links.new(g_b2.outputs[0], g_mix.inputs[2])
+        hair_tree.links.new(g_mix.outputs["Shader"], g_out.inputs["Shader"])
+
+        haired = bpy.data.materials.new("Haired")
+        haired.use_nodes = True
+        tree = haired.node_tree
+        tree.nodes.clear()
+        grp = tree.nodes.new("ShaderNodeGroup")
+        grp.node_tree = hair_tree
+        out = tree.nodes.new("ShaderNodeOutputMaterial")
+        tree.links.new(grp.outputs["Shader"], out.inputs["Surface"])
+
+        # Plain (non-combining) node group -- must stay "Node Group: <name>".
+        toon_tree = bpy.data.node_groups.new("ToonGroup", "ShaderNodeTree")
+        toon_tree.interface.new_socket(name="Shader", in_out="OUTPUT", socket_type="NodeSocketShader")
+        t_out = toon_tree.nodes.new("NodeGroupOutput")
+        t_bsdf = toon_tree.nodes.new("ShaderNodeBsdfToon")
+        toon_tree.links.new(t_bsdf.outputs[0], t_out.inputs["Shader"])
+
+        tooned = bpy.data.materials.new("Tooned")
+        tooned.use_nodes = True
+        tree = tooned.node_tree
+        tree.nodes.clear()
+        grp2 = tree.nodes.new("ShaderNodeGroup")
+        grp2.node_tree = toon_tree
+        out = tree.nodes.new("ShaderNodeOutputMaterial")
+        tree.links.new(grp2.outputs["Shader"], out.inputs["Surface"])
+
         # Missing Image Texture node.
         rusty = bpy.data.materials.new("Rusty")
         rusty.use_nodes = True
@@ -111,6 +150,14 @@ def main():
                            for m, items in shader_findings.items())))
         checks.append(("Mixed Shader group has Mixed",
                        any("Mixed Shader" in m and "Material/Mixed" in items
+                           for m, items in shader_findings.items())))
+        checks.append(("Combined Shader group has Haired (node group mixing shaders)",
+                       any("Combined Shader" in m and "Material/Haired" in items
+                           for m, items in shader_findings.items())))
+        checks.append(("Haired is NOT lumped under its group's own name",
+                       not any("HairGroup" in m for m in shader_findings)))
+        checks.append(("plain (non-combining) node group still names its tree",
+                       any("Node Group: ToonGroup" in m and "Material/Tooned" in items
                            for m, items in shader_findings.items())))
 
         link_findings = [f for f in report.findings if f.category == "node_link_issue"]

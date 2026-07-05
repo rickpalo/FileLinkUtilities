@@ -1,12 +1,14 @@
 """Unit tests for core.material_diagnostics (bpy-free)."""
 
 from core.material_diagnostics import (
+    COMBINED_SENTINEL,
     NO_SURFACE,
     build_empty_slot_findings,
     build_material_diagnostics_report,
     build_node_link_findings,
     build_shader_type_findings,
     classify_shader_label,
+    is_mix_idname,
 )
 
 
@@ -31,6 +33,20 @@ def test_classify_unknown_idname_falls_back_to_stripped_name():
 
 def test_classify_no_surface():
     assert classify_shader_label(None) == NO_SURFACE
+
+
+def test_classify_combined_sentinel_is_its_own_bucket():
+    """docs/TODO.md item 46b: a node GROUP that mixes shaders internally
+    (e.g. Principled Hair + Glossy + Transparent) is a distinct bucket from
+    both a plain Node Group AND a direct-at-the-surface Mixed Shader."""
+    assert classify_shader_label(COMBINED_SENTINEL) == "Combined Shader"
+    assert classify_shader_label(COMBINED_SENTINEL) != classify_shader_label("ShaderNodeMixShader")
+
+
+def test_is_mix_idname():
+    assert is_mix_idname("ShaderNodeMixShader")
+    assert is_mix_idname("ShaderNodeAddShader")
+    assert not is_mix_idname("ShaderNodeBsdfPrincipled")
 
 
 def test_shader_type_findings_grouped_and_sorted():
