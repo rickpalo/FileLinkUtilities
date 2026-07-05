@@ -6,16 +6,21 @@
 ## rename still uses the old `ASSETDOCTOR_*`/`assetdoctor.*` names as originally written — kept
 ## as historical record, not updated.
 
-## ✅ CURRENT STATE (2026-07-05): v0.2.108 built, NOT yet live-verified/published. Item #22
+## ✅ CURRENT STATE (2026-07-05): v0.2.108 PUBLISHED (commit 7d839dc, tag v0.2.108, GitHub
+## Release + gh-pages index refreshed) — but NOT yet live-verified in Blender itself. Item #22
 ## (Automated Cleanup, redesigned to Scan -> Review -> Apply Selected) and item #49 (Find
 ## Material Across Files) both built this session — see their full digests below. Suite 544,
 ## clean py_compile, clean headless registration; 3 real bugs caught and fixed via live
-## headless probes (see #22's digest) before this was called done.
+## headless probes (see #22's digest) before this was called done. The probes verified the
+## OPERATORS directly (headless, scripted) — none of it has been clicked through in the real
+## panel UI yet, which is why this shipped to the auto-update feed ahead of that confirm
+## (user's explicit call, 2026-07-05: release now, live-verify next session).
 ##
 ## ⏩ NEXT SESSION: **live-Blender click-through** of the new Automated Cleanup panel (tick/
 ## untick across all 4 functions, Apply Selected, savings summary) and Find Material Across
-## Files (a real project folder, both a plain-substring and a wildcard pattern) — the probes
-## this session verified the OPERATORS directly, not the panel UI paths.
+## Files (a real project folder, both a plain-substring and a wildcard pattern). If anything
+## needs a fix, it ships as a follow-up patch version (v0.2.109+), same as any other post-
+## publish live-verify finding in this project's history.
 
 ## ✅ Duplicate Textures / Datablock Reconnect / Examine Library (v0.2.97/0.2.99/0.2.100)
 ## were all covered by the 2026-07-03 "Live verify looks good" confirmation above —
