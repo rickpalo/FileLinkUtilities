@@ -40,6 +40,35 @@
 ## resolution variants, tick a LOW one, confirm the note appears; tick HIGH, confirm
 ## it disappears).
 
+### Group 14 — 2026-07-06 asset-thumbnail pipeline (built OUTSIDE the addon proper,
+### as standalone `tools/` scripts against the user's `D:\BlenderLibraries\LocalLibrary`;
+### see the FileLinkUtilities project memory for full context/logs). Not live-verified
+### in the panel UI — these two items are open follow-ups from that session.
+
+50. **Examine whether the headless asset-thumbnail render pipeline
+    (`tools/generate_asset_thumbnails.py`) belongs in the addon proper as a real
+    utility/operator, not just a standalone script** (2026-07-06). It renders via
+    `bpy.ops.render.render()` through a manually-built temp Scene+Camera+Lights
+    instead of Blender's own Asset Browser "Generate Preview" (which crashes
+    headlessly on this machine — see the project's headless-render-gotchas memory).
+    Two genuinely different halves worth separating: (a) the PER-FILE render logic
+    (bbox-framed model shot / studio-rig material shot, inject into `id.preview`) —
+    this fits the addon's existing pattern well (an operator scoped to the current
+    file, same shape as `ops/material_dedup.py` etc.) and would give users a
+    reliable in-addon alternative to Blender's own crash-prone generator; (b) the
+    MULTI-FILE batch driver (open_mainfile loop, chunking/resuming, CSV logging) —
+    this doesn't fit the "operate on the current file" operator shape at all and
+    probably belongs as a `tools/` script regardless, the same way
+    `tools/find_datablocks.py` already is. Decide whether (a) is worth promoting to
+    a real operator before touching anything.
+
+51. **Reminder: revisit deleting the pre-thumbnail-batch safety-net backups**
+    (`D:\BlenderLibraries\LocalLibrary_Backup_2026-07-06\Models`, `materials`,
+    `materials_post_thumbnails`) **around 2027-01 (~6 months out)**, once the
+    thumbnail pipeline + material asset-mark cleanup from that session have proven
+    solid in normal day-to-day use. Not urgent, not automatic — just don't let 35GB
+    of one-off insurance sit there forever if everything's been fine.
+
 ### Group 13 — 2026-07-03 live-test findings (Group 12 Phases 1-3 verification pass).
 ### All items here are logged, NOT investigated yet — the crashes especially need real
 ### evidence before touching code (this project's own hard-won lesson from the v0.2.94
