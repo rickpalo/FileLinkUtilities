@@ -124,6 +124,15 @@ def _populate_broken_images(context) -> tuple[int, int]:
     contract for existing callers."""
     wm = context.window_manager
     coll = wm.filelink_broken_imgs
+    # Snapshot each row's STAGED state (an accepted fuzzy/material proposal, a
+    # manual pick, or a target Relink Selected skipped because its file went
+    # missing between staging and relink) before the rebuild below replaces
+    # the collection — a plain same-directory auto-search re-running here
+    # shouldn't silently discard a deliberate target someone already set.
+    _KEEP_FIELDS = ("target", "has_candidate", "selected",
+                    "proposal", "proposal_confidence", "proposal_res_mismatch")
+    prior = {item.name: tuple(getattr(item, f) for f in _KEEP_FIELDS)
+             for item in coll if item.target}
     coll.clear()
     imgs = _gather_images()
     missing = [i for i in imgs if not i.exists]
@@ -136,10 +145,15 @@ def _populate_broken_images(context) -> tuple[int, int]:
         item = coll.add()
         item.name = img.name
         item.stored = img.stored
-        cand = targets.get(img.name, "")
-        item.target = cand
-        item.has_candidate = bool(cand)
-        item.selected = bool(cand)  # pre-tick only confident auto-matches
+        kept = prior.get(img.name)
+        if kept is not None:
+            for field, value in zip(_KEEP_FIELDS, kept):
+                setattr(item, field, value)
+        else:
+            cand = targets.get(img.name, "")
+            item.target = cand
+            item.has_candidate = bool(cand)
+            item.selected = bool(cand)  # pre-tick only confident auto-matches
         item.group = os.path.dirname((img.resolved or img.stored).replace("\\", "/"))
         item.material = mat_map.get(img.name, "")
     wm.filelink_broken_imgs_index = 0
@@ -288,8 +302,27 @@ class FILELINK_OT_search_textures_folder(FilePickerMixin, bpy.types.Operator):
 
 
 def _wanted_basename(item) -> str:
-    """The filename a missing-texture row wants on disk (basename of its stored path)."""
-    return os.path.basename((item.stored or item.name).replace("\\", "/"))
+    """The filename a missing-texture row wants on disk (basename of its stored path).
+
+    A manual split, not ``os.path.basename`` — on Windows that's ``ntpath``,
+    which treats a leading ``//`` as a UNC host\\share marker and silently
+    returns ``''`` for exactly the common bpy ``//``-relative shapes this
+    hits (``//textures/wood.png``, or ``//wood.png`` right next to the
+    .blend) — the single most common real-world stored-path shape, so this
+    was breaking fuzzy matching for those rows outright, not just an edge
+    case."""
+    return (item.stored or item.name).replace("\\", "/").rsplit("/", 1)[-1]
+
+
+_CONFIDENCE_RANK = {"": -1, "low": 0, "medium": 1, "high": 2}
+
+
+def _weaker_confidence(a: str, b: str) -> str:
+    """The lower-ranked of two "high"/"medium"/"low" confidence labels — used
+    to combine a material-name match's confidence with its resulting
+    texture-channel match's confidence, so a shaky identification on EITHER
+    axis caps the confidence shown, not just the texture-channel one."""
+    return a if _CONFIDENCE_RANK.get(a, -1) <= _CONFIDENCE_RANK.get(b, -1) else b
 
 
 def _diagnostics_tail(ambiguous: dict | None, skipped_dirs: list | None) -> str:
@@ -420,7 +453,14 @@ class FILELINK_OT_relink_folder_search(ModalProgressMixin, bpy.types.Operator):
             self.report({"WARNING"}, f"No matching filenames found under {self.directory}. "
                         f"Nothing changed.{tail}")
 
+    # Tier 1 proposal states a member can be in before Tier 2 is worth trying:
+    # no hit at all, or a hit at medium/low confidence (a Tier 2 hit — the
+    # right SOURCE, found by material name, not just a filename guess —
+    # always wins over these per confirmed precedence).
+    _TIER1_WEAK = {"", "medium", "low"}
+
     def _run_fuzzy(self, context, members):
+        # Tier 1 — fuzzy filename search against loose image files under directory.
         index: dict[str, list[str]] = {}
         seen: set[str] = set()
         skipped_dirs: list[str] = []
@@ -428,30 +468,43 @@ class FILELINK_OT_relink_folder_search(ModalProgressMixin, bpy.types.Operator):
         for d in imagepaths.iter_walk_dirs(self.directory, True, skipped=skipped_dirs):
             imagepaths._scan_dir_into(index, seen, d)
             walked += 1
-            yield (min(0.9, walked / (walked + 20.0)),
+            yield (min(0.5, walked / (walked + 20.0)),
                    f"Scanning {self.directory}… {walked} folder(s)")
-        if not index:
-            self.report({"WARNING"}, f"No files found under {self.directory}."
-                        f"{_diagnostics_tail(None, skipped_dirs)}")
-            return
 
         name_to_path = {os.path.basename(paths[0]): paths[0] for paths in index.values()}
         cand_names = list(name_to_path)
         wanted = sorted({_wanted_basename(it) for it in members})
-        yield (0.95, f"Matching {len(wanted)} name(s) by similarity…")
-        proposals = imagematch.propose_matches(wanted, cand_names, min_confidence="low")
 
-        staged = 0
+        # Scored one wanted name at a time — not one bulk propose_matches() call —
+        # so a big library (thousands of on-disk candidates x hundreds of missing
+        # textures) stays cancellable and repaints progress instead of blocking the
+        # modal for a single unyielding step (min_confidence="low" is the default
+        # floor and accepts every match best_match returns, so this is equivalent).
+        proposals: dict[str, imagematch.Match] = {}
+        total = len(wanted) or 1
+        for i, w in enumerate(wanted):
+            m = imagematch.best_match(w, cand_names) if cand_names else None
+            if m is not None:
+                proposals[w] = m
+            yield (0.5 + 0.3 * ((i + 1) / total),
+                   f"Matching name {i + 1}/{total} by similarity…")
+
         for it in members:
             m = proposals.get(_wanted_basename(it))
             if m is None:
                 it.proposal = ""
+                it.proposal_confidence = ""
                 continue
             it.proposal = name_to_path.get(m.candidate, "")
             it.proposal_confidence = m.confidence
             it.proposal_res_mismatch = m.res_mismatch
-            if it.proposal:
-                staged += 1
+
+        # Tier 2 — for members Tier 1 left unmatched or only at medium/low
+        # confidence, escalate to a material-name search (core.material_search)
+        # across the SAME folder tree's .blend files.
+        yield from self._run_material_tier(members)
+
+        staged = sum(1 for it in members if it.proposal)
         if context.area:
             context.area.tag_redraw()
         yield (1.0, "Done")
@@ -461,6 +514,58 @@ class FILELINK_OT_relink_folder_search(ModalProgressMixin, bpy.types.Operator):
                         f"{self.directory}. Review the Possible Matches list and Accept.{tail}")
         else:
             self.report({"WARNING"}, f"No similar filenames found under {self.directory}.{tail}")
+
+    def _run_material_tier(self, members):
+        """Tier 2: escalate members Tier 1 left weak/unmatched by finding, for
+        each DISTINCT material among them, the same-named material in another
+        .blend under ``self.directory`` (vendor names get manually shortened
+        in-scene — see ``core.material_search.score_material_name``) and
+        matching that material's OWN harvested images against just its rows —
+        a small, correct-source corpus instead of the whole library. A Tier 2
+        hit always replaces a Tier 1 medium/low (the right source beats a
+        shakier name guess against the wrong one); a member Tier 1 already
+        matched at HIGH confidence is left alone."""
+        from ..core import blendscan, material_search
+
+        if not blendscan.bat_available():
+            return
+
+        todo = [it for it in members
+                if not it.target and it.proposal_confidence in self._TIER1_WEAK and it.material]
+        by_material: dict[str, list] = {}
+        for it in todo:
+            by_material.setdefault(it.material, []).append(it)
+        if not by_material:
+            return
+
+        import pathlib
+        files = list(blendscan.iter_blend_files(pathlib.Path(self.directory)))
+        groups = sorted(by_material)
+        total = len(groups) or 1
+        for gi, mat_name in enumerate(groups):
+            rows = by_material[mat_name]
+            best = material_search.best_material_match(mat_name, files)
+            if best is not None:
+                src_file, _src_mat_name, mat_score = best
+                try:
+                    cand_paths = blendscan.harvest_image_paths(src_file)
+                except Exception:
+                    cand_paths = []
+                if cand_paths:
+                    wanted_names = sorted({_wanted_basename(it) for it in rows})
+                    found = imagematch.propose_from_paths(
+                        wanted_names, cand_paths, min_confidence="low")
+                    mat_conf = material_search.material_name_confidence(mat_score)
+                    for it in rows:
+                        hit = found.get(_wanted_basename(it))
+                        if hit is None:
+                            continue
+                        path, m = hit
+                        it.proposal = path
+                        it.proposal_confidence = _weaker_confidence(mat_conf, m.confidence)
+                        it.proposal_res_mismatch = m.res_mismatch
+            yield (0.8 + 0.19 * ((gi + 1) / total),
+                   f"Checking material {gi + 1}/{total} across other files…")
 
 
 class FILELINK_OT_suggest_fuzzy_matches(FilePickerMixin, bpy.types.Operator):
@@ -635,7 +740,10 @@ class FILELINK_OT_accept_match(bpy.types.Operator):
             return {"CANCELLED"}
         item.target = item.proposal
         item.has_candidate = os.path.isfile(item.proposal)
-        item.selected = True
+        # Only auto-tick when the file is actually there right now — ticking a
+        # target that doesn't resolve is what made Relink Selected's one-bad-
+        # target-fails-the-whole-batch bug possible to hit silently via Accept.
+        item.selected = item.has_candidate
         item.proposal = ""
         rebuild_missing_tex_picker_rows(context.window_manager)
         if context.area:
@@ -665,7 +773,7 @@ class FILELINK_OT_accept_material_matches(bpy.types.Operator):
                 continue
             item.target = item.proposal
             item.has_candidate = os.path.isfile(item.proposal)
-            item.selected = True
+            item.selected = item.has_candidate
             item.proposal = ""
             accepted += 1
         rebuild_missing_tex_picker_rows(context.window_manager)
@@ -696,7 +804,7 @@ class FILELINK_OT_accept_all_matches(bpy.types.Operator):
                 continue
             item.target = item.proposal
             item.has_candidate = os.path.isfile(item.proposal)
-            item.selected = True
+            item.selected = item.has_candidate
             item.proposal = ""
             accepted += 1
         rebuild_missing_tex_picker_rows(context.window_manager)
@@ -813,7 +921,13 @@ class FILELINK_OT_relink_textures_selected(bpy.types.Operator):
 
         targets = {item.name: os.path.normpath(bpy.path.abspath(item.target)) for item in chosen}
         absent = [name for name, t in targets.items() if not os.path.isfile(t)]
-        if absent:
+        # A target going missing between staging and here (e.g. a network-drive sync
+        # lag) shouldn't sink every OTHER ticked texture too — relink what's actually
+        # there and report the rest, rather than aborting the whole batch on one bad
+        # target (which is what used to happen: a single stale target could fail 100+
+        # good ones in the same click).
+        ready = [item for item in chosen if item.name not in absent]
+        if not ready:
             self.report({"ERROR"}, f"Target file not found for: {', '.join(absent)}")
             return {"CANCELLED"}
 
@@ -822,7 +936,7 @@ class FILELINK_OT_relink_textures_selected(bpy.types.Operator):
         backup = auto_backup(context)
         blend_dir = os.path.dirname(bpy.data.filepath)
         relinked = 0
-        for item in chosen:
+        for item in ready:
             img = bpy.data.images.get(item.name)
             if img is None or img.library is not None:
                 continue
@@ -846,5 +960,11 @@ class FILELINK_OT_relink_textures_selected(bpy.types.Operator):
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"
-        self.report({"INFO"}, f"Relinked {relinked} texture(s). Save to persist.{tail}")
+        if absent:
+            shown = ", ".join(absent[:5])
+            more = f" and {len(absent) - 5} more" if len(absent) > 5 else ""
+            tail += (f"  ⚠ {len(absent)} target(s) no longer found on disk, skipped "
+                     f"(still ticked — retry once the drive/sync catches up): {shown}{more}.")
+        self.report({"WARNING" if absent else "INFO"},
+                    f"Relinked {relinked} texture(s). Save to persist.{tail}")
         return {"FINISHED"}

@@ -24,6 +24,17 @@ from dataclasses import dataclass
 
 from .relink import relink_stored_path  # reused: same //-relative logic
 
+# Extensions this folder index will hold a candidate for. Without this filter, a
+# reorganized library that keeps a per-asset .blend alongside (or instead of) loose
+# textures gets indexed too — and since core.imagematch.classify() strips the
+# extension before scoring, "Poliigon_Foo_1K.blend" then reads as a stem-identical
+# candidate for EVERY missing "Poliigon_Foo_..._1K.jpg" channel, outscoring or
+# masking the real texture files. Mirrors the picker's filter_glob in
+# ops/image_relink.py (FILELINK_OT_relink_pick_texture).
+_IMAGE_EXTS = frozenset({
+    ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr", ".tga", ".bmp", ".hdr", ".tx", ".psd",
+})
+
 
 @dataclass
 class ImgDesc:
@@ -92,7 +103,7 @@ def _scan_dir_into(index: dict[str, list[str]], seen: set[str], d: str) -> None:
     seen.add(key)
     try:
         for entry in os.scandir(d):
-            if entry.is_file():
+            if entry.is_file() and os.path.splitext(entry.name)[1].lower() in _IMAGE_EXTS:
                 index.setdefault(entry.name.lower(), []).append(
                     os.path.normpath(entry.path))
     except OSError:

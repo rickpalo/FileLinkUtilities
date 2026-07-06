@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 # canonical channel -> alias tokens (all lowercase). Extend freely; unknown tokens
 # are treated as stem (identity) tokens, which is the safe default.
@@ -76,8 +77,17 @@ class NameParts:
     tokens: tuple[str, ...]  # raw token order (for debugging)
 
 
+@lru_cache(maxsize=None)
 def classify(name: str) -> NameParts:
-    """Break a filename into (stem tokens, primary channel, resolution)."""
+    """Break a filename into (stem tokens, primary channel, resolution).
+
+    Cached: :func:`best_match`/:func:`propose_matches` reclassify the SAME
+    wanted name against every candidate and the SAME candidate against every
+    wanted name — on a library of thousands of textures that's otherwise
+    millions of redundant regex/tokenize passes over identical strings,
+    turning one modal generator step into a multi-minute unyielding stall.
+    ``classify`` is a pure function of ``name``, so caching is exact, not an
+    approximation."""
     stems: list[str] = []
     channel: str | None = None
     res: str | None = None
