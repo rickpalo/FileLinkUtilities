@@ -6,6 +6,26 @@
 ## rename still uses the old `ASSETDOCTOR_*`/`assetdoctor.*` names as originally written — kept
 ## as historical record, not updated.
 
+## ✅ CURRENT STATE (2026-07-06): v0.2.109 COMMITTED, NOT YET PUBLISHED (no tag/GitHub
+## Release/gh-pages index yet — that's a separate, explicit step per `docs/RELEASING.md`).
+## Group 15 below (Tier 2 material-name fuzzy relink, `_wanted_basename` UNC-path bug,
+## Relink Selected partial-failure fix, Accept has_candidate fix, tokenizer pseudo-extension
+## fix, expanded channel aliases) — see CHANGELOG.md's [0.2.109] entry for the user-facing
+## summary. Suite 754 (pytest) + 3 real-Blender smoke tests, all green; also probed headlessly
+## against REAL production files (`ThePiazzaSanMarco - People.blend`, the Canaletto `Models/
+## Characters/*.blend` set) to diagnose the original bugs and confirm fixes took — not yet
+## clicked through in the interactive panel UI (see NEXT SESSION below). Also this session: a full
+## Character Creator + HumGen texture library consolidation, built OUTSIDE the addon proper
+## against `D:\BlenderLibraries\LocalLibrary` directly — see [[project-blender-characters-
+## library]] for the full digest (not this repo's concern, logged for continuity same as
+## Group 14's thumbnail-pipeline work).
+##
+## ⏩ NEXT SESSION (this work): live-Blender click-through of Tier 2 (Suggest Matches against
+## a folder holding per-material `.blend` files, not loose textures) and the Relink Selected
+## partial-failure path (tick a mix of good/since-deleted targets, confirm the good ones still
+## relink and the bad ones report + stay ticked) in the real panel UI — same as the OTHER
+## still-open item directly below, both pending live-verify in Blender itself.
+
 ## ✅ CURRENT STATE (2026-07-05): v0.2.108 PUBLISHED (commit 7d839dc, tag v0.2.108, GitHub
 ## Release + gh-pages index refreshed) — but NOT yet live-verified in Blender itself. Item #22
 ## (Automated Cleanup, redesigned to Scan -> Review -> Apply Selected) and item #49 (Find
@@ -39,6 +59,44 @@
 ## out of scope for this ask. Manifest 0.2.98, NOT live-verified yet (needs a file with
 ## resolution variants, tick a LOW one, confirm the note appears; tick HIGH, confirm
 ## it disappears).
+
+### Group 15 — 2026-07-06 fuzzy-relink precision pass (in-repo, v0.2.109) + Character
+### Creator/HumGen texture library consolidation (built OUTSIDE the addon proper, against
+### `D:\BlenderLibraries\LocalLibrary` directly — see [[project-blender-characters-library]]
+### for the full digest). Triggered by the user hitting real missing-texture cases in
+### `ThePiazzaSanMarco - People.blend` and the Canaletto crowd character files.
+
+52. **Tier 2 material-name fuzzy relink + matcher precision fixes** (2026-07-06). See
+    CHANGELOG.md's [0.2.109] entry for the full list — `core.material_search.
+    score_material_name`/`best_material_match` (bidirectional containment scoring for
+    manually-shortened vendor material names), `ops.image_relink`'s Tier 2 escalation
+    wiring, the `_wanted_basename` Windows UNC-path bug (silently broke fuzzy matching for
+    the most common bpy `//`-relative path shape), Relink Selected's partial-failure fix,
+    Accept's has_candidate fix, the tokenizer's `_png`/`_jpg` pseudo-extension fix, and the
+    expanded channel-alias vocabulary. Suite 754, 3 real-Blender smoke tests
+    (`smoke_material_tier.py`, `smoke_relink_selected_partial.py`, plus the existing folder-
+    search diagnostics one), all green. Also probed headlessly against REAL production files
+    (`ThePiazzaSanMarco - People.blend`'s Dodo textures, the Canaletto `Models/Characters/
+    *.blend` set) to diagnose the original bug reports and confirm the relink fixes actually
+    took — but that's still headless bpy/BAT scripting, not the interactive panel; see the
+    CURRENT STATE note above for what's still open for next-session click-through in the
+    actual UI.
+
+53. **Character Creator + HumGen texture library consolidation** (2026-07-06, external —
+    not part of this repo's source). Deep-searched D:\ and E:\ for scattered CC/HumGen
+    character textures (~19GB, 14,700+ files found, ~95% duplicate content from repeated
+    FBX re-imports), deduped by content hash, and built `D:\BlenderLibraries\LocalLibrary\
+    textures\Characters\{CharacterCreator,HumanGen}\{Common,Customized}\` — copy-only,
+    nothing on either drive moved/deleted. Recovered/fixed several genuinely-missing
+    Canaletto hair textures along the way (`Hair4_Transparency_blend_multiply.jpg` across
+    3 `Models/Characters/*.blend` files) and closed a real gap where 18 `CC3_Base_Plus`
+    clothing textures (Bra/Underwear_Bottoms) had never been captured by the original
+    Std_*/hair-scoped search. The old `Characters/_Common`/`ByCharacter` folder (pre-dates
+    this session) was verified to have zero live references from the Canaletto character
+    files or `iCloneSceneLink.blend`, then renamed to `_Common_DEPRECATED`/
+    `ByCharacter_DEPRECATED` (not deleted — reversible, and any missed reference would
+    surface as a missing texture rather than break silently). Full digest, file counts, and
+    the reusable build script: [[project-blender-characters-library]].
 
 ### Group 14 — 2026-07-06 asset-thumbnail pipeline (built OUTSIDE the addon proper,
 ### as standalone `tools/` scripts against the user's `D:\BlenderLibraries\LocalLibrary`;

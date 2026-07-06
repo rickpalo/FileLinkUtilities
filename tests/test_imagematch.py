@@ -67,6 +67,35 @@ def test_channel_synonyms():
         assert im.classify(f"mat_{tok}_2K.png").channel == "color", tok
 
 
+def test_channel_synonyms_from_real_library_naming():
+    """Words actually found scanning the CC/HumGen/general texture libraries —
+    not previously recognized, so they were dragging down stem similarity as
+    stray stem tokens (see the "_png" pseudo-extension bug this mirrors)."""
+    cases = {
+        "x_REFL_2K.png": "specular",       # older CC/iClone "reflection" naming
+        "x_HSpecMap.png": "specular",
+        "x_DISP16_2K.png": "displacement",  # CC's 16-bit-map suffix
+        "x_BUMP16_2K.png": "bump",
+        "x_NRM16_2K.png": "normal",
+        "x_MicroNMask.png": "normal",
+        "x_CavityMap.png": "ao",
+        "x_GradAO.png": "ao",
+        "x_TransMap.png": "opacity",
+        "x_SSSMap.png": "sss",
+        "x_VertexColorMap.png": "vertexcolor",
+        "x_WeightMap.png": "weight",
+    }
+    for name, expected in cases.items():
+        assert im.classify(name).channel == expected, name
+
+
+def test_orm_pack_is_its_own_channel_not_interchangeable():
+    # An ORM (Occlusion/Roughness/Metallic) pack is a genuinely different image
+    # from a standalone roughness map — must not stand in for one, or vice versa.
+    assert im.classify("wood_2K_orm.png").channel == "orm"
+    assert im.score_match("wood_2K_roughness.png", "wood_2K_orm.png") is None
+
+
 def test_wrong_channel_is_disqualified():
     # a normal map can't stand in for a roughness map even with identical stem
     assert im.score_match("wood_2K_roughness.png", "wood_2K_normal.png") is None
@@ -83,6 +112,24 @@ def test_transparency_is_a_stem_token_not_a_channel():
     parts = im.classify("Beard19_Transparency_2K_col.png")
     assert "transparency" in parts.stems
     assert parts.channel == "color"
+
+
+def test_underscore_pseudo_extension_stripped_like_a_real_one():
+    """Some FBX/vendor exports can't embed a literal '.' in a texture reference name
+    and use "_png"/"_jpg" instead; Blender may then add its OWN real ".001" dedup
+    suffix on top ("..._png.001"). Without stripping the pseudo-extension too, that
+    lone "png" stem token (present in the wanted name but not the real file) drags
+    an otherwise-perfect match down to "low"/"medium" instead of "high"."""
+    wanted = "FabricVelvetEmbossed018_AO_1K_METALNESS_png.001"
+    disk = "FabricVelvetEmbossed018_AO_1K_METALNESS.png"
+    assert im.tokenize(wanted) == im.tokenize(disk)
+    m = im.score_match(wanted, disk)
+    assert m is not None
+    assert m.confidence == "high"
+
+
+def test_underscore_pseudo_extension_without_dedup_suffix():
+    assert im.tokenize("CordRopeJute001_REFL_2K_png") == im.tokenize("CordRopeJute001_REFL_2K.png")
 
 
 def test_no_candidates_returns_none():

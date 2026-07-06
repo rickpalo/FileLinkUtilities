@@ -35,16 +35,30 @@ from functools import lru_cache
 _CHANNEL_ALIASES: dict[str, set[str]] = {
     "color": {"col", "color", "colour", "diffuse", "diff", "albedo", "basecolor",
               "base", "col1", "color1", "diffuse1", "diffuse2", "color2", "col2"},
-    "normal": {"nrm", "normal", "nor", "norm", "normalgl", "normaldx", "nml", "nmap"},
+    "normal": {"nrm", "normal", "nor", "norm", "normalgl", "normaldx", "nml", "nmap",
+               # "16" = CC's 16-bit-map suffix; MicroN(ormal) is a detail-normal mask.
+               "nrm16", "micron", "micronmask", "wsnormal"},
     "roughness": {"rough", "roughness", "rgh", "roughness1"},
     "metallic": {"metal", "metallic", "metalness", "mtl", "metalness1", "metalic"},
-    "ao": {"ao", "ambientocclusion", "ambient", "occlusion", "occ", "ambient_occlusion"},
-    "displacement": {"disp", "displacement", "displace", "height", "heightmap"},
-    "bump": {"bump", "bmp"},
+    "ao": {"ao", "ambientocclusion", "ambient", "occlusion", "occ", "ambient_occlusion",
+           # cavity/gradient-AO maps are occlusion-detail variants, same bucket.
+           "cavity", "cavitymap", "cavitymask", "gradao"},
+    "displacement": {"disp", "displacement", "displace", "height", "heightmap", "disp16"},
+    "bump": {"bump", "bmp", "bump16"},
     "gloss": {"gloss", "glossy", "glossiness", "gls"},
-    "specular": {"spec", "specular", "specularity", "specularlevel"},
+    "specular": {"spec", "specular", "specularity", "specularlevel",
+                 # "REFL" = CC/iClone's older "reflection" naming for specular intensity.
+                 "refl", "reflection", "hspecmap"},
     "emission": {"emit", "emission", "emissive", "glow"},
-    "opacity": {"opacity", "alpha", "mask", "transmission"},
+    "opacity": {"opacity", "alpha", "mask", "transmission", "transmap", "translucency",
+                "alphamasked"},
+    # Packed/utility maps that are a genuinely DIFFERENT image from any single
+    # channel above (an ORM pack isn't interchangeable with a standalone roughness
+    # map, so it gets its own bucket rather than being folded into one).
+    "orm": {"orm"},
+    "sss": {"sss", "sssmap", "subsurface"},
+    "vertexcolor": {"vertexcolormap", "vertexcolor"},
+    "weight": {"weightmap", "weight"},
     # NB: "transparency" is intentionally NOT an alias — in this asset set it is a
     # material/family name token (Beard19_Transparency), not a per-file channel.
 }
@@ -56,12 +70,23 @@ _RES_PIXELS = {"256", "512", "1024", "2048", "4096", "8192"}
 _SPLIT_RE = re.compile(r"[^a-z0-9]+")
 _WORDNUM_RE = re.compile(r"^([a-z][a-z]*?)(\d+)$")  # "beard19" -> ("beard","19")
 
+# Some FBX/vendor export pipelines can't embed a literal "." in an embedded texture
+# reference name, so they substitute "_png"/"_jpg" for the real extension — Blender
+# then imports that string verbatim as the image datablock's name (and may tack its
+# own REAL ".001" dedup suffix on top: "..._png.001"). Left unstripped, that lone
+# "png" reads as a stem word present in the wanted name but not the real file (whose
+# actual ".png" extension strips normally) — dragging stem similarity down for an
+# otherwise perfect match. Applied after the real-extension strip so "_png.001"
+# (dedup suffix over a pseudo-extension) is caught too.
+_PSEUDO_EXT_RE = re.compile(r"_(?:png|jpe?g|tga|tiff?|exr|bmp|hdr|psd|tx)$", re.IGNORECASE)
+
 
 def tokenize(name: str) -> list[str]:
     """Lowercase tokens of a filename, extension dropped, split on non-alphanumerics."""
     stem = name.rsplit(".", 1)[0] if "." in name else name
     # keep a real extension out, but a "Stained007" stays whole (split is on _.- only
     # for the dot — we already removed the trailing extension above).
+    stem = _PSEUDO_EXT_RE.sub("", stem)
     return [t for t in _SPLIT_RE.split(stem.lower()) if t]
 
 

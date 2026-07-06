@@ -8,6 +8,46 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.2.109] — Material-name Tier 2 fuzzy relink + matcher precision fixes
+
+### Added
+- **Tier 2 material-name matching** for the fuzzy folder-search relink flow: a missing texture
+  Tier 1 leaves unmatched (or only at medium/low confidence) now escalates to searching other
+  `.blend` files under the same folder for a material of the same name — vendor names get
+  manually shortened in-scene (`FabricFloralDuckeggJacquard001` → `DuckEgg`), so the new
+  `core.material_search.score_material_name` matches bidirectionally by containment rather than
+  token overlap. Once found, that file's own images are harvested and channel-matched against
+  just its rows — a small, correct-source corpus instead of guessing across the whole library.
+  A Tier 2 hit always replaces a Tier 1 medium/low (the right source beats a shakier name guess
+  against the wrong one).
+- Channel-alias vocabulary expanded from real texture-library naming: `REFL` (reflection),
+  `DISP16`/`BUMP16`/`NRM16` (16-bit map suffix), `MicroN(Mask)`, `Cavity(Map)`/`GradAO`,
+  `TransMap`/`Translucency`, plus new first-class channels `SSS`, `VertexColorMap`, `WeightMap`,
+  and `ORM` (kept separate from AO/roughness/metallic — a packed ORM map isn't interchangeable
+  with any single standalone channel map).
+
+### Fixed
+- The fuzzy folder-search candidate index no longer includes non-image files (a reorganized
+  library that keeps a per-asset `.blend` alongside its textures was getting that `.blend`
+  scored as a texture candidate itself, since name-matching strips extensions before scoring).
+- `_wanted_basename` used `os.path.basename` on a bpy `//`-relative path — on Windows that's
+  `ntpath`, which misreads a leading `//` as a UNC host\share marker and silently returns `''`
+  for the single most common stored-path shape (`//folder/file.ext`), breaking fuzzy matching
+  outright for those rows.
+- The tokenizer didn't recognize `_png`/`_jpg`-style pseudo-extensions (some FBX/vendor export
+  pipelines can't embed a literal `.` in an embedded texture name, so they substitute `_png` —
+  Blender may then add its own real `.001` dedup suffix on top). That stray extra stem token
+  was dragging otherwise-perfect matches down to "low"/"medium" confidence for no real reason.
+- **Relink Selected** no longer aborts the entire ticked batch when one target file went missing
+  between staging and relinking (e.g. a network-drive sync lag) — it relinks everything with a
+  valid target and reports the rest, left ticked for a retry, instead of doing nothing at all.
+- Accept / Accept All / Accept Material's Matches no longer auto-tick a proposal whose file
+  doesn't actually exist — only a confirmed-present file gets ticked, so a stale proposal can't
+  silently reach Relink Selected untested a second time.
+- `imagematch.classify()` is now memoized — it's a pure function of the filename, so a large
+  library's fuzzy match no longer re-tokenizes the same names millions of times over in one
+  blocking modal step.
+
 ## [0.2.108] — Automated Cleanup (Scan/Review/Apply Selected) + Find Material Across Files
 
 ### Added
