@@ -1,11 +1,299 @@
 # File & Link Utilities — TODO / backlog
 
+## ✅ 2026-07-09 (continued yet again): v0.2.117 — the v0.2.116 diagnostics paid off immediately:
+## user re-ran Apply Selected on human_bundle.blend and the console showed **every one of the 46
+## rows hit "stale row (block=found, block.library=None, expected library=...)"**. That's the real
+## bug: `target_coll.get(row.name)` in `ops/examine_library.py`'s apply loop is a PLAIN-NAME
+## lookup — no library disambiguation — and in a file this heavily merged, a local data-block can
+## coincidentally share the exact name of a linked one (Blender allows this across libraries, no
+## forced rename). The lookup had zero guarantee of returning the SAME block the row was populated
+## from at scan time; it was silently grabbing an unrelated local same-named block instead, which
+## is why `block.library` came back `None` on every row. Fixed by switching to `bpy.data`'s
+## `(name, filepath)` tuple form, which IS library-qualified. Added
+## `tests/smoke_examine_library_name_collision.py` — builds a linked block plus a same-named local
+## one, runs the real Examine + Apply Selected, asserts the linked one resolves — confirmed green.
+## Also finally addressed the "Apply Selected reverts to its pre-scan look with zero feedback"
+## complaint from the same message: added `wm.filelink_examine_apply_summary`, a persistent string
+## that survives the rows-clear and stays drawn in the panel (cleared only by the next Examine or
+## Apply Selected), instead of the toast being the only trace anything happened.
+##
+## Same message also brought a NEW native crash — `EXCEPTION_ACCESS_VIOLATION` inside
+## `bpy.ops.filelink.accept_match(index=0)` (accepting a fuzzy texture-match suggestion). Checked
+## `FILELINK_OT_accept_match.execute()` (`ops/image_relink.py:815`): it does nothing but mutate
+## `wm.filelink_broken_imgs` item properties + call `rebuild_missing_tex_picker_rows()` +
+## `context.area.tag_redraw()` — no `bpy.data` ID mutation, nothing touching node trees or
+## materials at all. The crash's own stack trace is deep inside BLENDER'S OWN redraw/RNA code
+## (`bNodeTree::ensure_topology_cache` → `NodeSocket_is_icon_visible_get` →
+## `RNA_property_boolean_get` → `rna_property_override_diff_default` → `rna_Property_refine`),
+## triggered by the `tag_redraw()` call forcing Blender to redraw a node editor. And the same
+## `"Failed to add relation VFont -> Node ... Could not find op_from: ComponentKey(VFBfont
+## Regular.002, GENERIC_DATABLOCK)"` depsgraph warning that's been printing in EVERY session log
+## this whole engagement (tied to a Geo-Scatter `scatter_obj` node setup) appears right before it.
+## Conclusion: this is very likely pre-existing corruption in that Geo-Scatter node graph, not a
+## FileLinkUtilities bug — our operator is a no-op with respect to node trees, it just happens to
+## be the thing that triggers the next redraw. No code fix possible on our side; flagging as a
+## known external-corruption risk. If it recurs, the next useful step is isolating whether the
+## crash still happens on a plain redraw (e.g. just dragging the node-editor viewport) with NO
+## FileLinkUtilities operator involved at all — that would confirm it's unrelated to this addon
+## entirely and point the user at fixing/rebuilding that Geo-Scatter object instead.
+##
+## Two UI-feedback items also came in this message, NOT yet implemented (deliberately — need a
+## live Blender + fresh eyes on `FILELINK_UL_tree`'s actual on-screen rendering, not a blind guess):
+## 1. **Find Orphans' "Fake-user only" category is redundant one level deep.** `f4_orphans.py`'s
+##    `build_orphan_report()` (line ~52) emits exactly ONE `Finding(category="fake_only", ...)`
+##    aggregating every fake-user-only datablock — so `report_to_tree()` (`core/tree.py:164`)
+##    always produces a "Fake-user only" category node with exactly one child: the Finding's own
+##    message ("1101 datablock(s) kept alive only by a Fake User"). Expanding the category to see
+##    that one redundant child is pointless busywork; the message should fold straight into the
+##    category row instead. Generalizing this in `report_to_tree()` (skip the finding-level wrapper
+##    whenever a category has exactly 1 finding, folding its message into the category label) would
+##    likely help several other single-finding categories too — but check for tests/panels that
+##    assert on the current 3-level nesting before changing it generically.
+## 2. **The "Identical datablocks" leaf rows (and by extension every `FILELINK_UL_tree` leaf) read
+##    as centered/inert plain text rather than left-justified/clickable**, even though the
+##    click-to-select IS already wired up end-to-end: `core/tree.py`'s `_parse_ref()` correctly
+##    parses each leaf's "Type/Name" label into a `ref`, and `FILELINK_UL_tree.draw_item()`
+##    (`ui/panels.py:97`) draws every leaf via `row.operator("filelink.row_label", ...)`, whose
+##    `execute()` (`ops/report_store.py:371`) calls `filelink.select_datablock` when `ref_type` is
+##    set. So this is a **visual-only** bug — Blender operator buttons with `emboss=False` appear
+##    to center their text, which is much more visible on short rows with few siblings (a 2-item
+##    identical-group leaf vs. a full-width category row). Needs a live Blender session to iterate
+##    on the actual widget styling (candidates: an explicit `sub.alignment = 'LEFT'` sub-row, or
+##    restructuring the button so the label starts flush after the icon) — not safe to guess blind.
+##
+## ⏳ 2026-07-09 (continued once more): v0.2.116 — user supplied the FULL command-window log after
+## v0.2.115, which disproved my "not reloaded yet" explanation for part of the human_bundle
+## mystery: a SECOND Apply Selected pass (post-reload, so the zero-user-drop theory genuinely did
+## apply and 101→59) reported **"Made 0 local, remapped 0"** for all 46 rows that had just shown
+## an in-memory match. That's a real, distinct bug from the missing→missing collision fixed in
+## v0.2.115 (which would still count as "remapped," it just wouldn't fix anything real) — every
+## row silently hit one of `execute()`'s two `continue` branches (`block is None or block.library
+## is not library` / `target is None or target is block`), and neither the toast nor the console
+## said which, or why. Rather than guess a third time from static analysis alone, added
+## diagnostics: the toast now reports `(N stale, M unresolved — see console for details)`, and the
+## console gets one line per skipped row naming its exact reason + suggestion fields. **Not a
+## fix** — genuinely don't know yet whether this is a `library` name-lookup mismatch after reload,
+## a real target-resolution gap, or something else; next live occurrence's console output should
+## make it obvious instead of requiring another full-log round-trip.
+##
+## ✅ 2026-07-09 (continued yet further): v0.2.115 — real Examine Library bug found + fixed live
+## on `PSM_Stage_v5.2`, plus a crash-log-confirmed root cause correction for Find Orphans.
+##
+## **The Examine Library mystery, solved.** User reported: examined `human_bundle.blend` (101
+## data-blocks, 87 matched), clicked Apply Selected, saved+reloaded — count dropped to 59/46
+## (partial success, expected: the reload is required for a zero-user linked block to actually
+## drop, see the earlier same-session entry above). Examined again (59/46), clicked Apply
+## Selected AGAIN on all 46, then separately examined+applied `Asset_bundle.blend` (95/91),
+## saved+reloaded a third time — Asset_bundle dropped to 53/49 (correct), but **human_bundle's
+## SECOND apply had literally ZERO effect (still exactly 59/46)**, even though the user confirmed
+## they genuinely clicked Apply Selected before switching libraries (ruling out my first, WRONG
+## guess that switching-before-applying silently discarded the staged rows — corrected here
+## rather than left standing). Real cause, found by cross-referencing the crash log's own
+## missing-block name lists: `human_bundle.blend` and `Asset_bundle.blend` are BOTH entirely
+## unreadable on disk ("Unable to open ... No such file or directory"), and BOTH libraries
+## independently contain same-BASE-name missing placeholders purely by coincidence of Blender's
+## own `.NNN` dedup-suffix numbering (e.g. human_bundle wants `hanger.001`, Asset_bundle
+## separately wants `hanger.002`..`.006` — totally unrelated real objects). `core.reconnect.
+## suggest_reconnect`'s "numbered" tier strips both to base `hanger` and calls it a match, so
+## Examine Library was suggesting human_bundle's placeholder remap onto ANOTHER library's ALSO-
+## missing placeholder. Remapping placeholder→placeholder "succeeds" with zero error and zero
+## actual fix — the block still doesn't resolve to anything real, so nothing changes after
+## reload. Fixed in `ops/examine_library.py::_in_memory_pools` — any candidate that is itself
+## `is_missing` is now excluded from the suggestion pool. New end-to-end smoke test
+## (`tests/smoke_examine_library_missing_collision.py`, real two-broken-library repro) confirms
+## no suggestion is offered anymore. **User should re-run Examine Library on human_bundle.blend
+## with v0.2.115 to confirm the 46 remaining rows now correctly fall back to "none" (manual
+## pick/Search a Folder needed) instead of a false match** — not yet live-confirmed.
+##
+## **Find Orphans crash, re-diagnosed with real crash-log evidence.** User's first report (no
+## log) led me to guess Synology on-demand-sync hydration as the culprit — WRONG, corrected here
+## rather than left standing. The actual crash log (`PSM_Stage_v5.2.crash_findOrphan.txt`) shows
+## `EXCEPTION_ACCESS_VIOLATION` inside `core/fingerprint.py`'s `_sha`/`_canon` (JSON-encoding a
+## mesh's extracted geometry), reached via `ops/orphans.py` line 78's `fingerprint_mesh(extract_
+## mesh(d))` — and critically, that whole branch only ever runs when `not linked` (i.e. on LOCAL
+## data). The existing crash mitigation (`datablock_risk_reason`'s `is_missing`/`override_
+## library` checks, from the 2026-07-03/04 incident) only ever applies to LINKED/override IDs —
+## it structurally can't cover this branch at all. So the real culprit is a LOCAL mesh in
+## `PSM_Stage_v5.2` itself with corrupted vertex/polygon data (plausibly a `make_local()`
+## leftover, given all the reorg work), not anything from the two broken libraries. Since a
+## native access violation can't be caught with try/except, added a console breadcrumb (`print`
+## of the exact datablock right before each risky read) instead of a blind fix — the next crash's
+## console output will name the exact mesh, letting the user actually investigate/delete it.
+## Also: the flood of "current value of '-1' matches no enum in
+## 'ColorManagedInputColorspaceSettings'" warnings in the console is separate, harmless noise —
+## expected symptom of the 117 missing linked data-blocks (broken placeholder Images have garbage
+## colorspace state), not something to chase.
+##
+## `core/imagematch.py::best_match` also hardened this same session (see the v0.2.115 CHANGELOG
+## entry) against a live-reported, never-reproduced TypeError that took down an entire fuzzy
+## folder search — logged separately above under Group 16.
+
+## ⏳ 2026-07-09 (continued further still): Examine Library live-verified against the real
+## `human_bundle.blend` → one-asset-per-file reorg — 87 of 101 datablocks auto-identified via
+## per-row Search a Folder. Working well. **New backlog item requested by user**: a single
+## bulk "Search a Folder" action at the TOP of the Examine Library results (group level), not
+## just per-row — pick one folder once and resolve EVERY still-unplaced row in the examined
+## library against it in one pass, instead of clicking the per-row Search a Folder icon
+## individually for each of (in this case) 101 rows. Likely shape: mirror
+## `ops/image_relink.py::FILELINK_OT_relink_folder_search`'s `mode="FUZZY"` bulk pattern (walk
+## the folder ONCE, peek every `.blend` ONCE, then resolve all rows against that same
+## `names_by_file` map) rather than `ops/examine_library.py::FILELINK_OT_examine_search_folder`
+## re-walking + re-peeking the whole folder per row (currently O(rows × files) peeks — fine for
+## a handful of rows, needlessly slow for 101). **Also user-requested**: neither the current
+## per-row `examine_search_folder` nor the future bulk version have a progress bar today — both
+## are plain synchronous `execute()` operators that block the UI until the whole folder walk
+## finishes. Fold a `ModalProgressMixin` conversion into this same work (yield after each file
+## peeked, ESC to cancel, live status text) — the exact pattern every other folder-walk in this
+## addon already uses (`image_relink.py`'s Search a Folder/Suggest Matches, Check Materials,
+## Check Armature Deformation). More valuable for the bulk version (100+ rows × many files) than
+## the current one-row-at-a-time version, so build both together rather than patching the old
+## synchronous version now and reworking it again shortly after. User confirmed: queue, don't
+## build yet — deform-check/Find Orphans crash diagnostics take priority this session.
+## NOT built yet.
+
+## ✅ 2026-07-09 (continued further): Group 16 — v0.2.113 (catalog-ID matching, logged
+## retroactively — built same session as v0.2.112 above but not written up until now), the
+## shirt.003 armature-deformation diagnosis, and v0.2.114 (new Check Armature Deformation scan).
+##
+## **v0.2.113 — Poliigon-style catalog/SKU numbers are now a primary match signal.** User noticed
+## Poliigon assets carry a bare 4+ digit ID (7174, 8819, 9322, ...) that should be a strong match
+## signal, heavier than an ordinary word. `core/imagematch.py`: `NameParts.catalog_id` /
+## `_CATALOG_ID_RE = r"^\d{4,}$"`; `score_match()` now hard-disqualifies a mismatched catalog ID
+## even with otherwise-identical words (two different Poliigon products sharing a descriptive name
+## should never be treated as interchangeable), and lets a SHARED catalog ID rescue a match that
+## would otherwise fail the stem-similarity floor, pushing confidence toward high/medium even with
+## a weak Jaccard score. New pytest coverage in `test_imagematch.py`. Also answered live: why a
+## "Male 02.png" → "Male02.png" suggestion only landed at medium confidence — short/sparse names
+## have few tokens, so Jaccard stem overlap has little room to reach "high" on its own; not a bug,
+## just an inherent property of short names (a possible future fix, space-tokenization-aware
+## scoring for names like "Male 02", was discussed but NOT built — still on the backlog below).
+##
+## **shirt.003 investigation (asset `Canaletto_XX_blackHairBrownCloak`, mesh `Circle.058`,
+## armature `CC3_Base_Plus_Rigify.026`/`.029`).** User reported wildly out-of-place vertices
+## visible in Bounds display, traced to disabling the Armature modifier fixing it (implying a
+## weight-paint problem, not geometry). **Root cause confirmed**: vertices weighted (fully or
+## partially) to Reallusion/CC facial rig `CTRL_*` control bones (e.g.
+## `CTRL_neck_throatUpDown`, `CTRL_C_neck_swallow`) instead of a real `DEF_*` body-deform bone —
+## these control bones evidently have `use_deform` enabled in this rig, so once posed at their own
+## (sometimes extreme) control-space position, any mesh weighted to them gets dragged there too.
+## Almost certainly from an indiscriminate body→garment automatic weight-paint transfer that
+## copied ALL of the body's vertex groups onto the garment, including ones that were never meant
+## to deform garment geometry. Invisible in rest pose (`mesh.vertices` coords are completely
+## normal) — only visible once posed, which is exactly why it survived past modeling/rigging
+## review. **Two wrong hypotheses tried and DISPROVEN** for why my headless Blender reads of the
+## saved .blend kept showing clean geometry while the user's live interactive session (and the
+## user's own live diagnostic script) showed the corruption, even though the user was explicit
+## "I didn't add anything since the last save": (1) depsgraph staleness — explicit
+## `frame_set`/`view_layer.update()`/`deps.update()` calls made no difference; (2) Rigify addon not
+## loaded under `--factory-startup` — re-running WITHOUT `--factory-startup` (real addon set) also
+## showed clean. **Still unexplained** — not investigated further since it doesn't block anything:
+## the shipped scan feature (below) runs INSIDE the user's own live session, so whatever caused my
+## standalone headless probes to disagree doesn't affect whether the feature itself will correctly
+## detect the bug in practice.
+##
+## **v0.2.114 — new "Check Armature Deformation" scan, detection-only by explicit user
+## instruction** ("Build detection only first... I would expect the user to run a scan and then be
+## able to select or not select items to be fixed"). Compares each armature-deformed mesh's REST
+## edge lengths (`mesh.vertices`) against DEPSGRAPH-EVALUATED/posed edge lengths — a healthy mesh
+## keeps this ratio close to 1x, the real shirt.003 case measured ~84,000x against a chosen default
+## threshold of 20x (healthy meshes topped out ~5-6x in testing, wide margin either side).
+## `core/deform_check.py` (bpy-free: `find_deform_outliers`, `ObjectDeformSummary`,
+## `build_deform_check_report`; 16 new pytest cases), `ops/deform_check.py` (new
+## `FILELINK_OT_scan_deform_issues`, `ModalProgressMixin`-based chunked scan reusing one
+## `evaluated_depsgraph_get()` across every candidate object — mesh objects with an ENABLED,
+## vertex-group-bound Armature modifier), new `FILELINK_PG_deform_row`/`FILELINK_UL_deform_rows` +
+## `_draw_deform_check` in `ui/panels.py`, wired into the Analyze panel right after Check
+## Materials. Full registration plumbing across `ops/report_store.py` (FEATURES list),
+## `ops/__init__.py`, `ui/__init__.py` (class list appears TWICE in this file — the import
+## statement AND `REGISTER_CLASSES` — both needed updating, easy to miss one), `__init__.py` (WM
+## property registration + `wm_attrs` unregister cleanup list).
+##
+## **Design answer, "will this detect problems in linked characters?"**: yes, flagged but visibly
+## tagged rather than silently mishandled. `ObjectDeformSummary.is_locally_fixable = (obj.library
+## is None and mesh.library is None)` — a fix would need to edit both the Object's vertex group
+## DEFINITIONS and the Mesh's per-vertex WEIGHT ASSIGNMENTS (they live on different datablocks),
+## so either being linked blocks a future local fix. Flows through to the report message
+## (" — LINKED, fix at source" suffix) and the UI row (LIBRARY_DATA_BROKEN icon + label) rather
+## than just being silently included as if it were locally fixable.
+##
+## **Explicitly out of scope this round, per the user's own instruction**: NO fix/mutation logic.
+## The `selected` checkbox exists on each result row for a future Apply/Fix pass, but nothing
+## currently reads or acts on it — `_draw_deform_check`'s docstring says so explicitly.
+##
+## Verification: `py_compile` clean on all 7 touched/new files; full pytest suite green (main
+## `core`/`ops` suite + 16 new `test_deform_check.py` cases, no regressions); new end-to-end
+## `tests/smoke_deform_check.py` run against real Blender 5.1 — synthetic 2-bone armature (one
+## bone posed 1000 units away, one healthy control posed a small amount) + 2-vertex mesh, confirms
+## the real operator flags only the exploded object, sets `wm.filelink_deform_scanned`, and
+## reports `is_locally_fixable=True` for local data — `DEFORMCHECK_SMOKE_OK`.
+##
+## ⏩ NEXT SESSION: **this detection feature has NOT been used against the real
+## `ThePiazzaSanMarco - People.blend` production file yet** — only synthetic smoke-test data. Run
+## it live against shirt.003 first, confirm it actually flags `Canaletto_XX_blackHairBrownCloak`
+## with the CTRL_* bones identified above, THEN decide on and get explicit approval for a fix
+## approach (previously discussed: strip weight contributions from vertex groups matching
+## non-deform-intended control bones) — do not build a fix without that go-ahead. Also worth a
+## second look some session: the still-unexplained headless-vs-live geometry discrepancy above,
+## in case it turns out to matter for some other diagnostic feature later.
+
+## ✅ 2026-07-09 (continued): v0.2.112 — two real fuzzy-match misses found + fixed live against
+## `ThePiazzaSanMarco - People.blend`. See CHANGELOG's [0.2.112] entry for the user-facing
+## summary: MemSaver cache-path hijack (`_wanted_basename` now falls back to the datablock name
+## when the stored path is a `memSaver_cache` hash file), and a dot-joined pseudo-extension gap
+## in the tokenizer (`_PSEUDO_EXT_RE` now matches `.` or `_` before the fake extension). Both
+## have new pytest coverage; NOT yet live-verified in Blender (same "ships ahead of live-verify"
+## pattern as everything else this session). **User separately disabled MemSaver entirely**
+## ("hasn't refreshed memsaver for several months... seems like it was causing more problems
+## than it was solving") — the `_wanted_basename` fix stays valuable for any image whose
+## stored path was ALREADY hijacked before MemSaver got disabled (that corruption doesn't
+## self-heal), just won't happen again going forward on this machine.
+##
+## Also this session (outside the addon proper, direct library filesystem work, logged for
+## continuity): audited all 239 top-level pack directories under
+## `D:\BlenderLibraries\LocalLibrary\textures\` for structural consistency (user noticed
+## `FabricRope001` didn't match the layout they expected). Found 3 legitimate coexisting
+## conventions (FLAT 133, CHANNEL_FIRST 53, RES_FIRST 28 — no single "standard" already existed,
+## left alone) plus 17 genuinely broken packs, all fixed: 5 double-nested (`<pack>/<pack>/...`
+## collapsed up one level) and 12 with orphan flat files left behind mid-migration (moved into a
+## new or existing channel/resolution folder matching each pack's own sibling naming convention
+## — several turned out to be a whole second unmigrated METALNESS-workflow texture set sitting
+## next to an organized SPECULAR-workflow one, not just stray single files). Full per-pack
+## classification + move log: `D:\BlenderReorg_Audit\texture_dir_structure_audit.csv`. One
+## flagged-not-fixed anomaly: 4 orphan files in `FruitBlueberries001` were named `FruitBowl001_*`
+## (a pre-existing naming mistake, not from this session) but moved in anyway since their
+## channels matched the pack's own set 1:1 and they lived nowhere else.
+##
 ## 🏷️ RENAMED (2026-07-05): AssetDoctor → File & Link Utilities, v0.2.106 (Phase R). Package
 ## id, class prefixes, operator category, WM/Scene props, GitHub repo, and gh-pages URL all
 ## changed — see CHANGELOG.md's [0.2.106] entry. Everything BELOW this note that predates the
 ## rename still uses the old `ASSETDOCTOR_*`/`assetdoctor.*` names as originally written — kept
 ## as historical record, not updated.
 
+## ✅ CURRENT STATE (2026-07-09): v0.2.111 COMMITTED, NOT YET PUBLISHED. Built same session as
+## the Check Materials crash fix (v0.2.110, see the crash writeups further below) and the fbm/
+## HumGenV4/vendor-texture recovery work on `ThePiazzaSanMarco - People.blend` — two user-
+## requested features, both from Check Materials's own live-use session:
+## 1. **"Accept High Matches" / "Accept High/Med Matches"** next to "Accept All" in Possible
+##    Matches (`ops/image_relink.py::FILELINK_OT_accept_all_matches`, new `min_confidence` prop;
+##    `core/imagematch.py::meets_min_confidence`).
+## 2. **Missing Textures split into 3 collapsible categories** (Material/World/Other), each with
+##    a summary, collapsed by default — new `core/picker.py::CategorySpec`/
+##    `flatten_category_group_member_rows` (3-level group shell, new pytest coverage), World
+##    attribution via a new `ops/image_relink.py::_image_world_map` walk over `bpy.data.worlds`.
+## Suite 754+ (all new picker tests included) green, py_compile clean on every touched file.
+## **NEITHER FEATURE HAS BEEN LIVE-VERIFIED IN BLENDER YET** — built and unit-tested only, same
+## "ships ahead of live-verify, confirm next session" pattern as v0.2.108's Automated Cleanup.
+##
+## ⏩ NEXT SESSION: live-Blender click-through of both v0.2.111 features — confirm the 3
+## category headers actually render/collapse/expand correctly and their summaries stay live
+## after a relink, confirm a same-named Material/World pair doesn't misbehave in practice (known
+## accepted edge case, see the code comments — should be harmless since the per-group folder
+## action is Material-only, but not tested against a real World datablock), and confirm Accept
+## High/Med actually leaves the right rows staged vs accepted. ALSO still pending: live-verify
+## the v0.2.110 Check Materials crash fix itself (see that entry below for the exact repro
+## steps) — three separate un-verified changes now stacked on top of each other, worth
+## confirming each independently rather than assuming they all just work together.
+##
 ## ✅ CURRENT STATE (2026-07-06): v0.2.109 COMMITTED, NOT YET PUBLISHED (no tag/GitHub
 ## Release/gh-pages index yet — that's a separate, explicit step per `docs/RELEASING.md`).
 ## Group 15 below (Tier 2 material-name fuzzy relink, `_wanted_basename` UNC-path bug,
@@ -25,6 +313,121 @@
 ## partial-failure path (tick a mix of good/since-deleted targets, confirm the good ones still
 ## relink and the bad ones report + stay ticked) in the real panel UI — same as the OTHER
 ## still-open item directly below, both pending live-verify in Blender itself.
+
+## 💡 UX note from live use, 2026-07-09 (not a bug — the fuzzy matcher already handles this
+## correctly): a user tried **"Search a Folder (Recursive)…"** to relink a vendor PBR texture
+## whose missing basename embeds a resolution tag (`Poliigon_..._1K_Normal.jpg`) against a
+## library file that has the SAME content but a different naming convention
+## (`Poliigon_.../1K/Poliigon_..._Normal.jpg` — resolution as a folder, not embedded in the
+## filename) and got no hit — reasonable confusion, since Search Folder
+## (`core/imagepaths.py::find_image_target`) is exact-basename-only by design. **"Suggest
+## Matches…"** (`core/imagematch.py`) already tokenizes resolution separately from stem
+## identity and doesn't penalize present-vs-absent (only a genuine `1K` vs `2K` conflict costs
+## score) — hand-traced this exact case, scores "high confidence." So the feature already does
+## what was wanted; the gap is discoverability, not matching logic. Possible future polish: if
+## Search Folder's exact pass leaves items unplaced, offer to auto-run Suggest Matches (fuzzy)
+## against the SAME folder instead of requiring a second manual pick-folder round-trip.
+
+## 🐛🔥 BUG UPGRADED TO CRASH, 2026-07-09 (real file `ThePiazzaSanMarco - People.blend`,
+## networked machine): the "drilldown arrow not clickable" report immediately below is now
+## confirmed to actually be **a hard Blender crash** (EXCEPTION_ACCESS_VIOLATION), not a dead
+## button — the user hit it live and got a real crash dump. Python backtrace (authoritative):
+## `ui/panels.py:1122` in `_feature_tree_nodes` (the `nodes_from_json(raw) if feature in
+## TREE_FEATURES else report_to_tree(Report.from_json(raw))` line) → called from
+## `_draw_report_detail` (`ui/panels.py:1247`) → called from `draw` (`ui/panels.py:1783`,
+## Check Materials' own draw call). Crash-log's own preceding `bpy.ops.filelink.check_materials()`
+## call reported **"1458 material(s) classified, 1410 issue(s) flagged"** — i.e. the stashed
+## report for this draw had ~1410 findings, an unusually large fraction (97%) of all materials
+## flagged as an "issue."
+##
+## **CORRECTION (same session, before any fix was built): the shader-classification theory above
+## was wrong — checked the actual code before touching anything, per this project's own "guessed
+## wrong once already" lesson.** Item (b)'s "Combined Shader" fix was ALREADY built (not "decided
+## but not built" as the original 2026-07-04 note said — that note was stale):
+## `ops/material_diagnostics.py::_group_combines_shaders`/`_surface_shader_idname` already detects
+## a node GROUP that internally mixes shaders and returns `core.material_diagnostics.
+## COMBINED_SENTINEL` → `"Combined Shader"`, recursing into nested groups. More importantly, the
+## "1410 issue(s)" the crash log reported has NOTHING to do with shader-type classification at
+## all — `run_steps` (`ops/material_diagnostics.py:182`) computes that count from
+## `len(invalid_links) + len(missing_image_nodes) + len(empty_slots)`; shader-type findings are a
+## separate, uncounted bucket. With 567 still-broken Image datablocks fanned out across many
+## `TEX_IMAGE` node instances (this file has ~72 near-duplicate teeth materials and ~44
+## near-duplicate eyelash materials alone, each with several image nodes), 1410 is just an
+## accurate reflection of real scene scale — not a bug.
+##
+## **Actual root cause, found by reading `_draw_report_detail`/`_feature_tree_nodes`
+## (`ui/panels.py`) directly: it re-parses the ENTIRE stashed report from JSON and rebuilds the
+## whole tree on EVERY SINGLE PANEL REDRAW, unconditionally — even while collapsed, even when
+## nothing changed.** `_draw_report_detail`'s own docstring says this refill is "cheap," an
+## assumption that holds for a small report but not for one with ~1400+ findings; Blender panels
+## redraw far more often than "the user did something" (hover, adjacent-panel changes, etc.), so
+## this was doing a full JSON-parse + tree-rebuild of a ~1400-node structure many times a second
+## in the worst case — a real perf/stability risk that a click (forcing an immediate redraw
+## cascade) could plausibly tip over into the observed crash.
+##
+## **FIXED same session (2026-07-09, before any live-Blender re-verify — flagging that
+## explicitly, same as this project's own standing practice elsewhere): `_feature_tree_nodes`
+## (`ui/panels.py`) now caches its parsed `(has_run, nodes)` result per feature, keyed on the
+## exact raw JSON string last seen (module-level `_tree_nodes_cache` dict, `ui/panels.py:1089-
+## 1100`).** A stashed report only ever changes when a scan actually re-runs (report_store always
+## writes a brand-new raw string then), so a plain string-equality check is an exact cache key —
+## no risk of showing stale data after a real rescan, it only skips redundant reparses of
+## IDENTICAL data across redraws in between. Full pytest suite reran clean after the change (all
+## green, no regressions) — but this is still UNVERIFIED against the actual crash: nobody has
+## reopened the real file and reproduced the click yet. **NEXT SESSION: live-verify this
+## actually fixes the crash** (reopen `ThePiazzaSanMarco - People.blend`, run Check Materials
+## again with its still-large issue count, click the shader-type drilldown arrow, confirm no
+## crash) before calling this closed.
+##
+## A SECOND, apparently unrelated crash hit the same session (same file, same machine, earlier
+## in the timeline — during a "Suggest Matches" pass): `EXCEPTION_ACCESS_VIOLATION` inside
+## `core/imagematch.py:90` (`tokenize`), called from `name_affinity` (`core/imagematch.py:159`),
+## called from the material-attribution lambda in `ops/image_relink.py:62`
+## (`_image_material_map`'s `max(mats, key=lambda m: imagematch.name_affinity(img_name, m))`),
+## reached via `_gather_linked_missing_images` (`ops/image_relink.py:100`) →
+## `_populate_broken_images` (`ops/image_relink.py:163`) → `execute` (`ops/image_relink.py:253`).
+## `tokenize` itself is pure-Python string splitting on already-extracted `str` values (not
+## live bpy struct access) — a native access violation crashing INSIDE it is more consistent
+## with memory corruption surfacing here than a defect in this function specifically. Two
+## things worth ruling out before assuming this is a File & Link Utilities bug: (1) this
+## session's own Blender log shows heavy unrelated third-party-addon distress running
+## concurrently — MemSaver's `load_post` handler threw repeated `FileNotFoundError` while
+## trying to build derivative caches for the same ~1113 broken texture paths this whole session
+## is about (dozens of tracebacks, all caught/logged not fatal), PureSky's
+## `depsgraph_update_pre` handler threw a repeated `KeyError` ("followCam" not found), and
+## Rigify hit a hard `RuntimeError` on a malformed generated `bl_idname` during registration.
+## Any of these misbehaving handlers running during the same window is a plausible contributor
+## to interpreter-level instability. (2) A THIRD crash hit later, at Blender's own next
+## startup / initial file load — no log was captured for that one, forcing a full computer
+## restart. That one is undiagnosed entirely; if it recurs, get its crash log before doing
+## anything else, and consider whether MemSaver's constant error-handling load on this file's
+## ~560 remaining broken texture paths is worth disabling temporarily while relink work
+## continues, purely to reduce background noise during the session.
+##
+## Reassurance on data safety (checked directly against the crash log's own embedded operator
+## history, not assumed): the 546 texture relinks that got this file from 1113→567 missing
+## WERE saved (`Saved "ThePiazzaSanMarco - People.blend"` appears in the log right after that
+## batch, before the crash). Only the subsequent staging/review of a further ~244 fuzzy-match
+## candidates (not yet applied via Relink Selected) was lost — cheap to redo, not a real
+## setback. The addon's own per-relink-batch auto-backups
+## (`..._filelink_20260709_113630/114425/114928.blend`) are an extra safety net on top of that,
+## unrelated to this bug, just confirming the existing backup mechanism worked as designed.
+##
+## Separately, this same crash-log's embedded operator history independently CONFIRMS the
+## UX note directly below (resolution-tag exact-match gap): the user's own
+## `bpy.ops.filelink.relink_folder_search(..., mode="EXACT_GROUP", ...)` call against
+## `Poliigon_MetalSteelBrushed_7174\` logged "No matching filenames found... Nothing changed"
+## — real evidence, not just a hand-traced hypothesis, that exact-match search misses this
+## vendor-pack naming shape and Suggest Matches (fuzzy) is the correct tool for it.
+##
+## 🐛 BUG reported live 2026-07-09 (real file `ThePiazzaSanMarco - People.blend`, networked
+## machine, during missing-texture troubleshooting): under **Check Materials**, the drilldown
+## arrow icon for the **"Materials by shader type"** category is not clickable — clicking it
+## does not expand/collapse the sub-list. SUPERSEDED BY THE CRASH ABOVE — kept for the original
+## symptom description, but treat the entry above as authoritative for root-cause and next
+## steps. Likely related to, but distinct from, the already-tracked item (a) below ("Check
+## Materials doesn't use the shared results-tree UI yet") and item (c) ("clicking a row near
+## the bottom jumps to the top") — worth checking together once the crash itself is fixed.
 
 ## ✅ CURRENT STATE (2026-07-05): v0.2.108 PUBLISHED (commit 7d839dc, tag v0.2.108, GitHub
 ## Release + gh-pages index refreshed) — but NOT yet live-verified in Blender itself. Item #22

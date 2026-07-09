@@ -293,8 +293,62 @@ class FILELINK_PG_broken_lib(bpy.types.PropertyGroup):
     # 2026-06-25): unused for Inconsistent/Duplicate Library Paths and
     # Absolute Paths (``group`` already carries their grouping key); for
     # Resolution Variant rows it holds the member's own resolution token
-    # ("1k"/"2k"/...), needed by Select High/Low Resolution.
+    # ("1k"/"2k"/...), needed by Select High/Low Resolution. For Missing
+    # Textures rows (2026-07-09) it holds the row's CATEGORY —
+    # "material"/"world"/"other" — one level above ``material``'s own
+    # grouping-within-category key; see ``ops.image_relink.
+    # rebuild_missing_tex_picker_rows``.
     tag: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+
+class FILELINK_PG_deform_row(bpy.types.PropertyGroup):
+    """One flagged object from Check Armature Deformation (ops.deform_check,
+    2026-07-09) — detection/review only, no fix action yet, so this row is
+    purely informational plus a ``selected`` checkbox for a later fix pass to
+    read. ``vertex_ids`` is a comma-joined string (a real fix will need to
+    re-resolve these against live bpy data anyway, e.g. to inspect vertex-group
+    weights, so this is just enough to say WHICH vertices without re-scanning)."""
+
+    # `name` (PropertyGroup built-in) holds the object name.
+    mesh_name: bpy.props.StringProperty()  # type: ignore[valid-type]
+    armature_name: bpy.props.StringProperty()  # type: ignore[valid-type]
+    vertex_count: bpy.props.IntProperty()  # type: ignore[valid-type]
+    worst_ratio: bpy.props.FloatProperty()  # type: ignore[valid-type]
+    vertex_ids: bpy.props.StringProperty()  # type: ignore[valid-type]
+    # False when the object or its mesh is LINKED from another .blend — the
+    # vertex-group weight data a fix would need to edit isn't local to this
+    # file, so a fix has to happen at the source file instead (same "fix at
+    # source" distinction this addon already makes for linked missing textures).
+    is_locally_fixable: bpy.props.BoolProperty(default=True)  # type: ignore[valid-type]
+    selected: bpy.props.BoolProperty(
+        default=False, name="",
+        description="Mark this object for a future fix pass")  # type: ignore[valid-type]
+
+
+class FILELINK_UL_deform_rows(bpy.types.UIList):
+    """Check Armature Deformation's results list: checkbox + object name +
+    worst-edge ratio + affected-vertex count. Flat, no grouping — in practice
+    this list should stay short (a healthy file has zero rows), unlike Missing
+    Textures' potentially-thousands-of-rows case that needed real grouping."""
+
+    bl_idname = "FILELINK_UL_deform_rows"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type == "GRID":
+            layout.alignment = "CENTER"
+            layout.label(text=item.name)
+            return
+        row = layout.row(align=True)
+        row.prop(item, "selected", text="")
+        row.label(text=item.name, icon="ERROR")
+        if not item.is_locally_fixable:
+            lrow = row.row()
+            lrow.alignment = "RIGHT"
+            lrow.label(text="linked — fix at source", icon="LIBRARY_DATA_BROKEN")
+        detail = row.row()
+        detail.alignment = "RIGHT"
+        detail.label(text=f"{item.vertex_count} vert(s), worst {item.worst_ratio:.0f}x  "
+                          f"(armature: {item.armature_name})")
 
 
 # Keeps a strong reference to each row's keeper-enum items list. Dynamic
@@ -688,6 +742,19 @@ class FILELINK_UL_missing_tex_picker(bpy.types.UIList):
         row = layout.row(align=True)
         if item.indent:
             row.separator(factor=float(item.indent) * 1.5)
+
+        if item.kind == "outer":
+            # The Material/World/Other Textures category header (2026-07-09) --
+            # a pure collapsible label + summary, no per-category bulk action
+            # (the section-wide Search Folder/Suggest Matches buttons above
+            # already cover all three; see rebuild_missing_tex_picker_rows for
+            # why a folder action stays MATERIAL-group-only).
+            tog = row.operator("filelink.row_toggle", text="",
+                               icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
+                               emboss=False)
+            tog.key, tog.prop = item.key, "filelink_tex_expanded"
+            row.label(text=item.label, icon=item.icon)
+            return
 
         if item.kind == "group":
             tog = row.operator("filelink.row_toggle", text="",
@@ -1086,6 +1153,20 @@ def _feature_has_run(wm, feature: str) -> bool:
     return bool(getattr(wm, data_prop(feature), ""))
 
 
+# feature -> (last raw JSON string seen, its parsed (has_run, nodes) result).
+# _draw_report_detail calls _feature_tree_nodes UNCONDITIONALLY on every panel
+# redraw (by design -- see its own docstring), which was fine while reports
+# stayed small. Real crash, 2026-07-09: Check Materials on a file with heavy
+# near-duplicate materials (1410 findings) meant every single redraw did a
+# full JSON parse + tree rebuild of a ~1400-node report, not just on toggle
+# or after a new scan. A stashed report only ever changes when a scan re-runs
+# (report_store writes a brand new raw string then), so a plain string-equality
+# check against the last-seen raw is a safe, exact cache key -- no risk of
+# showing stale data after a real rescan, just skips redundant reparses of the
+# SAME data across redraws in between.
+_tree_nodes_cache: dict[str, tuple[str, tuple[bool, list]]] = {}
+
+
 def _feature_tree_nodes(wm, feature: str) -> tuple[bool, list]:
     """``(has_run, nodes)`` for a stashed report/tree feature. ``has_run``
     distinguishes "never scanned" (hide the rollup entirely) from "scanned,
@@ -1100,6 +1181,9 @@ def _feature_tree_nodes(wm, feature: str) -> tuple[bool, list]:
     raw = getattr(wm, data_prop(feature), "")
     if not raw:
         return False, []
+    cached = _tree_nodes_cache.get(feature)
+    if cached is not None and cached[0] == raw:
+        return cached[1]
     try:
         if feature == "f7chain":
             # The LOCAL half of posing_override/posing_modifier duplicates the
@@ -1122,7 +1206,9 @@ def _feature_tree_nodes(wm, feature: str) -> tuple[bool, list]:
                      else report_to_tree(Report.from_json(raw)))
     except Exception:
         return False, []
-    return True, nodes
+    result = (True, nodes)
+    _tree_nodes_cache[feature] = (raw, result)
+    return result
 
 
 def _f7chain_headline(wm, nodes) -> tuple[str, list]:
@@ -1616,6 +1702,29 @@ def _analyze_row(layout, wm, step_key, opname, text, icon, summary="", has_run=N
     return op
 
 
+def _draw_deform_check(layout, wm) -> None:
+    """Check Armature Deformation's results (Group 16, 2026-07-09) — a flat
+    selectable list, one row per flagged object. Detection only: the
+    ``selected`` checkboxes are read-and-write today but nothing consumes them
+    yet — they're there for a later fix-pass operator to read, per the user's
+    explicit "detection first" call, so this section deliberately has no
+    Apply/Fix button."""
+    if not wm.filelink_deform_scanned:
+        return
+    rows = wm.filelink_deform_rows
+    box = layout.box().column(align=True)
+    if not len(rows):
+        box.label(text="✓ no armature-deformation outliers found", icon="CHECKMARK")
+        return
+    total_verts = sum(r.vertex_count for r in rows)
+    box.label(text=f"{len(rows)} object(s), {total_verts} vertex(es) flagged", icon="ERROR")
+    box.template_list(
+        "FILELINK_UL_deform_rows", "",
+        wm, "filelink_deform_rows",
+        wm, "filelink_deform_index",
+        rows=min(10, max(3, len(rows))),
+    )
+
 
 def _flattenable_overrides_summary(wm) -> str:
     """The "Flattenable overrides" subgroup's own live outcome line —
@@ -1782,6 +1891,17 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
                      "Check Materials", "MATERIAL", has_run=_feature_has_run(wm, "matdiag"))
         _draw_report_detail(layout, wm, "matdiag")
 
+        # Check Armature Deformation (Group 16, 2026-07-09) — a mesh vertex
+        # weighted to a non-deform bone (real case found live: Reallusion/CC
+        # facial CTRL_ bones, likely from a body->garment weight transfer) gets
+        # dragged wildly out of place once posed, invisible in rest pose.
+        # Detection only — the checkbox list is for a LATER fix pass to read,
+        # nothing here mutates a mesh or its vertex groups yet.
+        _analyze_row(layout, wm, "", "filelink.scan_deform_issues",
+                     "Check Armature Deformation", "MOD_ARMATURE",
+                     has_run=wm.filelink_deform_scanned)
+        _draw_deform_check(layout, wm)
+
         # Footprint/impact analyses — a different KIND of analysis (not "is
         # something broken") — separated from the find-a-problem buttons above
         # (user request, 2026-06-25).
@@ -1934,6 +2054,13 @@ class FILELINK_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         pick = box.row(align=True)
         pick.prop_search(wm, "filelink_examine_library_pick", bpy.data, "libraries", text="")
         pick.operator("filelink.examine_library", text="Examine", icon="VIEWZOOM")
+
+        # Persistent Apply Selected result (docs/TODO.md, 2026-07-09): Apply
+        # Selected clears filelink_examine_rows on success, so the panel falls
+        # straight back to this pre-scan look — without this, the one-shot
+        # toast was the ONLY feedback a user had that anything happened at all.
+        if wm.filelink_examine_apply_summary:
+            box.label(text=wm.filelink_examine_apply_summary, icon="INFO")
 
         if scanned and len(rows):
             staged = sum(1 for r in rows if r.selected)
@@ -2855,7 +2982,13 @@ def _draw_possible_matches(tex, wm) -> None:
     tex.separator()
     hrow = tex.row(align=True)
     hrow.label(text=f"Possible Matches — {len(proposals)}", icon="ZOOM_SELECTED")
-    hrow.operator("filelink.accept_all_matches", text="Accept All", icon="CHECKMARK")
+    arow = tex.row(align=True)
+    arow.operator("filelink.accept_all_matches", text="Accept All",
+                 icon="CHECKMARK").min_confidence = ""
+    arow.operator("filelink.accept_all_matches", text="Accept High Matches",
+                 icon="CHECKMARK").min_confidence = "high"
+    arow.operator("filelink.accept_all_matches", text="Accept High/Med Matches",
+                 icon="CHECKMARK").min_confidence = "medium"
     tex.label(text="Name-similarity guesses — review before accepting.", icon="INFO")
 
     # Category keys are namespaced ("\x01" + material) so they don't collide with

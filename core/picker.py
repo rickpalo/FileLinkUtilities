@@ -205,6 +205,77 @@ class GroupSpec:
     info_icon: str = "INFO"  # icon for the info line (e.g. an error/question state)
 
 
+@dataclass
+class CategorySpec:
+    """One top-level, collapsible-by-default category wrapping several
+    single-level groups (Missing Textures' "Missing Material/World/Other
+    Textures" split, 2026-07-09) — one level ABOVE :class:`GroupSpec`. Reuses
+    the "outer" ``PickerRow.kind`` the Flattenable Overrides picker already
+    established for a collapsible top row, so the UIList only needs one more
+    ``kind`` branch, not a new row vocabulary. ``key`` should be namespaced
+    (distinct from any real group/material key) so it can't collide in the
+    shared expanded-set string; ``groups``' own ``key``s are NOT touched here —
+    they stay the raw grouping identity (e.g. a material name) some group-level
+    actions (``point_group_at_folder``) look up directly."""
+    key: str
+    label: str          # full display text, count suffix included (the "summary")
+    icon: str
+    groups: list[GroupSpec]
+
+
+def flatten_category_group_member_rows(
+    categories: list[CategorySpec],
+    expanded: set[str],
+    ref_prop: str,
+) -> list[PickerRow]:
+    """3-level version of :func:`flatten_group_member_rows`: category (indent 0,
+    collapsed unless its key is in ``expanded`` — same "absent = collapsed"
+    default every other section already uses, so a fresh scan starts every
+    category collapsed with no extra state to seed) -> group (indent 1) ->
+    member (indent 2)."""
+    rows: list[PickerRow] = []
+    for cat in categories:
+        is_exp = cat.key in expanded
+        rows.append(PickerRow(
+            kind="outer",
+            key=cat.key,
+            indent=0,
+            label=cat.label,
+            icon=cat.icon,
+            is_expanded=is_exp,
+        ))
+        if not is_exp:
+            continue
+        for g in cat.groups:
+            is_gexp = g.key in expanded
+            rows.append(PickerRow(
+                kind="group",
+                key=g.key,
+                group_key=cat.key,
+                indent=1,
+                label=g.label,
+                icon=g.icon,
+                has_action=g.has_action,
+                alert=g.alert,
+                is_expanded=is_gexp,
+            ))
+            if is_gexp and g.info:
+                rows.append(PickerRow(kind="rollup", group_key=g.key, indent=3,
+                                      label=g.info, icon=g.info_icon))
+            if not is_gexp:
+                continue
+            for m in g.members:
+                rows.append(PickerRow(
+                    kind="member",
+                    key=g.key,
+                    group_key=g.key,
+                    ref_prop=ref_prop,
+                    ref_index=m.ref_index,
+                    indent=2,
+                ))
+    return rows
+
+
 def flatten_group_member_rows(
     groups: list[GroupSpec],
     expanded: set[str],

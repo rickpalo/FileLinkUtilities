@@ -78,7 +78,18 @@ _WORDNUM_RE = re.compile(r"^([a-z][a-z]*?)(\d+)$")  # "beard19" -> ("beard","19"
 # actual ".png" extension strips normally) — dragging stem similarity down for an
 # otherwise perfect match. Applied after the real-extension strip so "_png.001"
 # (dedup suffix over a pseudo-extension) is caught too.
-_PSEUDO_EXT_RE = re.compile(r"_(?:png|jpe?g|tga|tiff?|exr|bmp|hdr|psd|tx)$", re.IGNORECASE)
+#
+# Also matches a DOT separator ("...1k.jpg.002"), not just underscore -- real bug
+# found live, 2026-07-09: Blender's own ordinary dedup-on-collision naming appends
+# ".NNN" to whatever the requested datablock name was, even when that name already
+# looks like it has a real extension baked in (a normal, common shape when an
+# import pipeline names datablocks after the referenced file's basename INCLUDING
+# its extension). The real-extension strip above only removes the LAST ".NNN", so
+# the redundant ".jpg" stays in the stem and gets split into a stray "jpg" stem
+# token, dragging a same-texture match down from "high" to "low" confidence for no
+# reason -- by this point any ".ext" (or "_ext") still left in the stem is always
+# noise, never real signal, since the true extension was already stripped first.
+_PSEUDO_EXT_RE = re.compile(r"[._](?:png|jpe?g|tga|tiff?|exr|bmp|hdr|psd|tx)$", re.IGNORECASE)
 
 
 def tokenize(name: str) -> list[str]:
@@ -94,17 +105,29 @@ def _is_resolution(token: str) -> bool:
     return bool(_RES_RE.match(token)) or token in _RES_PIXELS
 
 
+# A vendor catalog SKU (Poliigon's own asset IDs: 7174, 8819, 9322, ...) is always
+# 4+ bare digits, no letters attached (distinct from _WORDNUM_RE's word+number shape
+# like "beard18", and distinct from a 3-digit _RES_PIXELS token like "256"/"512" --
+# those are already claimed by _is_resolution earlier in the classify() loop, so
+# there's no overlap). Real user request, 2026-07-09: this ID is a much stronger,
+# more reliable identity signal than the ordinary descriptive stem words (which
+# vendors/users abbreviate inconsistently) and should be treated as a primary
+# match criterion, not just one more word diluted into the Jaccard set.
+_CATALOG_ID_RE = re.compile(r"^\d{4,}$")
+
+
 @dataclass(frozen=True)
 class NameParts:
     stems: frozenset[str]   # identity tokens
     channel: str | None     # canonical PBR channel (first channel token wins)
     res: str | None         # resolution token, normalized (e.g. "2k")
+    catalog_id: str | None  # a vendor SKU number (e.g. Poliigon's "7174"), if present
     tokens: tuple[str, ...]  # raw token order (for debugging)
 
 
 @lru_cache(maxsize=None)
 def classify(name: str) -> NameParts:
-    """Break a filename into (stem tokens, primary channel, resolution).
+    """Break a filename into (stem tokens, primary channel, resolution, catalog ID).
 
     Cached: :func:`best_match`/:func:`propose_matches` reclassify the SAME
     wanted name against every candidate and the SAME candidate against every
@@ -116,6 +139,7 @@ def classify(name: str) -> NameParts:
     stems: list[str] = []
     channel: str | None = None
     res: str | None = None
+    catalog_id: str | None = None
     toks = tokenize(name)
     for t in toks:
         if _is_resolution(t):
@@ -123,8 +147,15 @@ def classify(name: str) -> NameParts:
         elif t in _ALIAS_TO_CHANNEL:
             channel = channel or _ALIAS_TO_CHANNEL[t]  # FIRST channel token wins
         else:
+            # Catalog ID stays IN stems too (not pulled out) -- it already helps
+            # ordinary Jaccard overlap today and removing it would be a regression
+            # for the common case where it's the only differing/matching word; it's
+            # ADDITIONALLY tracked here for the stronger bonus/conflict treatment
+            # in score_match.
             stems.append(t)
-    return NameParts(frozenset(stems), channel, res, tuple(toks))
+            if catalog_id is None and _CATALOG_ID_RE.match(t):
+                catalog_id = t
+    return NameParts(frozenset(stems), channel, res, catalog_id, tuple(toks))
 
 
 def _numbered_conflict(a: frozenset[str], b: frozenset[str]) -> bool:
@@ -173,14 +204,23 @@ _STEM_FLOOR = 0.5  # below this stem similarity, not a candidate
 
 def score_match(wanted: str, candidate: str) -> Match | None:
     """Score ``candidate`` as a stand-in for the missing ``wanted`` file, or None if
-    it is disqualified (numbered-variant conflict, wrong channel, or too dissimilar)."""
+    it is disqualified (numbered-variant conflict, catalog-ID conflict, wrong
+    channel, or too dissimilar)."""
     w, c = classify(wanted), classify(candidate)
     if _numbered_conflict(w.stems, c.stems):
         return None  # Beard18 vs Beard19 etc.
+    if w.catalog_id and c.catalog_id and w.catalog_id != c.catalog_id:
+        return None  # different vendor SKU (e.g. two different Poliigon products)
     if w.channel and c.channel and w.channel != c.channel:
         return None  # a roughness map can't stand in for a normal map
+    catalog_match = bool(w.catalog_id and c.catalog_id and w.catalog_id == c.catalog_id)
     stem_sim = _jaccard(w.stems, c.stems)
-    if stem_sim < _STEM_FLOOR:
+    if stem_sim < _STEM_FLOOR and not catalog_match:
+        # A shared catalog ID is strong-enough identity evidence on its own to
+        # rescue a pair whose ordinary descriptive words differ too much to pass
+        # the floor otherwise (e.g. a heavily vendor-abbreviated name) -- it does
+        # NOT bypass the channel/numbered-conflict disqualifications above, those
+        # are still hard physical facts regardless of identity confidence.
         return None
 
     chan_match = bool(w.channel and c.channel and w.channel == c.channel)
@@ -192,15 +232,17 @@ def score_match(wanted: str, candidate: str) -> Match | None:
         score += 0.3
     elif both_no_channel:
         score += 0.1
+    if catalog_match:
+        score += 0.2  # primary identity signal, weighted heavier than ordinary words
     res_mismatch = bool(w.res and c.res and w.res != c.res)
     if w.res and c.res and w.res == c.res:
         score += 0.1
     elif res_mismatch:
         score -= 0.15
 
-    if stem_sim >= 0.999 and chan_match and not res_mismatch:
+    if (stem_sim >= 0.999 or catalog_match) and chan_match and not res_mismatch:
         confidence = "high"
-    elif stem_sim >= 0.6 and channel_ok:
+    elif (stem_sim >= 0.6 or catalog_match) and channel_ok:
         confidence = "medium"
     else:
         confidence = "low"
@@ -212,7 +254,19 @@ def best_match(wanted: str, candidates: list[str]) -> Match | None:
     ``candidates`` are basenames found in the search folder."""
     best: Match | None = None
     for cand in candidates:
-        m = score_match(wanted, cand)
+        try:
+            m = score_match(wanted, cand)
+        except Exception as exc:
+            # Defensive: a real (never reproduced) TypeError surfaced live here
+            # against a multi-thousand-file library search, 2026-07-09 --
+            # crashed the whole modal scan, losing every match staged so far.
+            # Couldn't reproduce it against this project's own 4827-file library
+            # in isolation, so the root cause is still unknown; skipping one bad
+            # (wanted, candidate) pair and printing it is far cheaper than losing
+            # an entire search, and gives the next occurrence a concrete repro.
+            print(f"[FileLinkUtilities] imagematch.best_match: skipping "
+                  f"{wanted!r} vs {cand!r} -- {type(exc).__name__}: {exc}")
+            continue
         if m is None:
             continue
         if best is None or m.score > best.score:
@@ -221,6 +275,15 @@ def best_match(wanted: str, candidates: list[str]) -> Match | None:
 
 
 _CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def meets_min_confidence(confidence: str, min_confidence: str) -> bool:
+    """Whether a staged proposal's ``confidence`` ("high"/"medium"/"low") is at or
+    above ``min_confidence`` — shared ranking so callers (e.g. the ops layer's
+    "Accept High Matches" / "Accept High/Med Matches" bulk-accept actions) don't
+    duplicate :data:`_CONFIDENCE_RANK`. An empty/unknown ``min_confidence`` ranks
+    as "low", i.e. everything qualifies."""
+    return _CONFIDENCE_RANK.get(confidence, 0) >= _CONFIDENCE_RANK.get(min_confidence, 0)
 
 
 def propose_matches(

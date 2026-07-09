@@ -13,6 +13,7 @@ that library file and must be fixed at the source (top-down).
 from __future__ import annotations
 
 import os
+import re
 
 import bpy
 
@@ -60,6 +61,27 @@ def _image_material_map() -> dict[str, str]:
         # max() keeps the first on ties (mats is in discovery order).
         out[img_name] = (mats[0] if len(mats) == 1
                          else max(mats, key=lambda m: imagematch.name_affinity(img_name, m)))
+    return out
+
+
+def _image_world_map() -> dict[str, str]:
+    """``{image name: the representative World that uses it}`` — the World-shader
+    analogue of :func:`_image_material_map` (environment/HDRI textures on
+    ``bpy.data.worlds[*].node_tree``, not a material), for the Missing Textures
+    "Missing World Textures" category (2026-07-09). Same node-tree walk, same
+    name-affinity tie-break; a World's node tree can nest node groups too."""
+    image_to_worlds: dict[str, list[str]] = {}
+    for world in bpy.data.worlds:
+        if not world.use_nodes or world.node_tree is None:
+            continue
+        for img in _walk_image_nodes(world.node_tree, set()):
+            worlds = image_to_worlds.setdefault(img.name, [])
+            if world.name not in worlds:
+                worlds.append(world.name)
+    out: dict[str, str] = {}
+    for img_name, worlds in image_to_worlds.items():
+        out[img_name] = (worlds[0] if len(worlds) == 1
+                         else max(worlds, key=lambda w: imagematch.name_affinity(img_name, w)))
     return out
 
 
@@ -141,6 +163,7 @@ def _populate_broken_images(context) -> tuple[int, int]:
     search_dirs = [blend_dir] + [os.path.dirname(i.resolved) for i in imgs if i.exists]
     targets = imagepaths.find_relink_targets(missing, search_dirs)
     mat_map = _image_material_map()  # for B1 material-fallback grouping
+    world_map = _image_world_map()
     for img in missing:
         item = coll.add()
         item.name = img.name
@@ -155,7 +178,20 @@ def _populate_broken_images(context) -> tuple[int, int]:
             item.has_candidate = bool(cand)
             item.selected = bool(cand)  # pre-tick only confident auto-matches
         item.group = os.path.dirname((img.resolved or img.stored).replace("\\", "/"))
-        item.material = mat_map.get(img.name, "")
+        # Missing Materials/World/Other Textures split (2026-07-09): `tag` doubles as
+        # the category (it's otherwise unused by this list, see FILELINK_PG_broken_lib's
+        # own "generic free-form per-row tag, repurposed per list" convention), `material`
+        # stays the GROUPING key within that category (a material name, a World name, or
+        # "" for Other) — `point_group_at_folder`'s `by="MATERIAL"` lookup still reads
+        # `item.material` directly, unchanged, for the Material category's own groups.
+        owner_mat = mat_map.get(img.name, "")
+        owner_world = "" if owner_mat else world_map.get(img.name, "")
+        if owner_mat:
+            item.tag, item.material = "material", owner_mat
+        elif owner_world:
+            item.tag, item.material = "world", owner_world
+        else:
+            item.tag, item.material = "other", ""
     wm.filelink_broken_imgs_index = 0
 
     linked_coll = wm.filelink_linked_missing_imgs
@@ -176,9 +212,21 @@ def _populate_broken_images(context) -> tuple[int, int]:
 _UNGROUPED = "\x02"
 
 
+# tag -> (category row key prefix "\x03" -- distinct from _UNGROUPED's "\x02" and
+# _draw_possible_matches' "\x01", so none of the three ever collide in the shared
+# expanded-set string -- display label, icon). Order here is the display order:
+# Material first (by far the common case), then World, then Other.
+_CATEGORY_META = (
+    ("material", "Missing Material Textures", "MATERIAL"),
+    ("world", "Missing World Textures", "WORLD"),
+    ("other", "Missing Other Textures", "IMAGE_DATA"),
+)
+
+
 def rebuild_missing_tex_picker_rows(wm) -> None:
-    """Rebuild ``wm.filelink_missingtex_picker_rows`` (Group 12 Phase 3)
-    from the current ``filelink_broken_imgs`` + expand state.
+    """Rebuild ``wm.filelink_missingtex_picker_rows`` (Group 12 Phase 3;
+    Material/World/Other category split added 2026-07-09) from the current
+    ``filelink_broken_imgs`` + expand state.
 
     Called after every op that changes GROUP MEMBERSHIP (scan / relink
     selected) or a row's ``target`` (pick / accept / folder-search) — the
@@ -195,31 +243,56 @@ def rebuild_missing_tex_picker_rows(wm) -> None:
         return
 
     expanded = get_expanded(wm, "filelink_tex_expanded")
-    groups: dict[str, list[int]] = {}
-    order: list[str] = []
-    for i, item in enumerate(coll):
-        key = item.material or _UNGROUPED
-        if key not in groups:
-            groups[key] = []
-            order.append(key)
-        groups[key].append(i)
 
-    specs = []
-    for key in sorted(order):
-        indices = groups[key]
-        total = len(indices)
-        matched = sum(1 for i in indices if coll[i].target)
-        disp = "(no material)" if key == _UNGROUPED else key
-        label = f"{disp}  ({matched} of {total} matched)" if matched else f"{disp}  ({total})"
-        specs.append(picker_mod.GroupSpec(
-            key=key,
-            label=label,
-            icon="CHECKMARK" if matched and matched == total else "MATERIAL",
-            members=[picker_mod.MemberRef(ref_index=i) for i in indices],
-            has_action=key != _UNGROUPED,
-        ))
-    picker_rows = picker_mod.flatten_group_member_rows(
-        specs, expanded, ref_prop="filelink_broken_imgs")
+    categories: list[picker_mod.CategorySpec] = []
+    for tag, cat_label, cat_icon in _CATEGORY_META:
+        groups: dict[str, list[int]] = {}
+        order: list[str] = []
+        for i, item in enumerate(coll):
+            # Pre-2026-07-09 rows (kept-over via _KEEP_FIELDS, or any stale state)
+            # have no tag yet -- fall back to "material" so nothing silently
+            # vanishes from the picker rather than erroring or needing a rescan.
+            if (item.tag or "material") != tag:
+                continue
+            key = item.material or _UNGROUPED
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(i)
+        if not groups:
+            continue  # e.g. no World textures missing -> no empty category shown
+
+        specs = []
+        for key in sorted(order):
+            indices = groups[key]
+            total = len(indices)
+            matched = sum(1 for i in indices if coll[i].target)
+            disp = "(no material)" if key == _UNGROUPED else key
+            label = f"{disp}  ({matched} of {total} matched)" if matched else f"{disp}  ({total})"
+            specs.append(picker_mod.GroupSpec(
+                key=key,
+                label=label,
+                icon="CHECKMARK" if matched and matched == total else cat_icon,
+                members=[picker_mod.MemberRef(ref_index=i) for i in indices],
+                # Folder-action stays MATERIAL-only: point_group_at_folder's
+                # by="MATERIAL" filters wm.filelink_broken_imgs by item.material
+                # alone (no tag check) -- a same-named World/"" group could
+                # otherwise pull in the wrong rows. World/Other still have the
+                # per-row file-picker button and the section-wide Search Folder/
+                # Suggest Matches actions; a bulk per-group action isn't worth
+                # the collision risk for what's usually a handful of images.
+                has_action=(tag == "material" and key != _UNGROUPED),
+            ))
+        cat_total = sum(len(v) for v in groups.values())
+        cat_matched = sum(1 for i, item in enumerate(coll)
+                          if (item.tag or "material") == tag and item.target)
+        cat_disp = (f"{cat_label} — {cat_matched} of {cat_total} matched"
+                    if cat_matched else f"{cat_label} — {cat_total}")
+        categories.append(picker_mod.CategorySpec(
+            key="\x03" + tag, label=cat_disp, icon=cat_icon, groups=specs))
+
+    picker_rows = picker_mod.flatten_category_group_member_rows(
+        categories, expanded, ref_prop="filelink_broken_imgs")
 
     picker_coll = wm.filelink_missingtex_picker_rows
     picker_coll.clear()
@@ -301,8 +374,24 @@ class FILELINK_OT_search_textures_folder(FilePickerMixin, bpy.types.Operator):
         return {"FINISHED"}
 
 
+# A third-party RAM-saving addon (MemSaver, seen active in real user sessions)
+# can silently REWRITE an Image's stored filepath to point at its own hashed
+# cache derivative (".../memSaver_cache/<64-hex-hash>_<size>.<ext>") instead of
+# the original texture. If that cache entry later goes missing (e.g. a
+# deliberately-cleared "regenerable cache" during a library reorg), the stored
+# path has ZERO relation to the real texture name anymore -- no fuzzy matcher
+# can bridge a random hash filename to the real one. Real bug found live,
+# 2026-07-09: a user could visually recognize the real texture from the image
+# DATABLOCK NAME (set at import time, before MemSaver ever touched the path)
+# even though Search Folder / Suggest Matches both came up empty against the
+# hash-hijacked stored path.
+_MEMSAVER_CACHE_RE = re.compile(r"[/\\]memsaver_cache[/\\]", re.IGNORECASE)
+
+
 def _wanted_basename(item) -> str:
-    """The filename a missing-texture row wants on disk (basename of its stored path).
+    """The filename a missing-texture row wants on disk (basename of its stored path,
+    or the datablock NAME when the stored path is unusable -- empty, or a MemSaver
+    cache-derivative path that's lost all connection to the real texture name).
 
     A manual split, not ``os.path.basename`` — on Windows that's ``ntpath``,
     which treats a leading ``//`` as a UNC host\\share marker and silently
@@ -311,7 +400,10 @@ def _wanted_basename(item) -> str:
     .blend) — the single most common real-world stored-path shape, so this
     was breaking fuzzy matching for those rows outright, not just an edge
     case."""
-    return (item.stored or item.name).replace("\\", "/").rsplit("/", 1)[-1]
+    stored = item.stored or ""
+    if stored and _MEMSAVER_CACHE_RE.search(stored):
+        stored = ""
+    return (stored or item.name).replace("\\", "/").rsplit("/", 1)[-1]
 
 
 _CONFIDENCE_RANK = {"": -1, "low": 0, "medium": 1, "high": 2}
@@ -784,23 +876,43 @@ class FILELINK_OT_accept_material_matches(bpy.types.Operator):
 
 
 class FILELINK_OT_accept_all_matches(bpy.types.Operator):
-    """Accept every staged fuzzy proposal at once, moving them all into the main
-    Missing Textures list (ticked) ready for Relink Selected."""
+    """Accept every staged fuzzy proposal at once (optionally floored by confidence),
+    moving them into the main Missing Textures list (ticked) ready for Relink
+    Selected. Same operator backs three buttons — "Accept All" (``min_confidence``
+    left blank), "Accept High Matches", and "Accept High/Med Matches" — rather than
+    three near-duplicate operator classes, since the only difference is the floor
+    passed to :func:`core.imagematch.meets_min_confidence`."""
 
     bl_idname = "filelink.accept_all_matches"
     bl_label = "Accept All Matches"
     bl_options = {"REGISTER"}
 
+    # "" (default) = no floor, i.e. every confidence qualifies (the original "Accept
+    # All" behaviour). "medium"/"high" back the two narrower buttons.
+    min_confidence: bpy.props.StringProperty(default="")  # type: ignore[valid-type]
+
     @classmethod
     def description(cls, context, properties):
+        floor = getattr(properties, "min_confidence", "")
+        if floor == "high":
+            return ("Use every HIGH-confidence proposed file as its texture's relink "
+                    "target — medium/low proposals are left staged for manual review")
+        if floor == "medium":
+            return ("Use every HIGH or MEDIUM confidence proposed file as its texture's "
+                    "relink target — low-confidence proposals are left staged for "
+                    "manual review")
         return ("Use every proposed file as its texture's relink target — they move "
                 "into the Missing Textures list above, ticked. Then Relink Selected")
 
     def execute(self, context):
         coll = context.window_manager.filelink_broken_imgs
         accepted = 0
+        skipped = 0
         for item in coll:
             if not item.proposal:
+                continue
+            if not imagematch.meets_min_confidence(item.proposal_confidence, self.min_confidence):
+                skipped += 1
                 continue
             item.target = item.proposal
             item.has_candidate = os.path.isfile(item.proposal)
@@ -811,10 +923,12 @@ class FILELINK_OT_accept_all_matches(bpy.types.Operator):
         if context.area:
             context.area.tag_redraw()
         if accepted:
-            self.report({"INFO"}, f"Accepted {accepted} match(es). Review the ticks above, "
-                        "then Relink Selected.")
+            tail = f" ({skipped} lower-confidence match(es) left staged)" if skipped else ""
+            self.report({"INFO"}, f"Accepted {accepted} match(es){tail}. Review the ticks "
+                        "above, then Relink Selected.")
         else:
-            self.report({"INFO"}, "No proposed matches to accept")
+            self.report({"INFO"}, "No proposed matches to accept" if not skipped else
+                        f"No matches at or above that confidence — {skipped} left staged.")
         return {"FINISHED"}
 
 

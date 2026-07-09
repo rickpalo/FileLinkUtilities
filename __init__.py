@@ -167,7 +167,8 @@ def register() -> None:
     # ops.report_store from the JSON above whenever a report or its expansion
     # changes. WM-scoped (ephemeral), matching the report JSON's lifetime.
     from .ui.panels import (FILELINK_PG_analyze_step, FILELINK_PG_broken_lib,
-                            FILELINK_PG_datablock_family, FILELINK_PG_dup_family,
+                            FILELINK_PG_datablock_family, FILELINK_PG_deform_row,
+                            FILELINK_PG_dup_family,
                             FILELINK_PG_examine_row, FILELINK_PG_flatten_candidate,
                             FILELINK_PG_geo_family, FILELINK_PG_makelocal_row,
                             FILELINK_PG_material_family,
@@ -180,6 +181,13 @@ def register() -> None:
     bpy.types.WindowManager.filelink_resource_rows = bpy.props.CollectionProperty(
         type=FILELINK_PG_tree_row)
     bpy.types.WindowManager.filelink_resource_index = bpy.props.IntProperty(default=0)
+
+    # Check Armature Deformation (Group 16, 2026-07-09): one selectable row per
+    # flagged object. See ops.deform_check.
+    bpy.types.WindowManager.filelink_deform_rows = bpy.props.CollectionProperty(
+        type=FILELINK_PG_deform_row)
+    bpy.types.WindowManager.filelink_deform_index = bpy.props.IntProperty(default=0)
+    bpy.types.WindowManager.filelink_deform_scanned = bpy.props.BoolProperty(default=False)
 
     # Group 12 Phase 4: one small virtualized rows collection PER inline-detail
     # feature (ops.report_store.INLINE_DETAIL_FEATURES) — several of these can
@@ -358,6 +366,13 @@ def register() -> None:
     bpy.types.WindowManager.filelink_examine_index = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.filelink_examine_scanned = bpy.props.BoolProperty(default=False)
     bpy.types.WindowManager.filelink_examine_expanded = bpy.props.StringProperty(default="")
+    # Persistent post-apply result (docs/TODO.md, 2026-07-09): Apply Selected
+    # clears filelink_examine_rows on success, which used to also wipe every
+    # trace of what just happened from the panel -- the one-shot toast was the
+    # only feedback, and a user who missed it (or scrolled away) had no way to
+    # tell whether anything actually got remapped. Survives the rows-clear;
+    # replaced by the next Examine or Apply Selected call.
+    bpy.types.WindowManager.filelink_examine_apply_summary = bpy.props.StringProperty(default="")
     # Group 12 Phase 3 item 4: virtualized picker rows for Examine Library
     # (rebuilt by ops.examine_library.rebuild_examine_picker_rows after
     # Examine/Apply Selected).
@@ -459,6 +474,7 @@ def unregister() -> None:
                 "filelink_resource_items_json", "filelink_resource_sort",
                 "filelink_report_rows", "filelink_report_index",
                 "filelink_resource_rows", "filelink_resource_index",
+                "filelink_deform_rows", "filelink_deform_index", "filelink_deform_scanned",
                 "filelink_broken_libs", "filelink_broken_index",
                 "filelink_broken_imgs", "filelink_broken_imgs_index",
                 "filelink_missingtex_picker_rows", "filelink_missingtex_picker_active",
@@ -498,6 +514,7 @@ def unregister() -> None:
                 "filelink_examine_library_pick", "filelink_examine_library",
                 "filelink_examine_rows", "filelink_examine_index",
                 "filelink_examine_scanned", "filelink_examine_expanded",
+                "filelink_examine_apply_summary",
                 "filelink_examine_picker_rows", "filelink_examine_picker_active",
                 "filelink_analyze_steps", "filelink_analyze_index",
                 "filelink_flatten_candidates", "filelink_flatten_index",

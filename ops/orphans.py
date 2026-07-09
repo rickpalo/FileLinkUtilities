@@ -74,6 +74,19 @@ def _gather_steps(context):
                 if reason:
                     skipped.append((f"{type_name}: {db.name}", reason))
                 else:
+                    # Breadcrumb, not a fix: the risky-data check above only
+                    # covers is_missing/override_library, which by definition
+                    # never applies to LOCAL data (this branch only runs when
+                    # `not linked`) -- so a corrupt LOCAL mesh/material/image
+                    # (e.g. left over from a make_local() that didn't fully
+                    # detach it) isn't covered at all, and a real
+                    # EXCEPTION_ACCESS_VIOLATION here can't be caught with
+                    # try/except. Printing right before the risky read means
+                    # the next crash's console output ends with the exact
+                    # datablock that did it, instead of an unattributed crash
+                    # log -- real repro needed, 2026-07-09 (PSM_Stage_v5.2).
+                    print(f"[FileLinkUtilities] Find Orphans: fingerprinting "
+                          f"{type_name}: {db.name!r}…")
                     try:
                         fingerprint = maker(db)
                     except Exception:

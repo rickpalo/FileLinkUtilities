@@ -8,6 +8,170 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.2.117] — Fix: Examine Apply Selected's real "0 remapped" bug, plus a persistent results summary
+
+### Fixed
+- **Apply Selected could resolve the WRONG data-block and silently no-op, reporting "Made 0
+  local, remapped 0" for every ticked row.** Root cause, confirmed via the v0.2.116 diagnostics
+  against a real production file: `ops/examine_library.py`'s per-row apply loop looked up each
+  row's target with a PLAIN-NAME lookup (`target_coll.get(row.name)`), which has no library
+  disambiguation. In a heavily-merged file, a local data-block can coincidentally share the exact
+  name of a linked one (Blender allows this across libraries — no forced rename), so the lookup
+  had no guarantee of returning the specific linked block the row was populated from; every row
+  looked "stale" even though nothing had changed since the scan. Fixed by switching to `bpy.data`'s
+  `(name, filepath)` tuple lookup, which is library-qualified. Covered by a new regression test,
+  `tests/smoke_examine_library_name_collision.py`, that reproduces the exact shape of the bug
+  (linked + same-named local block, one Apply Selected call, asserts the linked one resolves).
+
+### Added
+- **Apply Selected's result now persists in the panel** instead of only flashing as a one-shot
+  toast. Applying used to clear `filelink_examine_rows` and fall straight back to the pre-scan
+  look, so a user who missed the toast (or scrolled away) had no way to tell whether anything had
+  actually happened — new WindowManager string `filelink_examine_apply_summary` holds the same
+  text the toast shows, drawn in the panel until the next Examine or Apply Selected call.
+
+## [0.2.116] — Diagnostics: Examine Apply Selected's silent "0 remapped" now self-explains
+
+### Changed
+- **`Apply Selected`'s "Made X local, remapped Y" toast now reports WHY when rows were skipped**
+  (`N stale, M unresolved — see console for details`), and prints a line per skipped row naming
+  the exact reason (row already changed since scan vs. no resolvable target, with the row's
+  suggestion fields). Found live, 2026-07-09: a second Apply Selected pass on `human_bundle.blend`
+  reported "Made 0 local, remapped 0" for 46 rows that had all shown an in-memory match moments
+  earlier, and there was no way to tell from the toast alone which of the two skip conditions in
+  `ops/examine_library.py::FILELINK_OT_examine_apply_selected` every row hit, or why. Not a fix —
+  the next occurrence's console output will point at the exact cause instead of requiring another
+  live repro.
+
+## [0.2.115] — Fix: Examine Library could suggest remapping onto ANOTHER broken library's placeholder
+
+### Fixed
+- **Examine Library's in-memory suggestion pool could offer a candidate that was itself a missing
+  placeholder from a DIFFERENT broken library** — real bug found live on a production file with
+  two libraries both unreadable on disk (`human_bundle.blend`, `Asset_bundle.blend`): each can
+  independently hold a same-BASE-name missing block purely by coincidence of Blender's own
+  `.NNN` dedup-suffix numbering (e.g. one wants `hanger.001`, an unrelated asset in the OTHER
+  broken library separately wants `hanger.002` — the "numbered" match tier strips both to base
+  `hanger` and calls it a match). Remapping one placeholder onto another placeholder doesn't fix
+  anything — the link is still broken, just pointed at a different broken thing — and the apply
+  silently "succeeds" with zero visible effect, which is how a user's staged Apply Selected could
+  report success yet leave the data-block count completely unchanged after a reload.
+  `ops/examine_library.py::_in_memory_pools` now skips any candidate that is itself
+  `is_missing`. New end-to-end smoke test (`tests/smoke_examine_library_missing_collision.py`)
+  reproduces the exact two-broken-library collision and confirms no suggestion is offered.
+- **`core/imagematch.py::best_match`** now skips (and logs) a single candidate that raises
+  during scoring instead of aborting the whole modal search — a real, never-reproduced TypeError
+  surfaced live mid-scan against a multi-thousand-file library search and cost the user every
+  match already staged. New pytest coverage.
+- **`ops/orphans.py`'s Find Orphans** now prints the exact datablock name right before each risky
+  fingerprint read — a real `EXCEPTION_ACCESS_VIOLATION` crash (2026-07-09, `PSM_Stage_v5.2`)
+  turned out to be on a LOCAL mesh, a corruption class the existing `datablock_risk_reason`
+  mitigation never covered (its `is_missing`/`override_library` checks only ever apply to linked
+  IDs, but the fingerprinting branch that crashed only runs on local data). A native access
+  violation can't be caught with try/except, so this is a breadcrumb, not a fix — the next
+  occurrence's console output will end with the exact datablock name instead of an anonymous
+  crash log.
+
+## [0.2.114] — New: Check Armature Deformation (detection-only scan for the "weighted to the wrong bone" bug)
+
+### Added
+- **New Analyze panel scan, "Check Armature Deformation"**, for a bug class found live on a real
+  production file: a mesh vertex weighted (fully or partially) to the wrong bone — in the real
+  case, Reallusion/CC facial `CTRL_*` control bones instead of a body `DEF_*` deform bone, most
+  likely from an indiscriminate body→garment weight-paint transfer — looks completely normal in
+  rest pose (nothing wrong in `mesh.vertices`) but gets dragged to that bone's posed position once
+  the Armature modifier evaluates, sometimes thousands of units away. Invisible until posed, so it
+  silently corrupts geometry that scan/export/render pipelines can't easily catch otherwise.
+  Detection works by comparing each edge's REST length against its DEPSGRAPH-EVALUATED (posed)
+  length — a healthy mesh keeps this ratio close to 1x (isometric-ish skin/cloth deformation);
+  the real broken case measured ~84,000x against a default threshold of 20x. `core/deform_check.py`
+  (bpy-free ratio math + `Report` building, 16 new pytest cases), `ops/deform_check.py` (modal
+  chunked scan over every visible mesh with an enabled, vertex-group-bound Armature modifier,
+  reusing one `evaluated_depsgraph_get()` across all objects), new `FILELINK_OT_scan_deform_issues`
+  operator, new `FILELINK_PG_deform_row` / `FILELINK_UL_deform_rows` results list in
+  `ui/panels.py` with a per-row checkbox for a future fix pass.
+- **This release is detection/review only, by explicit design** — nothing is mutated. The results
+  list exists so a future fix pass has something to select from, but no Apply/Fix action exists
+  yet.
+- **Linked objects/meshes are flagged but visibly tagged "linked — fix at source"** rather than
+  silently scanned-and-ignored or mishandled — a fix would need to edit both the Object's vertex
+  group definitions and the Mesh's per-vertex weight assignments, so either being linked blocks a
+  local fix. `ObjectDeformSummary.is_locally_fixable` (`obj.library is None and mesh.library is
+  None`) flows through to the report message and the UI row's icon/label.
+- New end-to-end smoke test `tests/smoke_deform_check.py` (synthetic 2-bone armature + 2-vertex
+  mesh, one bone posed 1000 units away vs. a healthy control pair posed a small amount) confirms
+  the real operator flags the exploded object and not the healthy one, run against actual Blender
+  5.1.
+
+## [0.2.113] — Vendor catalog ID (Poliigon-style 4+ digit SKU) is now a primary match signal
+
+### Changed
+- **The fuzzy matcher now recognizes a bare 4+ digit token (Poliigon's own asset IDs — 7174,
+  8819, 9322, ...) as a vendor catalog ID and weights it far more heavily than an ordinary
+  descriptive word.** A shared catalog ID between the wanted and candidate name is now strong
+  enough on its own to rescue a match whose descriptive words differ too much to pass the
+  ordinary stem-similarity floor (e.g. a heavily vendor-abbreviated name), and pushes a
+  same-channel, same-resolution match to "high" confidence. Conversely, **two DIFFERENT catalog
+  IDs now hard-disqualify a match even if every other word is identical** — two different
+  Poliigon products should never be treated as interchangeable just because their descriptive
+  names happen to collide. Doesn't override a genuine channel conflict (a normal map still can't
+  stand in for a roughness map just because the SKU matches) — `core/imagematch.py`'s
+  `NameParts.catalog_id` / `_CATALOG_ID_RE`. New pytest coverage.
+
+## [0.2.112] — Fix two real fuzzy-match misses found live (MemSaver cache hijack + dot-joined pseudo-extension)
+
+### Fixed
+- **A third-party RAM-saving addon (MemSaver) can silently rewrite an Image's stored `filepath`
+  to point at its own hashed cache derivative instead of the original texture — if that cache
+  entry later goes missing, the stored path has zero relation to the real texture name anymore,
+  so neither exact nor fuzzy matching could ever bridge it, even though the image's own
+  DATABLOCK NAME still preserved the real identity.** `ops/image_relink.py::_wanted_basename`
+  now detects a `memSaver_cache` path and falls back to the datablock name in that case. Found
+  live against a real missing texture (`FabricRope001_AO_1K_jpg.002`) that both "Search a
+  Folder" and "Suggest Matches" came up empty on.
+- **The pseudo-extension tokenizer only stripped an underscore-joined fake extension
+  (`"..._jpg.001"`), not a dot-joined one (`"...1K.jpg.002"`)** — the latter is Blender's own
+  ordinary dedup-on-collision naming when the requested datablock name already looked like it
+  had a real extension baked in, leaving a stray `"jpg"` stem token that dragged an
+  otherwise-perfect match from "high" confidence down to "low". `core/imagematch.py`'s
+  `_PSEUDO_EXT_RE` now matches either separator.
+- New pytest coverage for both in `tests/test_imagematch.py`.
+
+## [0.2.111] — Confidence-floored bulk accept + Missing Textures categories
+
+### Added
+- **"Accept High Matches" / "Accept High/Med Matches" buttons** next to the existing "Accept
+  All" in the Possible Matches (fuzzy Suggest Matches) results area — bulk-accept proposals at
+  or above a confidence floor instead of an all-or-nothing choice. All three buttons share one
+  operator (`filelink.accept_all_matches`, now taking a `min_confidence` property) rather than
+  three near-duplicate operators; the ranking itself lives in a new
+  `core.imagematch.meets_min_confidence` so the ops layer doesn't duplicate it.
+- **Missing Textures now splits into three collapsible categories** — Missing Material Textures,
+  Missing World Textures, Missing Other Textures — each with its own summary line ("N of M
+  matched") and collapsed by default, same as every other section's group headers. World
+  attribution is a new `core.imagematch`-style node-tree walk over `bpy.data.worlds` (mirroring
+  the existing per-material walk); a texture that isn't found in any material's or world's node
+  tree falls into Other. New `core.picker.CategorySpec` / `flatten_category_group_member_rows`
+  generalize the existing single-level `GroupSpec` shell to a 3-level category → group → member
+  shape (new pytest coverage in `tests/test_picker.py`); the per-group "point at folder" bulk
+  action stays Material-category-only (a same-named World/Other group could otherwise pull in
+  the wrong rows through the shared `item.material` lookup). Not yet live-verified in Blender.
+
+## [0.2.110] — Fix Check Materials crash on large reports
+
+### Fixed
+- **Crash fixed: the Analyze panel's inline report disclosure (`_draw_report_detail` /
+  `_feature_tree_nodes`, used by Check Materials and every other inline-disclosure section)
+  re-parsed the ENTIRE stashed report from JSON and rebuilt its whole tree on every single panel
+  redraw, unconditionally — even while collapsed. Fine for a small report; a real crash hit on a
+  production file where Check Materials flagged ~1410 issues (many near-duplicate materials each
+  with several broken image nodes), where a full JSON-parse + tree-rebuild on every redraw became
+  a real perf/stability risk.** `_feature_tree_nodes` now caches its parsed result per feature,
+  keyed on the exact raw JSON string last seen — a stashed report only changes when a scan
+  actually re-runs (a fresh raw string), so this is an exact cache key with no staleness risk,
+  it just skips redundant reparses of identical data between scans. NOT yet live-verified against
+  the actual crash (see `docs/TODO.md` for the pending live-repro checklist).
+
 ## [0.2.109] — Material-name Tier 2 fuzzy relink + matcher precision fixes
 
 ### Added

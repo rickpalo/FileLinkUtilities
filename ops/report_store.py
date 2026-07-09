@@ -45,6 +45,7 @@ FEATURES = [
     ("matdiag", "Material Diagnostics"),
     ("auto", "Automated Cleanup Savings"),
     ("matsearch", "Find Material Across Files"),
+    ("deformcheck", "Armature Deformation Check"),
 ]
 
 

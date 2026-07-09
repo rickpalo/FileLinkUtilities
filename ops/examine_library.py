@@ -71,13 +71,28 @@ def _material_graph_match(context, original, candidate) -> str:
 def _in_memory_pools(attr: str, exclude_library) -> tuple[list[str], dict[str, str]]:
     """``(local names, {other-library name: library filepath})`` for ``attr``'s
     collection — the candidate pools "Examine Library" searches before falling
-    back to a manual file pick."""
+    back to a manual file pick.
+
+    A candidate that is ITSELF a missing placeholder (``is_missing``) is never
+    offered: real bug found live, 2026-07-09 — two DIFFERENT broken libraries
+    (both unreadable on disk) can each hold a same-base-name missing block
+    purely by coincidence of Blender's own ``.NNN`` dedup-suffix numbering
+    (e.g. library A wants ``hanger.001``, library B — a totally unrelated
+    asset — separately wants ``hanger.002``; ``core.reconnect.suggest_
+    reconnect``'s "numbered" tier strips both to base ``hanger`` and calls it
+    a match). Remapping one placeholder onto another placeholder doesn't fix
+    anything — the user's link is still broken, just pointed at a different
+    broken thing — and silently "succeeds" (0 error, 0 visible effect), which
+    is how the user's staged Apply Selected can report success yet leave the
+    datablock count completely unchanged after a reload."""
     coll = getattr(bpy.data, attr, None)
     if coll is None:
         return [], {}
     local_names: list[str] = []
     other_by_name: dict[str, str] = {}
     for b in coll:
+        if getattr(b, "is_missing", False):
+            continue
         if b.library is None:
             local_names.append(b.name)
         elif b.library is not exclude_library:
@@ -203,6 +218,7 @@ class FILELINK_OT_examine_library(bpy.types.Operator):
         if library is None:
             self.report({"ERROR"}, "Pick a library to examine")
             return {"CANCELLED"}
+        context.window_manager.filelink_examine_apply_summary = ""
         n = _populate_examine_rows(context, library)
         rebuild_examine_picker_rows(context.window_manager)
         if context.area:
@@ -391,11 +407,27 @@ class FILELINK_OT_examine_apply_selected(bpy.types.Operator):
                     if idblock is not None:
                         loaded[(source, attr, idblock.name)] = idblock
 
+        # Root cause found, 2026-07-09 (PSM_Stage_v5.2): `target_coll.get(row.name)`
+        # is a PLAIN-NAME lookup with no library disambiguation. In a file this
+        # heavily merged, a local data-block can coincidentally share the exact
+        # name of a linked one (e.g. a local "cap" object alongside human_bundle's
+        # linked "cap") -- the plain-name .get() has no guarantee of returning
+        # the specific linked block the row was populated from, so every row
+        # looked "stale" (block.library == None) even though nothing had
+        # actually changed since the scan. Fixed by using bpy.data's
+        # (name, filepath) tuple lookup, which is library-qualified.
+        skipped_stale = skipped_unresolved = 0
         localized = remapped = 0
         for row in chosen:
             target_coll = getattr(bpy.data, row.collection, None)
-            block = target_coll.get(row.name) if target_coll is not None else None
+            block = (target_coll.get((row.name, library.filepath))
+                     if target_coll is not None else None)
             if block is None or block.library is not library:
+                skipped_stale += 1
+                block_lib = block.library.name if (block is not None and block.library) else None
+                print(f"[FileLinkUtilities] Examine Apply: skipping {row.collection}/{row.name} "
+                      f"-- stale row (block={'found' if block is not None else 'missing'}, "
+                      f"block.library={block_lib!r}, expected library={library!r})")
                 continue  # already changed (or gone) since the scan
 
             if row.make_local:
@@ -416,6 +448,11 @@ class FILELINK_OT_examine_apply_selected(bpy.types.Operator):
                 target = loaded.get((row.source_blend, row.collection, row.target))
 
             if target is None or target is block:
+                skipped_unresolved += 1
+                print(f"[FileLinkUtilities] Examine Apply: skipping {row.collection}/{row.name} "
+                      f"-- target unresolved (use_suggested={row.use_suggested}, "
+                      f"suggested_kind={row.suggested_kind!r}, suggested_name={row.suggested_name!r}, "
+                      f"target={'is block' if target is block else target})")
                 continue
             block.user_remap(target)
             remapped += 1
@@ -431,8 +468,19 @@ class FILELINK_OT_examine_apply_selected(bpy.types.Operator):
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"
-        self.report({"INFO"}, f"Made {localized} local, remapped {remapped}.{tail} "
-                    "Save to persist. Re-run Examine Library to see any remaining.")
+        skip_note = ""
+        if skipped_stale or skipped_unresolved:
+            skip_note = (f" ({skipped_stale} stale, {skipped_unresolved} unresolved -- "
+                        "see console for details)")
+        summary = (f"Made {localized} local, remapped {remapped}.{skip_note}{tail} "
+                  "Save to persist. Re-run Examine Library to see any remaining.")
+        # Persistent (docs/TODO.md, 2026-07-09): Apply Selected just cleared
+        # filelink_examine_rows above, so the panel is about to fall back to its
+        # pre-scan look -- the toast below is the only other feedback, and it's
+        # gone the moment the user looks away. Stashing the same text here means
+        # it stays on screen until the next Examine or Apply Selected.
+        wm.filelink_examine_apply_summary = summary
+        self.report({"INFO"}, summary)
         return {"FINISHED"}
 
 
