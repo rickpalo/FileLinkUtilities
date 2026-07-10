@@ -1,5 +1,295 @@
 # File & Link Utilities — TODO / backlog
 
+## ⏳ 2026-07-09 (continued once more yet again still further, and once more after that): Find
+## Orphans crash on `PSM_Stage_v5.2` — root cause CONFIRMED (not just narrowed) to a specific
+## object; a real Gascogne_PigeonAction orphan found and explained along the way; new idea logged
+## for next session — proactive corruption detection instead of crash-and-diagnose.
+
+## **Find Orphans crash, fully confirmed this time.** While investigating an unrelated orphan
+## question (below), the user hit the SAME crash class already diagnosed earlier this session
+## (2026-07-03/04 disease: `core/fingerprint.py`/`ops/extract.py` reading a corrupted LOCAL mesh's
+## vertex data natively crashes, uncatchable by try/except) — but this time the full crash log was
+## available and gives a precise, no-longer-inferred answer:
+## - **Python backtrace** (`PSM_Stage_v5.2.crashFindOrphans.txt`, also written to
+##   `%TEMP%\PSM_Stage_v5.2.crash.txt`): `ops/extract.py:144 in extract_mesh` →
+##   `ops/orphans.py:58 in <lambda>` → `ops/orphans.py:91 in _gather_steps` →
+##   `ops/orphans.py:164 in run_steps` → `ops/progress.py:137 in modal`. That's `[list(v.co) for v
+##   in mesh.vertices]` inside `extract_mesh` — a vertex-coordinate read, exactly the risky line the
+##   2026-07-03/04 mitigation already targeted.
+## - **Native stack trace** confirms the mechanism precisely: `Vector_item` → `_BaseMathObject_
+##   ReadIndexCallback` → `mathutils_rna_vector_get_index` → `RNA_property_float_get_index` →
+##   `RNA_property_float_get_array` → `rna_property_rna_or_id_get`, `EXCEPTION_ACCESS_VIOLATION`
+##   reading address `0xFFFFFFFFFFFFFFFF` — a dangling/invalid pointer behind the RNA float-array
+##   read, not garbage float values (which would just read as NaN/Inf, not crash).
+## - **The exact datablock**: the console breadcrumb (`print` right before each risky read, added
+##   2026-07-04) shows `'Plane.019'` as the last line printed before the crash — by design, that
+##   names the exact mesh being read when it died.
+## - **User confirmed live**: `Plane.019` is the mesh data of object **`tentRoof`**. History: it had
+##   a **Cloth modifier that was converted to a Shape Key**. User's own visual inspection flags a
+##   pinched/folded corner (see the screenshot shared live this session) as the likely trouble spot
+##   — geometry doesn't visually self-intersect there, but that's exactly the kind of corruption
+##   (mismatched vertex count after a cloth→shape-key bake, or a stale/invalid internal pointer) that
+##   wouldn't necessarily be visually obvious while still crashing a native vertex-array read.
+##   **Not yet fixed or even attempted** — this is a data-corruption issue in the .blend file itself,
+##   not a FileLinkUtilities bug; per this project's own established rule, don't guess a Python-side
+##   fix for a native crash. Next step when resumed: decide whether to delete/rebuild `tentRoof`'s
+##   mesh, or investigate the cloth→shapekey bake further first (was it baked at an unstable/
+##   exploding sim frame?).
+
+## **New idea logged for next session (not built, not scoped in detail yet)**: could this class of
+## corruption be DETECTED proactively — flagged in a scan, before something reads the bad vertex
+## data and crashes — rather than only diagnosable after the fact via a crash log + breadcrumb?
+## Precedent already exists in this addon: **Check Armature Deformation** (v0.2.114, this session)
+## is exactly this shape — a detection-ONLY scan (explicit user instruction: "detection only first")
+## comparing rest-pose vs. posed edge lengths to flag exploded/corrupted deforms without touching
+## anything. A sibling "Mesh Integrity" scan could plausibly catch the `tentRoof`-style case the same
+## way — candidates to investigate next session: NaN/Inf coordinate detection, degenerate
+## face/vertex-count checks, shape-key vertex-count-vs-owner-mesh mismatches (a cloth→shapekey
+## conversion is exactly the kind of operation that could silently produce this), or any check that
+## can safely read enough to flag a risk WITHOUT hitting the same native-crash-on-full-read problem
+## it's trying to detect (open question — needs real investigation, not assumed to be safe just
+## because it reads less data).
+
+## **Separately, while investigating**: user asked about a `Gascogne_PigeonAction` datablock in this
+## same file — Outliner showed inconsistent-looking user counts depending on which view they used.
+## Resolved via direct Python console check (`bpy.data.actions`, filtered by name) rather than
+## guessing from screenshots — there are actually THREE distinct same-named Action datablocks:
+## - `LOCAL, users: 1, fake_user: True` — a real orphan (zero real references, kept alive only by
+##   fake user). Safe to clean up (clear fake user, delete or let Find Orphans/Purge catch it) —
+##   **not yet done**, left for the user.
+## - `LOCAL... ` — no, correction: the other two are BOTH linked, not local: one from `D:\
+##   BlenderLibraries\FaunaLibrary\SynologyDrive\MainFaunaLibrary\source files\Birds Flocks
+##   source.blend` (`users: 3`), one from `E:\BlenderSync\SynologyDrive\ImageOfTheMonth\2018\
+##   November - Canaletto\ThePiazzaSanMarco - People.blend` (`users: 3`) — both legitimately in use,
+##   NOT orphans, left untouched.
+## - **Worth a look someday, not urgent**: it's a little unusual that the SAME action name is
+##   linked into this file from TWO different source libraries independently (Birds Flocks AND the
+##   Piazza San Marco people file) rather than one resolving through the other — could mean
+##   `ThePiazzaSanMarco - People.blend` has its own redundant copy of pigeon animation data rather
+##   than linking through Fauna's library. Not investigated further this session.
+
+## ⏳ 2026-07-09 (continued once more yet again still further): PLANNED, NOT BUILT — content
+## verification for Search a Folder / Pick a Specific Item, unified with the deferred bulk
+## "resolve everything remaining" feature. **This is the starting point for the next session.**
+
+## Context: v0.2.119 (below) closed the false-positive-name-match hole for Examine Library's
+## AUTOMATIC in-memory suggestions (Mesh/NodeTree/Material). User asked whether the SAME risk
+## exists in the MANUAL paths — confirmed yes: both `FILELINK_OT_examine_pick_source` ("Pick a
+## Specific Item") and `FILELINK_OT_examine_search_folder` ("Search a Folder") go through
+## `_peek_names()`, which reads ONLY a candidate `.blend`'s name index
+## (`bpy.data.libraries.load(path, link=True)` with `data_to` never assigned) — ranking is pure
+## `suggest_reconnect` name-tier matching, zero content check, and neither operator's rows ever get
+## a `graph_match` annotation. Also revisited the still-queued bulk-resolve backlog item from
+## earlier this session (a single "Search a Folder" pass at the top of the results, resolving EVERY
+## still-unplaced row against one folder walk, mirroring `image_relink.py`'s `FILELINK_OT_
+## relink_folder_search` "FUZZY" bulk-mode shape) — user pointed out the two share the same walk and
+## should be built together, not sequentially.
+
+## **Agreed design: two-pass.**
+## - **Pass 1 (cheap, unchanged in spirit)**: walk the chosen folder, `_peek_names()` every
+##   `.blend`. For the existing single-row operators that's just the one row's `.collection`; for
+##   the NEW bulk operator it's every attr present among the still-unresolved rows (`suggested_kind
+##   == "none"`), since one folder walk has to satisfy Mesh/Material/NodeTree/Object/etc. rows at
+##   once — a real difference from today's single-collection peek, not just a bigger loop. Rank with
+##   the EXISTING `suggest_reconnect`/`find_best_file_match` tiering (exact/numbered/fuzzy) — no
+##   change to this part.
+## - **Pass 2 (NEW)**: for every FILE that had at least one exact/numbered match (fuzzy stays
+##   manual-only, unchanged — same reasoning as the in-memory path's `allow_fuzzy=False`), actually
+##   LINK it (not peek) ONCE and pull in every matched name that file resolves — grouping several
+##   rows onto a single file-load is the efficiency case the user specifically flagged (a folder
+##   walk resolving multiple rows from one source file shouldn't load that file more than once). For
+##   each (row, newly-linked candidate) pair, run the SAME `_content_graph_match` built for the
+##   in-memory path (Material/Mesh/NodeTree fingerprinting, `datablock_risk_reason` guard,
+##   `"identical"`/`"differs"`/`"unverified"`/`""` outcomes) and apply the SAME auto-apply gate
+##   shipped in v0.2.119. Reuses ALL existing fingerprint infrastructure — no new fingerprinting
+##   logic needed, just wiring it into these two operators plus the new bulk one.
+
+## **Open question to resolve BEFORE writing code, not guessed at (this project's own standard)**:
+## does pass 2's real link-and-verify load need to be KEPT and handed directly to Apply Selected
+## (avoiding a second load of the same file), or is loading the same file twice in one session (once
+## to verify in pass 2, once for real at Apply Selected time — exactly like `examine_apply_
+## selected`'s existing `by_source` grouping does today) actually safe? The ONLY documented
+## native-crash risk in this codebase is specifically about RE-PEEKING an already-linked library
+## (`_peek_names`-style dry read, `data_to` never assigned), not about a normal second `link=True`
+## load that actually requests names — these look like different internal code paths, but this has
+## never been tested and shouldn't be asserted either way without a live repro. **First concrete
+## step next session**: a small standalone probe script that links a file for real TWICE in one
+## Blender session (same shape as pass 2 verify + Apply Selected's own later reload) and confirms
+## whether it crashes. If safe: pass 2 can be a disposable verify-then-discard load, and
+## `examine_apply_selected`'s existing reload-by-source logic needs zero changes. If NOT safe: pass
+## 2's loaded candidates need to be cached (keyed the same as `examine_apply_selected`'s existing
+## `loaded` dict: `(source, attr, name)`) and threaded through to Apply Selected instead of it doing
+## its own independent reload — a real structural change to `FILELINK_OT_examine_apply_selected.
+## execute()`, not just the two folder-search operators.
+
+## **UI gap to close**: `_graph_match_suffix` (`ui/panels.py`) currently only renders next to the
+## `suggested_kind == "local"/"library"` branches (in-memory-match rows). The MANUAL-pick branch
+## (`elif real.source_blend: row.prop(real, "target", text="")`) shows a bare dropdown today with NO
+## graph_match annotation at all — extending content verification to these paths needs a matching
+## annotation next to that dropdown too (same icon/text treatment, or a more compact variant since a
+## dropdown already eats horizontal row space).
+
+## **Scope**: (1) `FILELINK_OT_examine_search_folder` and `FILELINK_OT_examine_pick_source` both
+## gain the pass-2 verify step — both currently unconditionally set `row.selected = True`/
+## `bool(names)`, needs the same gate `_populate_examine_rows` already uses. (2) NEW bulk operator
+## (name TBD, e.g. `filelink.examine_bulk_search_folder`) at the TOP of the Examine Library results,
+## mirroring `image_relink.py`'s `FILELINK_OT_relink_folder_search` "FUZZY" bulk-mode shape per the
+## original backlog note — needs `ModalProgressMixin` (yield per file peeked, ESC-cancelable, live
+## status), matching every other folder-walk in this addon (also per the original backlog note, not
+## new). (3) Only touches rows where `suggested_kind == "none"` today — rows already resolved
+## in-memory are untouched, they already went through content verification during `_populate_
+## examine_rows`.
+
+## **Discarded (for now) — logged so it isn't re-proposed from scratch later**: a per-row "open this
+## candidate file in a new Blender instance to eyeball it" escape hatch, modeled on the Blender
+## built-in "Edit Linked Library" addon (select an object, jump to its source file in a new Blender
+## instance, optionally autosave + sync changes back). Doesn't map directly onto our case since Edit
+## Linked Library operates on an ALREADY-established link — a not-yet-linked Search-a-Folder
+## candidate would need US launching a new instance ourselves (`subprocess.Popen` against
+## `bpy.app.binary_path`, the same technique that addon itself presumably uses), not calling into
+## that addon. Discarded because: (a) inherently one-at-a-time and interactive (spins up a whole
+## second Blender process), which doesn't fit the bulk-efficiency goal of the two items above; (b)
+## the automated fingerprint check already covers the concrete risk that prompted this whole
+## thread (false-positive name collisions on generically-auto-named data) with zero user effort.
+## Worth revisiting only if fingerprinting proves insufficient in practice (e.g. a real case where
+## two datablocks fingerprint identical but are wrong for reasons a hash can't see) — not before.
+
+## ✅ 2026-07-09 (continued once more yet again still): v0.2.119 — v0.2.118's own safety net had a
+## hole big enough to drive the ORIGINAL bug back through: "can't verify" ≠ "safe to trust".
+
+## User restarted Blender (confirming the v0.2.118 module WAS live — checked via `hasattr(examine_
+## library_module, "_content_graph_match")` in the Python console, returned True) and re-ran
+## Examine Library on `Asset_bundle.blend`. Live diagnostic (console dump of the `Plane.070` row +
+## the actual `bpy.data` blocks) showed: `graph_match: ''`, `use_suggested: True`, `selected: True`
+## — auto-applying, exactly the behavior v0.2.118 was supposed to stop. The block being EXAMINED
+## (`original`) was itself `is_missing: True` — Asset_bundle.blend's OWN link to `Plane.070` is
+## broken (a `is_missing` placeholder), colliding by name with a completely real, non-missing LOCAL
+## `Plane.070`.
+
+## **Root cause of the regression, found by re-reading my own code rather than guessing**:
+## `_content_graph_match` correctly calls `extract.datablock_risk_reason` and bails BEFORE reading
+## the missing placeholder's (nonexistent) geometry — right instinct, avoids the same native-crash
+## class already mitigated in Find Orphans (2026-07-03/04). But it returned `""` for that bail-out
+## — the EXACT SAME value used for "unsupported kind, no fingerprinter exists, name-only trust was
+## always fine here" (Object, Image, Action, ...). `_populate_examine_rows`'s gate was `graph_match
+## != "differs"`, so `""` (for ANY reason) fell through to auto-apply. A missing placeholder's
+## content is GONE — it is the SINGLE LEAST verifiable case there is, not a safe default. Shipping
+## a safety check that silently no-ops back to the exact blind-trust behavior it was built to
+## replace, for precisely the highest-risk case, is worse than not having caught it as a distinct
+## outcome at all.
+
+## **Fix**: split `""` into two outcomes. `""` now means ONLY "unsupported kind" (Object, Image,
+## Action, Collection, Armature, ... — behavior there is genuinely unchanged, out of this fix's
+## scope, no evidence of harm). A NEW `"unverified"` means "this IS a kind we can check (Material/
+## Mesh/NodeTree), but a risk flag or an extraction exception stopped us" — covers both
+## `datablock_risk_reason` hits (missing placeholder OR Library Override, either side) and the
+## `except Exception` catch-all. `_populate_examine_rows`'s gate is now `graph_match not in
+## ("differs", "unverified")`. `ui/panels.py::_graph_match_suffix` gained an "(unverified — needs
+## manual check)" branch (QUESTION icon) so the row visibly explains itself instead of looking
+## identical to a genuinely-checked "identical" match.
+
+## New regression test: `tests/smoke_examine_library_missing_vs_local.py` — links a real Mesh into
+## a main file, deletes the source .blend so reopening marks it `is_missing`, adds an unrelated
+## real LOCAL mesh of the same generic name (mirrors the live Asset_bundle.blend/Plane.070 case
+## exactly), asserts `graph_match == "unverified"` and Apply Selected does NOT stage it. Also
+## reused `smoke_examine_library_missing_collision.py`'s proven technique for constructing a real
+## missing placeholder (link an Object using the mesh into the scene, NOT just `use_fake_user` —
+## the fake_user flag on the SOURCE side doesn't carry through a link, a linked reference with zero
+## real users gets silently dropped from the file that links it, same 0-user-datablock gotcha
+## documented in the v0.2.118 entry below, just biting the LINKING file this time instead of the
+## source file). Full local suite reverified clean after this fix: 592 pytest cases, plus every
+## Examine Library variant (name-collision, missing-collision, this new missing-vs-local,
+## folder-search), F3, material-diagnostics, fingerprint, orphans-skip, and datablock-reconnect
+## Blender smoke test.
+
+## **Lesson for future safety-net code in this addon**: when a check can't run, that is NOT the
+## same outcome as the check passing. Prefer a result type that forces the caller to handle
+## "couldn't verify" as its own case, not one that collapses into an existing "nothing to report"
+## sentinel a different code path already treats as safe.
+
+## ✅ 2026-07-09 (continued once more yet again): v0.2.118 — Examine Library's exact-name-match
+## trust was the real bug behind the human_bundle.blend corruption, root-caused and fixed.
+
+## User ran Examine Library's Apply Selected on `human_bundle.blend` (after the v0.2.117 fix made
+## it actually remap things again). Two symptoms reported, live: (1) reloading the saved file threw
+## ~11 "Data corruption: data-block 'NTcc3iid_3_point_dist.011' is using another local data-block
+## ('NTcc3iid_3_point_dist.003') as library override reference, removing all override data" /
+## "...is using itself as library override reference..." errors (all against `NT*`-prefixed
+## Reallusion/CC shader node-group duplicates) via the Amaranth addon's Save & Reload; (2) visually,
+## an architectural column-cap object (`capDetail.001`) that used to have an Array modifier tiling
+## it along a row of columns now showed a clothesline's drape/cloth geometry instead — traced to
+## `capDetail.001`'s mesh data-block and an unrelated clothesline object's (`clothing.005`) BOTH
+## being named `Plane.070`.
+
+## **Root cause, confirmed by reading the actual code (not guessed):** `core/reconnect.py::
+## suggest_reconnect`'s "exact" tier is `if wanted in pool: return Suggestion(wanted, "exact")` —
+## pure name equality, no content check whatsoever. `ops/examine_library.py::_populate_examine_
+## rows` treats any "exact" result as unambiguous and auto-ticks it for Apply Selected, which then
+## calls `block.user_remap(target)`. That assumption holds for a MEANINGFULLY-named block
+## (`GeometricStichDesign`) but breaks for one of Blender's own GENERIC auto-names (`Plane.070`,
+## `NTrl_pbr_shader.001`) — in a file this heavily merged, two totally unrelated things can land on
+## the identical auto-incremented name purely by coincidence of creation order. `Plane.070` directly
+## reproduced the mesh-merge symptom; the same mechanism on a `NodeTree` (not just `Mesh`) very
+## plausibly explains the override-reference corruption too (unconfirmed with certainty, but the
+## mesh-merge evidence alone is conclusive enough that a live-file A/B backup-reload test wasn't
+## needed — `user_remap` merging two objects onto one mesh can't happen spontaneously pre-existing
+## in a file, only during Apply Selected).
+
+## **The fix.** The codebase already had exactly the right tool for this, just scoped too narrowly:
+## `_material_graph_match` (Material-only, F3 fingerprinter reuse) computed "identical"/"differs"
+## but only ever ANNOTATED the row — never gated auto-apply, so even a Material "differs" verdict
+## didn't stop Apply Selected. Generalized to `_content_graph_match`, covering Mesh
+## (`fingerprint_mesh`/`extract_mesh`, already existed for F4) and NodeTree (NEW:
+## `extract_node_tree`/`fingerprint_node_tree`, sharing a refactored `_extract_tree` walk with
+## `extract_material` — node GROUPs need a `NodeGroupOutput` fallback since `get_output_node("ALL")`
+## only recognizes Material/World/Light output nodes, not group output). **The actual behavior
+## change**: `_populate_examine_rows` now sets `row.use_suggested = suggested_kind != "none" and
+## graph_match != "differs"` — a confirmed content mismatch downgrades the row to manual review
+## (suggestion stays visible with a "(graph differs)" warning, per the pre-existing
+## `_graph_match_suffix` UI helper, but Apply Selected won't auto-touch it). Had to also fix
+## `ui/panels.py`'s row-drawing condition (`real.use_suggested and real.suggested_kind == "local"`
+## → dropped the `use_suggested` check) since otherwise a rejected row fell through to "no
+## in-memory match", hiding the very warning the fix exists to surface. Content checks never read a
+## missing placeholder's or Library Override's data — reuses `extract.datablock_risk_reason`, the
+## same native-crash risk class already mitigated in Find Orphans (2026-07-03/04) — such a pair
+## reports "" (unverified) and keeps the old name-only trust, a known, explicitly-documented
+## residual gap (not solved by this fix).
+##
+## **A second, independent bug found and fixed while building the regression test**: node
+## fingerprinting (`_extract_tree`/`_node_hash`) never read a node's OUTPUT-socket default value —
+## only inputs and node-level bl_rna properties. A `ShaderNodeValue`/RGB node's entire meaningful
+## state lives on its single output, so two differently-valued Value nodes hashed byte-identical.
+## This is a PRE-EXISTING gap in the F3/F4/Examine Library fingerprinter (predates this session),
+## not introduced by the above — worth knowing if a past "identical" material-diff verdict involved
+## an unlinked Value/RGB-style node somewhere in the graph. Fixed by capturing each node's output
+## socket values into the hash (both the primary output-node-driven path and the no-output-found
+## fallback multiset).
+##
+## New regression coverage: `tests/smoke_examine_library.py` extended with a Mesh case (two
+## differently-sized "Plane"-named meshes, mirrors the exact reported bug) and a NodeTree case (two
+## differently-valued "NTutil"-named node groups, mirrors the crash-trace side) — both assert not
+## just `graph_match == "differs"` but that `use_suggested`/`selected` end up False, i.e. the actual
+## fix, not just the label. Also had to fix a LATENT bug in the test file itself found while
+## building this: helper-created materials/meshes/node-groups never set `use_fake_user`, so they
+## were silently dropped by `save_as_mainfile` (0-user data-blocks aren't written) — the round-trip
+## link was loading nothing, and the test was self-comparing local rows against themselves without
+## anyone noticing (explains why several checks were passing for the wrong reason before this was
+## caught). Full local suite verified after: 592 pytest cases pass, plus every Examine
+## Library/F3/material-diagnostics/fingerprint/orphans-skip/datablock-reconnect Blender smoke test
+## re-run clean. Two PRE-EXISTING, unrelated failures found incidentally while re-running the smoke
+## suite (`smoke_f4.py`'s `gather()`/`build()` call isn't unpacking `_gather`'s tuple return —
+## crashes before any assertion runs; `smoke_material_tier.py`'s Tier 2 harvest-match staging fails
+## to find its own test fixture files) — confirmed via code reading to be untouched by anything
+## above, flagged as separate follow-up tasks rather than fixed here.
+##
+## **Not done / follow-on**: the SAME false-positive-name-match risk exists in the "Search a
+## Folder"/"Pick a Specific Item" manual-pick paths (`FILELINK_OT_examine_search_folder`'s
+## `find_best_file_match` also goes through `suggest_reconnect`'s exact/numbered tiers, and
+## pre-ticks `row.selected = True` on its own best guess) — lower urgency since those flows peek
+## NAMES ONLY (no loaded content to fingerprint without an extra file-load step) and the user still
+## sees/can change the picked target in a dropdown before Apply Selected runs, but it's the same
+## underlying assumption and could use the same treatment eventually.
+
 ## ✅ 2026-07-09 (continued yet again): v0.2.117 — the v0.2.116 diagnostics paid off immediately:
 ## user re-ran Apply Selected on human_bundle.blend and the console showed **every one of the 46
 ## rows hit "stale row (block=found, block.library=None, expected library=...)"**. That's the real

@@ -17,13 +17,25 @@ just an auto-suggested name — e.g. relinking a Cube to a Sphere from another
 file is a deliberate, valid choice here, not a mistake to guess around).
 
 A name match is only a guess that two datablocks are "the same thing, renamed" —
-for Materials we can do better, because (unlike a missing image file) BOTH sides
-of an in-memory suggestion still have their full node graph loaded. ``_material_
-graph_match`` reuses the F3 fingerprinter (``core.fingerprint.fingerprint_
-material``, resolution-agnostic) to compare the examined material against the
-suggested replacement and tags the row "identical" or "differs" so the user can
-tell a safe rename apart from a same-named-but-different look (Phase 2 — a
-per-node diff for the "differs" case — is deferred).
+proven wrong live, 2026-07-09: an architectural column-cap Mesh and an unrelated
+clothesline Mesh in a heavily-merged production file both happened to carry
+Blender's own generic auto-name ``Plane.070`` (same disease very likely hit
+several ``NT*`` shader node-group duplicates too, corrupting their library-
+override references on the next reload). An EXACT name match is NOT proof of
+identity when the name itself is generic/auto-numbered rather than meaningful.
+
+For Material, Mesh, and NodeTree rows we can do better, because (unlike a
+missing image file) BOTH sides of an in-memory suggestion are already loaded.
+``_content_graph_match`` reuses the F3 fingerprinter (``core.fingerprint``,
+resolution-agnostic for materials) to compare the examined block against the
+suggested replacement and tags the row "identical" or "differs" — and, since
+2026-07-09, a confirmed "differs" now BLOCKS Apply Selected from auto-touching
+that row (downgraded to manual review) instead of only annotating it. Other
+kinds (Object, Image, Action, ...) still fall back to name-only matching —
+not yet covered. A candidate that's itself a missing placeholder or Library
+Override is never content-checked (same native-crash risk class documented in
+``ops.extract.datablock_risk_reason``) — such a pair reports "" (unverified)
+and keeps the old name-only trust, a known residual gap.
 """
 
 from __future__ import annotations
@@ -48,23 +60,59 @@ def _iter_library_blocks(library):
             yield attr, block
 
 
-def _material_graph_match(context, original, candidate) -> str:
-    """``"identical"``/``"differs"`` node-graph comparison between two Material
-    datablocks (both must already be loaded — never used for an unloaded/missing
-    side), or ``""`` if either isn't a Material or extraction fails."""
-    if not (isinstance(original, bpy.types.Material) and isinstance(candidate, bpy.types.Material)):
-        return ""
-    from ..core.fingerprint import fingerprint_material
+def _content_graph_match(context, original, candidate) -> str:
+    """``"identical"``/``"differs"``/``"unverified"``/``""`` content comparison
+    between two already-loaded datablocks. See this module's docstring for why
+    a same-name match alone isn't trustworthy enough to auto-apply without
+    this check.
+
+    ``""`` (unsupported kind — Object, Image, Action, ...) is the ONLY result
+    that leaves the old name-only trust in place; every other outcome is a
+    real verdict the caller can act on.
+
+    Real bug found live, 2026-07-09, RIGHT AFTER this fix shipped: a missing
+    placeholder in the library being examined (``original.is_missing``) landed
+    on a real, non-missing LOCAL candidate with the same generic name
+    (Asset_bundle.blend's broken ``Plane.070`` vs. a genuinely different local
+    ``Plane.070``) — a missing placeholder's original content is GONE, so it's
+    the single least-verifiable case there is, yet the first version of this
+    function returned ``""`` for it (same as "can't check, wrong kind") and
+    ``_populate_examine_rows`` treated that as "safe to auto-apply", exactly
+    reintroducing the blind-trust bug for the case that needed protection
+    most. Fixed by giving the risk-flagged path its own ``"unverified"``
+    result, distinct from "unsupported kind" -- both a Library Override and a
+    missing placeholder (``extract.datablock_risk_reason``, the same
+    native-crash risk class that already crashed Find Orphans' mesh
+    fingerprinting once, 2026-07-03/04) land here rather than risk a read, and
+    an extraction that raises lands here too."""
+    from ..core.fingerprint import fingerprint_material, fingerprint_mesh, fingerprint_node_tree
     from ..prefs import get_prefs
-    from .extract import extract_material
+    from .extract import datablock_risk_reason, extract_material, extract_mesh, extract_node_tree
+
+    is_material = isinstance(original, bpy.types.Material) and isinstance(candidate, bpy.types.Material)
+    is_mesh = isinstance(original, bpy.types.Mesh) and isinstance(candidate, bpy.types.Mesh)
+    is_tree = isinstance(original, bpy.types.NodeTree) and isinstance(candidate, bpy.types.NodeTree)
+    if not (is_material or is_mesh or is_tree):
+        return ""
+
+    if datablock_risk_reason(original) or datablock_risk_reason(candidate):
+        return "unverified"
+
+    prefs = get_prefs(context)
+    res_pattern = prefs.resolution_token_regex if prefs else None
 
     try:
-        prefs = get_prefs(context)
-        res_pattern = prefs.resolution_token_regex if prefs else None
-        fp_a = fingerprint_material(extract_material(original, res_pattern))
-        fp_b = fingerprint_material(extract_material(candidate, res_pattern))
+        if is_material:
+            fp_a = fingerprint_material(extract_material(original, res_pattern))
+            fp_b = fingerprint_material(extract_material(candidate, res_pattern))
+        elif is_mesh:
+            fp_a = fingerprint_mesh(extract_mesh(original))
+            fp_b = fingerprint_mesh(extract_mesh(candidate))
+        else:
+            fp_a = fingerprint_node_tree(extract_node_tree(original, res_pattern))
+            fp_b = fingerprint_node_tree(extract_node_tree(candidate, res_pattern))
     except Exception:
-        return ""
+        return "unverified"
     return "identical" if fp_a == fp_b else "differs"
 
 
@@ -135,10 +183,21 @@ def _populate_examine_rows(context, library) -> int:
                                   and b.library.filepath == row.suggested_library), None)
             else:
                 row.suggested_kind = "none"
-        row.use_suggested = row.suggested_kind != "none"
-        row.selected = row.use_suggested
+
         if candidate is not None:
-            row.graph_match = _material_graph_match(context, block, candidate)
+            row.graph_match = _content_graph_match(context, block, candidate)
+
+        # A confirmed content mismatch, OR a supported kind that couldn't be
+        # safely verified at all (real bug found live, 2026-07-09 — a missing
+        # placeholder's own content is GONE, making it the LEAST trustworthy
+        # case, not a safe one — see _content_graph_match's docstring),
+        # downgrades the row to manual review: the suggestion stays visible
+        # (_graph_match_suffix flags it in the UI) but Apply Selected never
+        # auto-touches it. Only "" (unsupported kind) keeps the old
+        # name-only trust.
+        row.use_suggested = (row.suggested_kind != "none"
+                             and row.graph_match not in ("differs", "unverified"))
+        row.selected = row.use_suggested
     wm.filelink_examine_index = 0
     wm.filelink_examine_library = library.name if library else ""
     wm.filelink_examine_scanned = True

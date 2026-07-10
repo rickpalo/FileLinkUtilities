@@ -68,16 +68,17 @@ def _node_props(node, res_pattern: str | None) -> dict:
     return props
 
 
-def extract_material(mat, res_pattern: str | None = None) -> dict:
-    """Walk a bpy material into a core.fingerprint material_dict."""
-    if not getattr(mat, "use_nodes", False) or mat.node_tree is None:
-        return {
-            "use_nodes": False,
-            "flat": {"diffuse": list(getattr(mat, "diffuse_color", []))},
-        }
-
-    tree = mat.node_tree
-    out_node = tree.get_output_node("ALL")
+def _extract_tree(tree, res_pattern: str | None) -> dict:
+    """Shared node-graph walk behind :func:`extract_material` and
+    :func:`extract_node_tree`. Output-node detection tries a Material/World/
+    Light output first (``get_output_node``, what materials use), then falls
+    back to the active ``NodeGroupOutput`` (what a bare node GROUP's internal
+    tree uses instead — ``get_output_node`` doesn't recognize it)."""
+    out_node = tree.get_output_node("ALL") if hasattr(tree, "get_output_node") else None
+    if out_node is None:
+        group_outputs = [n for n in tree.nodes if n.bl_idname == "NodeGroupOutput"]
+        out_node = next((n for n in group_outputs if getattr(n, "is_active_output", True)),
+                        group_outputs[0] if group_outputs else None)
     nodes: dict = {}
     for node in tree.nodes:
         inputs: dict = {}
@@ -93,16 +94,49 @@ def extract_material(mat, res_pattern: str | None = None) -> dict:
                 inputs[sock.identifier] = {
                     "from": None, "from_socket": None, "value": _socket_value(sock)
                 }
+        # A node's meaningful state can live on an OUTPUT socket's own
+        # default_value rather than any input or bl_rna node property --
+        # e.g. ShaderNodeValue/RGB have zero inputs, their single output IS
+        # the node's entire content. Missed before 2026-07-09 (found live:
+        # two differently-valued Value nodes hashed identically), which would
+        # have silently undermined the Mesh/NodeTree content-verification
+        # this same session added to Examine Library.
+        outputs = {sock.identifier: _socket_value(sock) for sock in node.outputs}
         nodes[node.name] = {
             "idname": node.bl_idname,
             "props": _node_props(node, res_pattern),
             "inputs": inputs,
+            "outputs": outputs,
         }
     return {
         "use_nodes": True,
         "output": out_node.name if out_node else None,
         "nodes": nodes,
     }
+
+
+def extract_material(mat, res_pattern: str | None = None) -> dict:
+    """Walk a bpy material into a core.fingerprint material_dict."""
+    if not getattr(mat, "use_nodes", False) or mat.node_tree is None:
+        return {
+            "use_nodes": False,
+            "flat": {"diffuse": list(getattr(mat, "diffuse_color", []))},
+        }
+    return _extract_tree(mat.node_tree, res_pattern)
+
+
+def extract_node_tree(tree, res_pattern: str | None = None) -> dict:
+    """Walk a STANDALONE bpy NodeTree (a shader/geometry node GROUP, not
+    wrapped in a Material) into the same dict shape :func:`extract_material`
+    produces, so :func:`core.fingerprint.fingerprint_node_tree` can hash it.
+
+    Added 2026-07-09 for Examine Library's NodeTree-kind rows: a same-name
+    match between two node groups is only a guess, same as for Materials (see
+    ``ops.examine_library``'s docstring) — needed once real ``NT*``-prefixed
+    shader node-group duplicates (Reallusion/CC utility groups,
+    auto-numbered) were found merged this way in a heavily-merged production
+    file."""
+    return _extract_tree(tree, res_pattern)
 
 
 def extract_mesh(mesh) -> dict:

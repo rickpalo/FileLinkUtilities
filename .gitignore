@@ -30,3 +30,6 @@ FileLinkDebugLog.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Claude Code session/memory data — never commit (public repo)
+.claude/

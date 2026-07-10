@@ -8,6 +8,63 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.2.119] — Fix: v0.2.118's own content check treated "unverifiable" as "safe to auto-apply"
+
+### Fixed
+- **A missing placeholder in the examined library could still get auto-merged onto a same-named
+  local data-block, immediately after v0.2.118 shipped to close exactly this hole.** Found live on
+  the user's own `Asset_bundle.blend`: its `Plane.070` was itself a missing placeholder (broken
+  link within that library), and Examine Library still auto-applied a merge onto a real, unrelated
+  local `Plane.070`. Root cause: `_content_graph_match` correctly refused to read the missing
+  placeholder's (nonexistent) geometry — reusing `extract.datablock_risk_reason`, the native-crash
+  guard — but returned `""`, the SAME result used for "unsupported kind, name-only trust is fine
+  here" (Object, Image, ...). `_populate_examine_rows` only blocked auto-apply on `"differs"`, so
+  "couldn't verify" fell through to the old blind trust — exactly backwards, since a missing
+  placeholder's content is GONE and is the single LEAST verifiable case there is. Fixed by giving
+  the risk-flagged path (and any extraction that raises) its own `"unverified"` result, distinct
+  from `""` (genuinely unsupported kind, e.g. Object/Image — behavior there is intentionally
+  unchanged). Apply Selected now skips both `"differs"` AND `"unverified"` rows; the UI's
+  `_graph_match_suffix` shows "(unverified — needs manual check)" so it's clear WHY, not just that
+  nothing happened. New regression test `tests/smoke_examine_library_missing_vs_local.py`
+  reproduces the exact shape (a linked Mesh reduced to a missing placeholder via a deleted source
+  file, colliding by name with a real local Mesh) and asserts `graph_match == "unverified"` and
+  Apply Selected does not stage it.
+
+## [0.2.118] — Fix: Examine Library could silently merge unrelated Mesh/NodeTree data-blocks
+
+### Fixed
+- **Apply Selected could merge two completely unrelated data-blocks that happened to share one of
+  Blender's own generic auto-names.** Found live on `human_bundle.blend`: an architectural
+  column-cap Mesh and an unrelated clothesline Mesh both carried the name `Plane.070` (pure
+  coincidence of creation order in a heavily-merged file) — Examine Library treated the exact
+  name match as unambiguous and `user_remap`'d one onto the other, so the column-cap object
+  silently inherited the clothesline's geometry/Array modifier. The same disease very likely hit
+  several `NT*`-prefixed shader node-group duplicates too, corrupting their library-override
+  references (seen as "Data corruption: ... removing all override data" on the next file open).
+  `core/reconnect.py`'s "exact" match tier is pure name equality with no content check — safe for
+  a meaningfully-named block, not for a generic one. Fixed by extending the existing Material
+  node-graph fingerprint check (`ops/examine_library.py`, previously `_material_graph_match`,
+  Material-only and advisory-only) into `_content_graph_match`, covering Mesh and NodeTree too,
+  and — the actual fix — a confirmed content mismatch now BLOCKS Apply Selected from auto-touching
+  that row instead of only annotating it in the UI. `ops/extract.py` gained `extract_node_tree()`
+  (shared `_extract_tree()` walk behind both it and `extract_material()`, with a `NodeGroupOutput`
+  fallback for node GROUPs, which don't have a Material/World/Light output node);
+  `core/fingerprint.py` gained `fingerprint_node_tree()`. Content checks never read a missing
+  placeholder's or Library Override's data (`extract.datablock_risk_reason`, the same native-crash
+  risk class already mitigated in Find Orphans) — such a pair reports unverified and keeps the old
+  name-only trust, a known residual gap. New regression coverage in
+  `tests/smoke_examine_library.py` reproduces the exact Mesh (two differently-sized same-named
+  planes) and NodeTree (two differently-valued same-named node groups) collisions and asserts both
+  the flag AND that Apply Selected's auto-apply properties end up off.
+- **Node/node-tree fingerprinting missed a node's OUTPUT-socket default value** (e.g. a
+  `ShaderNodeValue`/RGB node's entire meaningful state lives on its output, not an input or a
+  node-level property) — found while building the above fix's regression test, two differently-
+  valued Value nodes hashed identical. `ops/extract.py`'s node walk and `core/fingerprint.py`'s
+  `_node_hash` (plus the no-output-node fallback multiset) now include each node's output-socket
+  values in the hash. Pre-existing gap in the F3/F4/Examine Library fingerprinter, not introduced
+  by the above — worth knowing if a past "identical" material-diff verdict involved an unlinked
+  Value/RGB-style node.
+
 ## [0.2.117] — Fix: Examine Apply Selected's real "0 remapped" bug, plus a persistent results summary
 
 ### Fixed

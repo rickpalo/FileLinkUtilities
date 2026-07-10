@@ -587,14 +587,20 @@ def _examine_target_items(self, context):
 
 
 def _graph_match_suffix(base: str, graph_match: str) -> tuple[str, str]:
-    """Append the node-graph comparison (Material rows only) to an Examine
-    Library suggestion line: "identical" keeps the plain checkmark, "differs"
-    warns that the same-named substitute looks different, anything else (not a
-    Material, or comparison failed) leaves the base text untouched."""
+    """Append the node-graph/mesh comparison (Material, Mesh, and NodeTree rows)
+    to an Examine Library suggestion line: "identical" keeps the plain
+    checkmark, "differs" warns that the same-named substitute is actually
+    different content, "unverified" warns the content couldn't be safely
+    checked at all (a missing placeholder or Library Override on either side —
+    see ``ops.examine_library._content_graph_match``) — both "differs" and
+    "unverified" are NOT auto-applied (2026-07-09). "" (unsupported kind) is
+    the only case that leaves the base text untouched, unchanged behavior."""
     if graph_match == "identical":
         return f"{base} (identical)", "CHECKMARK"
     if graph_match == "differs":
         return f"{base} (graph differs)", "ERROR"
+    if graph_match == "unverified":
+        return f"{base} (unverified — needs manual check)", "QUESTION"
     return base, "CHECKMARK"
 
 
@@ -614,7 +620,7 @@ class FILELINK_PG_examine_row(bpy.types.PropertyGroup):
     suggested_kind: bpy.props.StringProperty(default="none")  # "local" | "library" | "none"  # type: ignore[valid-type]
     suggested_name: bpy.props.StringProperty()  # type: ignore[valid-type]
     suggested_library: bpy.props.StringProperty()  # filepath, when suggested_kind == "library"  # type: ignore[valid-type]
-    graph_match: bpy.props.StringProperty()  # "identical" | "differs" | "" — Material rows only  # type: ignore[valid-type]
+    graph_match: bpy.props.StringProperty()  # "identical"|"differs"|"unverified"|"" — Material/Mesh/NodeTree rows  # type: ignore[valid-type]
     use_suggested: bpy.props.BoolProperty(default=False)  # type: ignore[valid-type]
     make_local: bpy.props.BoolProperty(
         default=False, name="",
@@ -976,12 +982,17 @@ class FILELINK_UL_examine_picker(bpy.types.UIList):
         row.label(text=real.name, icon="LIBRARY_DATA_DIRECT")
         if real.make_local:
             pass  # the Make Local checkbox below already says it all
-        elif real.use_suggested and real.suggested_kind == "local":
+        elif real.suggested_kind == "local":
+            # NOTE: not gated on `use_suggested` — a "(graph differs)" row has
+            # use_suggested=False (Apply Selected won't auto-touch it, see
+            # ops.examine_library._populate_examine_rows) but the suggestion
+            # and WHY it was rejected still need to be visible for manual
+            # review, not silently replaced by the "no in-memory match" line.
             s = row.row()
             s.alignment = "RIGHT"
             text, sicon = _graph_match_suffix(f"local: {real.suggested_name}", real.graph_match)
             s.label(text=text, icon=sicon)
-        elif real.use_suggested and real.suggested_kind == "library":
+        elif real.suggested_kind == "library":
             from ..core.datablock_links import basename as _lib_basename
 
             s = row.row()

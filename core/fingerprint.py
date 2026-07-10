@@ -119,6 +119,10 @@ def _node_hash(nodes: dict, key: str, memo: dict) -> str:
             parts.append([sid, inp.get("from_socket"), "L", _node_hash(nodes, inp["from"], memo)])
         else:
             parts.append([sid, "V", inp.get("value")])
+    # Output sockets carry a node's own state when it has no inputs at all
+    # (ShaderNodeValue/RGB) -- see extract._extract_tree's 2026-07-09 note.
+    for sid in sorted(node.get("outputs", {})):
+        parts.append(["out", sid, node["outputs"][sid]])
 
     h = _sha(parts)
     memo[key] = h
@@ -141,8 +145,19 @@ def fingerprint_material(material_dict: dict) -> str:
         return _sha(["mat", _node_hash(nodes, output, {})])
 
     # Fallback: no identifiable output - hash the multiset of local node sigs.
-    sigs = sorted(_sha([n.get("idname", ""), n.get("props", {})]) for n in nodes.values())
+    sigs = sorted(_sha([n.get("idname", ""), n.get("props", {}), n.get("outputs", {})])
+                  for n in nodes.values())
     return _sha(["mat-no-output", sigs])
+
+
+def fingerprint_node_tree(node_tree_dict: dict) -> str:
+    """Stable hash of a STANDALONE NodeTree's graph (a shader/geometry node
+    GROUP, not wrapped in a Material) — identical algorithm and dict shape as
+    :func:`fingerprint_material`'s ``use_nodes=True`` path (which a bare node
+    tree's extracted dict also uses), exposed under its own name for callers
+    that aren't fingerprinting a Material (Examine Library's NodeTree-kind
+    rows, added 2026-07-09)."""
+    return fingerprint_material(node_tree_dict)
 
 
 # --------------------------------------------------------------------------- #
