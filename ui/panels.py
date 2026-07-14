@@ -604,6 +604,36 @@ def _graph_match_suffix(base: str, graph_match: str) -> tuple[str, str]:
     return base, "CHECKMARK"
 
 
+def _manual_pick_graph_icon(row) -> str:
+    """Compact icon (no label — the ``target`` dropdown already eats
+    horizontal row space, per docs/TODO.md's 2026-07-09 "two-pass" design
+    note) for a manual-pick Examine Library row's content-verification state.
+    ``""`` means draw nothing extra: either an unsupported kind (Object,
+    Image, Action, ... — old name-only trust, unchanged) or nothing has been
+    picked yet."""
+    if row.graph_match == "identical":
+        return "CHECKMARK"
+    if row.graph_match == "differs":
+        return "ERROR"
+    if row.graph_match == "unverified":
+        return "QUESTION"
+    if row.source_blend and row.collection in {"meshes", "materials", "node_groups"}:
+        return "QUESTION"  # fuzzy-only top match — never verified, needs manual review
+    return ""
+
+
+def _on_examine_target_changed(self, context):
+    """The user manually swapped the manual-pick dropdown to a candidate pass
+    2 never checked (``ops.examine_library._verify_candidates`` only verifies
+    the ranked TOP candidate) — ``graph_match``/``selected`` were computed
+    against the PREVIOUS target, so they're stale for this new one. Reset
+    both so a swap can't silently ride along on a stale "verified" auto-
+    select; the row's own checkbox is still right there for the user to
+    re-tick after reviewing the new pick."""
+    self.graph_match = ""
+    self.selected = False
+
+
 class FILELINK_PG_examine_row(bpy.types.PropertyGroup):
     """One datablock the EXAMINED library currently provides (Examine Library —
     distinct from the missing-data-block reconnect list: these links are NOT
@@ -628,7 +658,8 @@ class FILELINK_PG_examine_row(bpy.types.PropertyGroup):
     source_blend: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore[valid-type]
     candidates: bpy.props.StringProperty()  # newline-joined names from source_blend  # type: ignore[valid-type]
     target: bpy.props.EnumProperty(
-        name="Relink to", items=_examine_target_items)  # type: ignore[valid-type]
+        name="Relink to", items=_examine_target_items,
+        update=_on_examine_target_changed)  # type: ignore[valid-type]
     selected: bpy.props.BoolProperty(
         default=False, name="",
         description="Include this data-block when you Apply Selected")  # type: ignore[valid-type]
@@ -1002,6 +1033,9 @@ class FILELINK_UL_examine_picker(bpy.types.UIList):
             s.label(text=text, icon=sicon)
         elif real.source_blend:
             row.prop(real, "target", text="")
+            icon = _manual_pick_graph_icon(real)
+            if icon:
+                row.label(text="", icon=icon)
         else:
             s = row.row()
             s.alignment = "RIGHT"
@@ -2079,6 +2113,9 @@ class FILELINK_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
             box.label(text=f"{len(rows)} data-block(s) from {wm.filelink_examine_library} — "
                       f"{suggested} in-memory match(es), {staged} staged",
                       icon="LIBRARY_DATA_OVERRIDE")
+            if any(r.suggested_kind == "none" for r in rows):
+                box.operator("filelink.examine_bulk_pick_folder",
+                             text="Search a Folder (all unresolved)", icon="VIEWZOOM")
             box.operator("filelink.examine_apply_selected",
                          text="Apply Selected (Backup)", icon="LINKED")
         elif scanned:

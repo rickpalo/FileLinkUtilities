@@ -8,6 +8,42 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.2.120] — Examine Library: content verification extended to the manual-pick paths
+
+### Added
+- **Pick a Specific Item, Search a Folder, and a new "Search a Folder (all unresolved)" bulk
+  operator now get the same content check the in-memory suggestion path has had since v0.2.118/119.**
+  Previously all three trusted an exact/numbered NAME match alone and unconditionally staged the
+  row for Apply — including, for Search a Folder, a purely FUZZY match, the exact same
+  "same-generic-name ≠ same content" risk already fixed for in-memory suggestions
+  (`smoke_examine_library.py`'s `Plane.070`/`Plane.099` case). Now: pass 1 (peek + rank) is
+  unchanged; pass 2 real-links whichever candidate an exact/numbered match picked — never a fuzzy
+  one, same `allow_fuzzy=False` reasoning as the in-memory path — and content-verifies it via the
+  existing `_content_graph_match` fingerprinter (Material/Mesh/NodeTree), gated identically to
+  `_populate_examine_rows`: `"differs"` or `"unverified"` blocks auto-select but keeps the row
+  staged for manual review; a fuzzy-only top match is staged but never real-linked or auto-selected
+  at all. Unblocked by `tests/probe_double_link.py` (2026-07-14): confirmed real-linking the SAME
+  library a second time later (Apply Selected's own by-source reload) safely reuses the exact same
+  datablock rather than duplicating it, so pass 2's verify load can be disposable — no caching or
+  threading needed into Apply Selected.
+- **New bulk operator** (`filelink.examine_bulk_search_folder`, fronted by the thin
+  `filelink.examine_bulk_pick_folder` file-picker, same two-op split as
+  `ops.image_relink.FILELINK_OT_relink_folder_search`) resolves EVERY still-unresolved row
+  (`suggested_kind == "none"`) in one folder walk instead of one row at a time — peeks every needed
+  `bpy.data` attribute per file in pass 1, then groups pass 2's real-link by source file so a folder
+  walk resolving several rows from one file only opens it once. `ModalProgressMixin`-based (ESC to
+  cancel), matching every other folder-walk in this addon. Button appears above Apply Selected
+  whenever at least one row is still unresolved.
+- **UI**: the manual-pick dropdown (`ui.panels.FILELINK_UL_examine_picker`) gained a compact
+  content-check icon next to the `target` enum (checkmark/error/question, no label — the dropdown
+  already eats row space). Manually swapping the dropdown to a candidate pass 2 never checked resets
+  `graph_match`/`selected` (`ui.panels._on_examine_target_changed`) so a stale "verified" auto-select
+  can't silently ride along on an unverified swap.
+- New regression test `tests/smoke_examine_content_verify.py`: proves a genuinely-different-geometry
+  candidate found via Pick a Specific Item, Search a Folder, and the bulk operator is all blocked
+  from auto-apply the same way, a genuinely-identical one auto-selects, a fuzzy-only match never
+  gets real-linked, and the dropdown-swap reset actually fires.
+
 ## [0.2.119] — Fix: v0.2.118's own content check treated "unverifiable" as "safe to auto-apply"
 
 ### Fixed

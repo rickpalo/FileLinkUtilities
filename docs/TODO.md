@@ -1,5 +1,111 @@
 # File & Link Utilities — TODO / backlog
 
+## 2026-07-14 (session close): today's `PSM_Stage_v5.2.crash.txt` (the Python-script-
+## during-file-load crash, distinct from the known `tentRoof`/`Plane.019` mesh-read
+## corruption) is NOT being root-caused this session — user's own read is "probably the
+## broken links," data recovery wasn't needed, and the 3.4GB autosave plus several other
+## leftover temp files were manually deleted by the user. Not logged as an open TODO
+## item; revisit only if the SAME crash shape recurs and is worth a real repro at that
+## point (nothing here to act on without one).
+
+## ⏳ 2026-07-14 (continued yet again): TODO for NEXT TIME the F1 link-map graph is
+## opened — flip the arrow direction to show DATA FLOW, not dependency direction.
+
+## User's request: arrows should indicate "the direction objects and data are flowing,"
+## not (as today) which file depends on which. Root-caused where the flip goes, not yet
+## applied (deferred: "next time we open that file link graph").
+
+## **Current semantics** (`core/linkmap_html.py`): each edge is `{"source": s, "target":
+## t, ...}` built in `aggregate_edges`/`build_graph_data` where, per the module docstring,
+## "A links a library from B" means `source = A` (the consumer file doing the linking) and
+## `target = B` (the library file being linked FROM). The JS `draw()` function's arrowhead
+## is drawn at the **target** end (`core/linkmap_html.py` around line 407-417: `arrowhead
+## near target`, uses `e.t`/`radius(e.t)`) — so today's arrow points A→B, the classic
+## *dependency* convention ("A depends on B").
+
+## **The fix**: actual data (meshes, materials, objects, ...) flows the OPPOSITE way — B's
+## content flows INTO A when A links it. So "data flow" direction is B→A, the reverse of
+## what's drawn. This is a scoped, LOW-RISK rendering-only change: flip the arrowhead calc
+## in `draw()` to point at `e.s` (source, using `radius(e.s)`) instead of `e.t` — do NOT
+## touch `aggregate_edges`/`assign_depths`/`cycle_edges`/the underlying `{source, target}`
+## data model, all of which key off the EXISTING dependency-direction semantics and would
+## break (or need their own separate re-derivation) if source/target themselves were
+## swapped instead of just which end gets the arrowhead drawn.
+
+## **Side effect worth flagging to the user when this lands**: in the Hierarchical layout
+## (`assign_depths` — root/consumer at top, leaf/asset at bottom, unchanged by this fix),
+## flipping the arrowhead means arrows will now visually point UPWARD (from a leaf asset at
+## the bottom toward the root scene at the top) instead of downward — arguably a MORE
+## intuitive reading ("asset data flows up into the scene that uses it"), but a visible
+## change from today's downward-pointing arrows, worth calling out rather than surprising
+## the user silently.
+
+## No test coverage exists for arrow rendering specifically (it's inlined JS in an HTML
+## string, not currently unit-tested) — a quick manual check (open the generated .html,
+## confirm arrows point from a leaf/asset file toward whatever links it) is the practical
+## verification here, not a new pytest case.
+
+## ✅ 2026-07-14 (continued once more): v0.2.120 — the "two-pass" content-verification
+## design (below) is BUILT, not just probed. Pick a Specific Item, Search a Folder, and a
+## new bulk "Search a Folder (all unresolved)" operator (`filelink.examine_bulk_search_
+## folder`, fronted by `filelink.examine_bulk_pick_folder`) now content-verify an
+## exact/numbered manual-pick candidate the same way the in-memory suggestion path has
+## since v0.2.118/119, gated the same way (`_populate_examine_rows`'s
+## `graph_match not in ("differs", "unverified")` rule), via a new shared
+## `ops.examine_library._verify_candidates` (groups real-links by source file, same
+## `by_source` shape `FILELINK_OT_examine_apply_selected` already used). Fuzzy-only
+## matches stay staged-but-unverified, never real-linked, matching the in-memory path's
+## `allow_fuzzy=False`. UI gap closed too: the manual-pick dropdown gained a compact
+## graph-match icon, and swapping it to an unverified candidate resets the stale
+## verification (`ui.panels._on_examine_target_changed`) instead of letting it silently
+## ride along. New test: `tests/smoke_examine_content_verify.py`. Full detail in
+## CHANGELOG.md's [0.2.120] entry; full local suite (593 pytest cases + every Examine
+## Library/related smoke test) reverified clean — one PRE-EXISTING, UNRELATED failure
+## found in passing (`tests/smoke_f4.py`, a `core/f4_orphans.py` TypeError, confirmed via
+## `git stash` to already exist on `main` before this session's changes) spun off as its
+## own task rather than fixed here.
+
+## No open design work remains on this specific thread. Next session should pick a new
+## backlog item (see "Future / deferred" and the milestone sections further down) or
+## address the spun-off `core/f4_orphans.py` bug above if the user wants it done inline
+## instead.
+
+## ✅ 2026-07-14: PROBED — real-linking the SAME library TWICE in one session is
+## SAFE. Resolves the open question the 2026-07-09 entry below flagged as this
+## project's own required "resolve before writing code" step for the two-pass
+## Examine Library content-verification design.
+
+## `tests/probe_double_link.py` (throwaway, not a regression test — same pattern as
+## `tests/probe_remote_override_link.py`): built a source.blend with a Mesh, a
+## Material (nodes), and a NodeTree (node group) — the three kinds `_content_graph_
+## match` fingerprints. In ONE Blender session, real-linked (`link=True`, `data_to`
+## actually assigned — NOT a `_peek_names`-style dry read) from that source, ran the
+## REAL `ops.extract`/`core.fingerprint` functions on the result (the same vertex/
+## node reads implicated in the documented `_peek_names`-after-real-link crash
+## class), then real-linked the SAME source path a SECOND time in the SAME session
+## and fingerprinted again. **No crash.** Blender's `blend.readfile` log even names
+## the behavior explicitly (`WARNING Append: ID 'METestMesh' is already linked`):
+## the second `libraries.load()` call recognizes the already-linked library+name and
+## returns the EXACT SAME datablock (`mesh2 is mesh1 == True`, `mat2 is mat1 ==
+## True`, `tree2 is tree1 == True`, same Python `id()`), not a duplicate or a
+## `.001`-suffixed copy. Fingerprints matched pass1==pass2 as expected (same object,
+## same content).
+
+## **Conclusion for the two-pass design (per the 2026-07-09 entry's own stated
+## branching): pass 2 can be a disposable verify-then-discard load.** A normal
+## second real `link=True` load with `data_to` requesting names is NOT the same
+## code path as re-PEEKING an already-linked library (`data_to` never assigned) —
+## that peek-specific crash risk stays scoped to exactly what
+## `_populate_missing_blocks`'s docstring already documents, doesn't generalize to
+## this case. `FILELINK_OT_examine_apply_selected`'s existing `by_source`-grouped
+## reload-by-source logic needs ZERO structural changes to accommodate pass 2 —
+## Apply Selected's later real link from the same source will just transparently
+## reuse whatever pass 2 already linked, for free, via Blender's own already-linked-
+## library dedup. **This is the starting point for the next session**: build the
+## two-pass design itself (pass 1 folder-walk peek + pass 2 real-link-and-verify)
+## per the full design already written in the 2026-07-09 entry below — no more
+## unresolved open questions block starting.
+
 ## ⏳ 2026-07-09 (continued once more yet again still further, and once more after that): Find
 ## Orphans crash on `PSM_Stage_v5.2` — root cause CONFIRMED (not just narrowed) to a specific
 ## object; a real Gascogne_PigeonAction orphan found and explained along the way; new idea logged

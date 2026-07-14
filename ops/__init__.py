@@ -50,6 +50,8 @@ from .examine_library import (
     FILELINK_OT_examine_library,
     FILELINK_OT_examine_pick_source,
     FILELINK_OT_examine_search_folder,
+    FILELINK_OT_examine_bulk_pick_folder,
+    FILELINK_OT_examine_bulk_search_folder,
     FILELINK_OT_examine_apply_selected,
 )
 from .material_search import FILELINK_OT_search_material
@@ -129,6 +131,8 @@ REGISTER_CLASSES = (
     FILELINK_OT_examine_library,
     FILELINK_OT_examine_pick_source,
     FILELINK_OT_examine_search_folder,
+    FILELINK_OT_examine_bulk_pick_folder,
+    FILELINK_OT_examine_bulk_search_folder,
     FILELINK_OT_examine_apply_selected,
     FILELINK_OT_search_material,
     FILELINK_OT_scan_broken_textures,

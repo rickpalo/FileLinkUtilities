@@ -34,8 +34,24 @@ that row (downgraded to manual review) instead of only annotating it. Other
 kinds (Object, Image, Action, ...) still fall back to name-only matching —
 not yet covered. A candidate that's itself a missing placeholder or Library
 Override is never content-checked (same native-crash risk class documented in
-``ops.extract.datablock_risk_reason``) — such a pair reports "" (unverified)
-and keeps the old name-only trust, a known residual gap.
+``ops.extract.datablock_risk_reason``) — such a pair reports "unverified" and
+is ALSO blocked from auto-apply (2026-07-09: "couldn't verify" is not the same
+as "safe", see the v0.2.119 CHANGELOG entry).
+
+The three MANUAL-pick paths (``FILELINK_OT_examine_pick_source``,
+``FILELINK_OT_examine_search_folder``, and the bulk
+``FILELINK_OT_examine_bulk_search_folder``) get the SAME content check as of
+2026-07-14 (docs/TODO.md's "two-pass" design): pass 1 is the existing
+``_peek_names`` dry read + ``core.reconnect`` ranking, unchanged; pass 2 real-
+links whichever candidate an exact/numbered match picked (never a fuzzy one —
+same ``allow_fuzzy=False`` reasoning as the in-memory path) and content-
+verifies it via :func:`_verify_candidates`, gated the same way
+``_populate_examine_rows`` gates an in-memory suggestion. Confirmed safe by
+``tests/probe_double_link.py``: real-linking the same library a SECOND time
+later (Apply Selected's own by-source reload) is not the crash-risky
+``_peek_names``-after-a-real-link pattern documented in
+``ops.datablock_reconnect._populate_missing_blocks`` — it just transparently
+reuses the same already-linked datablock, so pass 2's load is disposable.
 """
 
 from __future__ import annotations
@@ -47,6 +63,13 @@ import bpy
 from ..core import reconnect as rc
 from .datablock_inspect import _iter_all_blocks
 from .pickers import FilePickerMixin, resolve_existing_file
+from .progress import ModalProgressMixin
+
+# The three kinds _content_graph_match can actually fingerprint. Gates the
+# extra real-link done by the manual-pick paths below (Pick a Specific Item /
+# Search a Folder / the bulk folder search) -- no point linking a candidate
+# just to have _content_graph_match hand back "" (unsupported kind) anyway.
+_VERIFIABLE_COLLECTIONS = frozenset({"meshes", "materials", "node_groups"})
 
 
 def _iter_library_blocks(library):
@@ -114,6 +137,49 @@ def _content_graph_match(context, original, candidate) -> str:
     except Exception:
         return "unverified"
     return "identical" if fp_a == fp_b else "differs"
+
+
+def _verify_candidates(context, library, source: str, pairs: list[tuple]) -> None:
+    """Real-link every ``(row, candidate_name)`` pair's candidate from
+    ``source`` ONCE -- grouped by ``row.collection``, the same shape as
+    ``FILELINK_OT_examine_apply_selected``'s ``by_source`` grouping -- then
+    set each row's ``graph_match`` via :func:`_content_graph_match` against
+    the row's own datablock in ``library``. Shared by the per-row Pick a
+    Specific Item / Search a Folder operators (one pair) and the bulk folder
+    search (many pairs that may share one file, so a folder walk resolving
+    several rows from one source file only opens it once).
+
+    Disposable: per ``tests/probe_double_link.py`` (2026-07-14, docs/TODO.md),
+    a LATER real link from the same source -- Apply Selected's own by-source
+    reload -- safely reuses these exact datablocks instead of duplicating
+    them, so nothing here needs caching or threading through to Apply
+    Selected."""
+    wanted_by_attr: dict[str, set[str]] = {}
+    for row, candidate_name in pairs:
+        wanted_by_attr.setdefault(row.collection, set()).add(candidate_name)
+    try:
+        with bpy.data.libraries.load(source, link=True) as (data_from, data_to):
+            for attr, names in wanted_by_attr.items():
+                setattr(data_to, attr,
+                       [n for n in getattr(data_from, attr, []) if n in names])
+    except Exception:
+        for row, _candidate_name in pairs:
+            row.graph_match = "unverified"
+        return
+
+    by_key: dict[tuple[str, str], object] = {}
+    for attr in wanted_by_attr:
+        for block in getattr(data_to, attr, None) or []:
+            if block is not None:
+                by_key[(attr, block.name)] = block
+
+    for row, candidate_name in pairs:
+        candidate = by_key.get((row.collection, candidate_name))
+        original = getattr(bpy.data, row.collection).get((row.name, library.filepath))
+        if candidate is None or original is None:
+            row.graph_match = "unverified"
+            continue
+        row.graph_match = _content_graph_match(context, original, candidate)
 
 
 def _in_memory_pools(attr: str, exclude_library) -> tuple[list[str], dict[str, str]]:
@@ -336,11 +402,37 @@ class FILELINK_OT_examine_pick_source(FilePickerMixin, bpy.types.Operator):
         row.candidates = "\n".join(rc.ranked_candidates(row.name, names))
         row.use_suggested = False
         row.make_local = False
-        row.selected = bool(names)
+        row.graph_match = ""
+
+        # Same exact/numbered-only gate _populate_examine_rows already applies
+        # to in-memory suggestions (docs/TODO.md, 2026-07-09 "two-pass" design):
+        # a fuzzy-only top candidate stays manual-review-only, never
+        # auto-selected -- a wrong guess here would silently repoint a WORKING
+        # link. Content-verify an exact/numbered match before trusting it,
+        # same as v0.2.119 already does for in-memory candidates.
+        sug = rc.suggest_reconnect(row.name, names, allow_fuzzy=False)
+        verified_note = ""
+        if sug.target:
+            library = bpy.data.libraries.get(context.window_manager.filelink_examine_library)
+            if library is not None and row.collection in _VERIFIABLE_COLLECTIONS:
+                _verify_candidates(context, library, path, [(row, sug.target)])
+                if row.graph_match == "identical":
+                    verified_note = " — content verified identical"
+                elif row.graph_match == "differs":
+                    verified_note = " — ⚠ content differs, review before applying"
+                elif row.graph_match == "unverified":
+                    verified_note = " — could not verify content, review before applying"
+            row.selected = row.graph_match not in ("differs", "unverified")
+        else:
+            row.selected = False
+
         if context.area:
             context.area.tag_redraw()
         if not names:
             self.report({"WARNING"}, f"{os.path.basename(path)} has no {row.kind} datablocks")
+        else:
+            self.report({"INFO"}, f"{len(names)} candidate(s) from "
+                        f"{os.path.basename(path)}{verified_note}")
         return {"FINISHED"}
 
 
@@ -409,12 +501,194 @@ class FILELINK_OT_examine_search_folder(FilePickerMixin, bpy.types.Operator):
         row.candidates = "\n".join(rc.ranked_candidates(row.name, names_by_file[best_file]))
         row.use_suggested = False
         row.make_local = False
-        row.selected = True
+        row.graph_match = ""
+
+        # Same exact/numbered-only gate _populate_examine_rows already applies
+        # to in-memory suggestions (docs/TODO.md, 2026-07-09 "two-pass"
+        # design) -- previously this unconditionally auto-selected ANY match
+        # including a fuzzy one, exactly the "guessing wrong silently repoints
+        # a working link" risk the in-memory path was already hardened
+        # against. Content-verify an exact/numbered match before trusting it.
+        verified_note = ""
+        if suggestion.confidence in ("exact", "numbered"):
+            library = bpy.data.libraries.get(context.window_manager.filelink_examine_library)
+            if library is not None and row.collection in _VERIFIABLE_COLLECTIONS:
+                _verify_candidates(context, library, best_file, [(row, suggestion.target)])
+                if row.graph_match == "identical":
+                    verified_note = " — content verified identical"
+                elif row.graph_match == "differs":
+                    verified_note = " — ⚠ content differs, review before applying"
+                elif row.graph_match == "unverified":
+                    verified_note = " — could not verify content, review before applying"
+            row.selected = row.graph_match not in ("differs", "unverified")
+        else:
+            row.selected = False  # fuzzy-only -- manual review, same as an in-memory fuzzy guess
+
         if context.area:
             context.area.tag_redraw()
         self.report({"INFO"}, f"Found '{suggestion.target}' ({suggestion.confidence}) in "
-                    f"{os.path.basename(best_file)} — searched {len(names_by_file)} file(s)")
+                    f"{os.path.basename(best_file)} — searched {len(names_by_file)} "
+                    f"file(s){verified_note}")
         return {"FINISHED"}
+
+
+class FILELINK_OT_examine_bulk_pick_folder(FilePickerMixin, bpy.types.Operator):
+    """Thin file-browser front for ``FILELINK_OT_examine_bulk_search_folder`` --
+    a fileselect modal and a progress modal can't share one operator, same
+    two-op split as ``ops.image_relink.FILELINK_OT_search_textures_folder`` /
+    ``FILELINK_OT_relink_folder_search``."""
+
+    bl_idname = "filelink.examine_bulk_pick_folder"
+    bl_label = "Search a Folder (all unresolved)"
+    bl_description = (
+        "Walk every .blend in a chosen folder ONCE, looking for a match for EVERY "
+        "row that has no in-memory suggestion yet, instead of doing this one row at "
+        "a time. Exact/numbered matches are content-verified and auto-staged; "
+        "fuzzy matches stay for manual review"
+    )
+    bl_options = {"REGISTER"}
+
+    directory: bpy.props.StringProperty(subtype="DIR_PATH")  # type: ignore[valid-type]
+    filter_folder: bpy.props.BoolProperty(default=True, options={"HIDDEN"})  # type: ignore[valid-type]
+
+    def execute(self, context):
+        if not self.directory or not os.path.isdir(self.directory):
+            self.report({"ERROR"}, "Choose a folder to search")
+            return {"CANCELLED"}
+        if not any(row.suggested_kind == "none"
+                  for row in context.window_manager.filelink_examine_rows):
+            self.report({"INFO"}, "Every row already has an in-memory match")
+            return {"CANCELLED"}
+        # Hand off to the modal worker so a large tree doesn't freeze the UI.
+        bpy.ops.filelink.examine_bulk_search_folder("INVOKE_DEFAULT", directory=self.directory)
+        return {"FINISHED"}
+
+
+class FILELINK_OT_examine_bulk_search_folder(ModalProgressMixin, bpy.types.Operator):
+    """Modal worker behind "Search a Folder (all unresolved)" -- docs/TODO.md's
+    2026-07-09 "two-pass" design, unblocked by ``tests/probe_double_link.py``
+    (2026-07-14, confirmed real-linking the same library twice in one session
+    is safe).
+
+    **Pass 1 (cheap):** one folder walk, ``_peek_names()`` every ``.blend`` for
+    EVERY ``bpy.data`` attribute among the still-unresolved rows
+    (``suggested_kind == "none"``) at once -- a real difference from the
+    per-row ``FILELINK_OT_examine_search_folder``'s single-collection peek,
+    since one walk here has to satisfy Mesh/Material/NodeTree/Object/... rows
+    together. Ranked with the existing ``core.reconnect`` tiering, unchanged.
+
+    **Pass 2 (new):** for every FILE that won at least one exact/numbered
+    match, real-link it ONCE (grouped via :func:`_verify_candidates`, which
+    also groups by ``bpy.data`` attribute) and content-verify every
+    (row, candidate) pair the SAME way ``_populate_examine_rows`` verifies an
+    in-memory suggestion -- a folder walk resolving several rows from one
+    source file must not load that file more than once. Fuzzy-only matches
+    are staged (visible for manual override via the row's own dropdown) but
+    never real-linked or auto-selected, same as the per-row operators."""
+
+    bl_idname = "filelink.examine_bulk_search_folder"
+    bl_label = "Searching folder for every unresolved row"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    directory: bpy.props.StringProperty()  # type: ignore[valid-type]
+
+    def cancel_message(self) -> str:
+        return "Bulk folder search cancelled — rows matched so far are kept, the rest untouched"
+
+    def run_steps(self, context):
+        import pathlib
+
+        from ..core.blendscan import iter_blend_files
+
+        wm = context.window_manager
+        library = bpy.data.libraries.get(wm.filelink_examine_library)
+        coll = wm.filelink_examine_rows
+        todo = [row for row in coll if row.suggested_kind == "none"]
+        if library is None or not todo:
+            self.report({"INFO"}, "Nothing unresolved to search for")
+            return
+
+        attrs = sorted({row.collection for row in todo})
+        already_loaded = {
+            os.path.normpath(bpy.path.abspath(lib.filepath))
+            for lib in bpy.data.libraries if lib.filepath
+        }
+
+        names_by_file: dict[str, dict[str, list[str]]] = {}
+        unreadable = 0
+        walked = 0
+        for blend in iter_blend_files(pathlib.Path(self.directory)):
+            path = os.path.normpath(str(blend))
+            walked += 1
+            yield (min(0.5, walked / (walked + 20.0)),
+                   f"Scanning {self.directory}… {walked} file(s)")
+            if path in already_loaded:
+                continue
+            per_attr: dict[str, list[str]] = {}
+            ok = True
+            for attr in attrs:
+                names = _peek_names(path, attr)
+                if names is None:
+                    ok = False
+                    break
+                if names:
+                    per_attr[attr] = names
+            if not ok:
+                unreadable += 1
+            elif per_attr:
+                names_by_file[path] = per_attr
+
+        matched_by_file: dict[str, list[tuple]] = {}
+        staged = fuzzy_only = unresolved = 0
+        total = len(todo) or 1
+        for i, row in enumerate(todo):
+            names_by_source = {path: per_attr[row.collection]
+                               for path, per_attr in names_by_file.items()
+                               if row.collection in per_attr}
+            best_file, suggestion = rc.find_best_file_match(row.name, names_by_source)
+            yield (0.5 + 0.3 * ((i + 1) / total), f"Matching row {i + 1}/{total}…")
+            if not best_file:
+                unresolved += 1
+                continue
+
+            row.source_blend = best_file
+            row.candidates = "\n".join(rc.ranked_candidates(row.name, names_by_source[best_file]))
+            row.use_suggested = False
+            row.make_local = False
+            row.graph_match = ""
+            staged += 1
+
+            if suggestion.confidence not in ("exact", "numbered"):
+                row.selected = False  # fuzzy-only -- manual review
+                fuzzy_only += 1
+            elif row.collection in _VERIFIABLE_COLLECTIONS:
+                matched_by_file.setdefault(best_file, []).append((row, suggestion.target))
+            else:
+                row.selected = True  # unsupported kind -- old name-only trust, unchanged
+
+        verified = blocked = 0
+        total2 = len(matched_by_file) or 1
+        for i, (source, pairs) in enumerate(matched_by_file.items()):
+            yield (0.8 + 0.19 * ((i + 1) / total2),
+                   f"Verifying {os.path.basename(source)} ({len(pairs)} row(s))…")
+            _verify_candidates(context, library, source, pairs)
+            for row, _candidate_name in pairs:
+                row.selected = row.graph_match not in ("differs", "unverified")
+                if row.selected:
+                    verified += 1
+                else:
+                    blocked += 1
+
+        rebuild_examine_picker_rows(wm)
+        if context.area:
+            context.area.tag_redraw()
+        yield (1.0, "Done")
+
+        tail = f"; {unreadable} unreadable" if unreadable else ""
+        self.report({"INFO"}, f"{staged} of {len(todo)} unresolved row(s) matched in "
+                    f"{self.directory} — {verified} auto-verified, {blocked} blocked "
+                    f"(content differs/unverified — review), {fuzzy_only} fuzzy-only "
+                    f"(manual review), {unresolved} not found{tail}")
 
 
 class FILELINK_OT_examine_apply_selected(bpy.types.Operator):
