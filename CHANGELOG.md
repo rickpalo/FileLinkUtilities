@@ -8,6 +8,18 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.1] — Health dashboard with live metric deltas
+
+### Added
+- **"Current File Data" is now a Health dashboard.** It shows the file's key metrics and, as you
+  work through issues, how each has moved **since you opened the file** (baseline → now):
+  **Size on disk** and **Linked libs** always; **Render RAM** once you've profiled and **VRAM**
+  once Analyze Memory/Disk has run; **Duplicate Materials / Meshes** and the **missing-texture /
+  broken-library / orphan** counts once a scan first surfaces a non-zero value — each then tracked
+  down to zero (e.g. "14 → 0 ✓"). The baseline resets when you open another file. Size on disk is
+  the current `.blend` + linked libraries + external (unpacked) images, computed instantly (no
+  scan). Raw RAM/VRAM byte counts are now stashed by the resource/profile operators for the deltas.
+
 ## [0.3.0] — Analyze re-sequenced into a 6-phase pipeline; Automated Cleanup removed
 
 A larger UX change than the 0.2.x stream (hence the minor bump), from a full flow review: the

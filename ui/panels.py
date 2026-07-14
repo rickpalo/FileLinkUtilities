@@ -1078,27 +1078,47 @@ class _SceneFeaturePanel:
 
 
 class FILELINK_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
-    """Phase 3a (2026-06-25) — the first of the 5 named top-level sections: the
-    instant, no-scan "what is this file" summary. Content unchanged from before
-    the split (just promoted to its own collapsible native sub-panel, per the
-    user's "all 5 sections must be collapsible" requirement) — expanding this
-    with face/vert/texture-size counts is its own deferred design question."""
+    """The Health dashboard (v0.3.x, project_flow_redesign) — was the instant
+    "what is this file" summary; now an adaptive metrics readout that shows
+    ``baseline → now`` deltas as the addon works through issues. Size-on-disk
+    and linked libraries show instantly; render RAM/VRAM appear once profiled/
+    scanned; duplicate-material/mesh and issue counts appear once their own
+    scan surfaces a non-zero value. Baseline is "since you opened the file"
+    (reset by the load_post handler); see ``ops.metrics``."""
 
     bl_label = "Current File Data"
     bl_idname = "FILELINK_PT_current_file_data"
     bl_order = 0
 
     def draw(self, context):
+        from ..ops import metrics
+
         layout = self.layout
+        wm = context.window_manager
         fname = bpy.path.basename(bpy.data.filepath) or "(unsaved)"
         layout.label(text=fname, icon="FILE_BLEND")  # version lives in the panel header
-        total, missing, absolute = _libraries_at_a_glance()
-        bits = [f"{total} linked librar{'y' if total == 1 else 'ies'}"]
-        if missing:
-            bits.append(f"{missing} missing")
-        if absolute:
-            bits.append(f"{absolute} absolute")
-        layout.label(text="   ·   ".join(bits), icon="LIBRARY_DATA_DIRECT")
+
+        col = layout.column(align=True)
+        for label, unit, base, cur in metrics.rows(wm):
+            row = col.row()
+            row.label(text=label)
+            val = row.row()
+            val.alignment = "RIGHT"
+            # Linked libs carries its missing/absolute breakdown inline.
+            detail = ""
+            if label == "Linked libs":
+                _t, miss, absol = metrics.library_stats()
+                extra = ([f"{miss} missing"] if miss else []) + \
+                        ([f"{absol} absolute"] if absol else [])
+                detail = f"  ({', '.join(extra)})" if extra else ""
+                val.alert = bool(miss)  # a missing library is a real problem
+            if cur is None:
+                val.label(text="—")
+            elif base is None or base == cur:
+                val.label(text=metrics.fmt(unit, cur) + detail)
+            else:
+                tail = "  ✓" if cur == 0 else f"  ({metrics.delta_str(unit, base, cur)})"
+                val.label(text=f"{metrics.fmt(unit, base)} → {metrics.fmt(unit, cur)}{tail}")
 
         # Scan Dependencies / Check Link Chain reads the .blend FROM DISK (offline
         # BAT), so it reflects the last SAVED state — unsaved relinks/fixes won't
@@ -2163,25 +2183,6 @@ class FILELINK_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
                 wm, "filelink_examine_picker_active",
                 rows=min(12, max(3, n)),
             )
-
-
-def _libraries_at_a_glance():
-    """Instant linked-library health from ``bpy.data`` (in memory, no scan):
-    (total, missing, absolute) over ``bpy.data.libraries``."""
-    total = missing = absolute = 0
-    for lib in bpy.data.libraries:
-        fp = lib.filepath
-        if not fp:
-            continue
-        total += 1
-        if not fp.startswith("//"):
-            absolute += 1
-        try:
-            if not pathlib.Path(bpy.path.abspath(fp)).is_file():
-                missing += 1
-        except Exception:
-            missing += 1
-    return total, missing, absolute
 
 
 def _draw_progress(layout, wm):

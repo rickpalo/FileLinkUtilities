@@ -116,6 +116,11 @@ class FILELINK_OT_analyze_resources(ModalProgressMixin, bpy.types.Operator):
         # Analyze button can show the same line inline after the popup fades
         # (negative-output principle — a result must stay visible).
         setattr(wm, RESOURCE_TOTALS, msg)
+        # Raw bytes for the Health dashboard (decimal strings — IntProperty is
+        # 32-bit and overflows past ~2 GB). VRAM is the only VRAM figure we
+        # have (Blender doesn't expose real VRAM), so the dashboard reads it here.
+        wm.filelink_resource_ram_b = str(totals["ram"])
+        wm.filelink_resource_vram_b = str(totals["vram"])
         log.info("F5 %s", msg)
         self.report({"INFO"}, msg + " (estimates; see Resource panel)")
 
@@ -176,6 +181,8 @@ class FILELINK_OT_profile_render(bpy.types.Operator):
         peak = peak_process_ram_bytes()
         text = human_bytes(peak) if peak else "unavailable"
         context.window_manager.filelink_profiled_ram = text
+        # Raw bytes for the Health dashboard's Render RAM delta (decimal string).
+        context.window_manager.filelink_profiled_ram_b = str(peak) if peak else ""
         log.info("F5 profile render: peak process RAM = %s", text)
         self.report({"INFO"}, f"Render done — real peak RAM: {text} (whole process)")
         return {"FINISHED"}

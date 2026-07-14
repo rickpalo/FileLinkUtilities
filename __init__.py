@@ -25,13 +25,22 @@ def _debug_update(self, context):
 
 
 def _debug_log_on_load(_dummy):
-    """On opening a file with the debug toggle on, start a FRESH log for it.
+    """On opening a file: reset the Health dashboard baseline (so deltas read
+    "since you opened THIS file"), and — with the debug toggle on — start a
+    FRESH log for it.
 
     The Scene-prop ``update`` callback doesn't fire on load, so without this an
     enabled toggle wouldn't reactivate after opening a file."""
     import bpy
 
     from .log import set_debug_enabled
+
+    wm = bpy.context.window_manager
+    if wm is not None:
+        # Clear only the baseline; the raw scan-result props reset on their own
+        # next scan, and stay meaningful (as the new file's first reading) until
+        # then. An empty baseline re-captures lazily on the next dashboard draw.
+        wm.filelink_metrics_baseline = ""
 
     scene = bpy.context.scene
     if scene and getattr(scene, "filelink_debug_log", False):
@@ -129,6 +138,15 @@ def register() -> None:
     bpy.types.WindowManager.filelink_resource_totals = bpy.props.StringProperty(default="")
     # Real peak RAM from the last Profile Render (human-readable string).
     bpy.types.WindowManager.filelink_profiled_ram = bpy.props.StringProperty(default="")
+    # Raw byte counts for the Health dashboard's deltas (v0.3.x) — decimal
+    # STRINGS, not IntProperty, since Blender's IntProperty is 32-bit and
+    # overflows past ~2 GB. Empty = never scanned/profiled (metric stays hidden).
+    bpy.types.WindowManager.filelink_profiled_ram_b = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_resource_ram_b = bpy.props.StringProperty(default="")
+    bpy.types.WindowManager.filelink_resource_vram_b = bpy.props.StringProperty(default="")
+    # Health dashboard baseline (JSON metric_key -> value) — the "since you
+    # opened the file" reference for deltas; cleared by the load_post handler.
+    bpy.types.WindowManager.filelink_metrics_baseline = bpy.props.StringProperty(default="")
     # docs/TODO.md #15 (2026-06-27): the last scan's raw per-datablock items
     # (JSON), cached so clicking a column header can cheaply re-sort/re-group
     # without re-walking bpy.data; the chosen sort column persists too.
@@ -446,7 +464,9 @@ def unregister() -> None:
                 "filelink_select_outcomes",
                 "filelink_active_report", "filelink_resource_tree",
                 "filelink_resource_expanded", "filelink_resource_totals",
-                "filelink_profiled_ram",
+                "filelink_profiled_ram", "filelink_profiled_ram_b",
+                "filelink_resource_ram_b", "filelink_resource_vram_b",
+                "filelink_metrics_baseline",
                 "filelink_resource_items_json", "filelink_resource_sort",
                 "filelink_report_rows", "filelink_report_index",
                 "filelink_resource_rows", "filelink_resource_index",
