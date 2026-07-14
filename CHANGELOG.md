@@ -8,6 +8,17 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.5] — Progressive disclosure: passed checks fold into a per-phase tally
+
+### Added
+- **Checks that run and find nothing now collapse into a per-phase "N passed" line** (in Connect,
+  Restructure, and Purge), so the Analyze panel shrinks to just what needs attention — a healthy
+  file is mostly phase headers and short "passed" tallies. Click a tally to expand the passed
+  checks (and their buttons) back into place. "Clean" is decided from each check's real count,
+  never a text match, so a check with findings can never be hidden by mistake. The primary trigger
+  buttons (Analyze All, Find All Missing, Make Local, Audit, Check Materials, the Find Duplicates
+  group, Analyze Memory/Disk) always stay visible.
+
 ## [0.3.4] — Crash fix (deep/cyclic fingerprint); Size on disk local/linked split
 
 ### Fixed

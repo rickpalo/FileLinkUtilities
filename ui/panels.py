@@ -1919,6 +1919,77 @@ def _draw_advisory_note(layout, text: str, *, show: bool) -> None:
     row.label(text=text, icon="INFO")
 
 
+def _check_status(wm, key: str) -> str:
+    """``not_run`` | ``clean`` | ``findings`` for the checks that take part in
+    progressive disclosure (v0.3.x). Decided from each check's real COUNT, never
+    a text match, so a check with findings can't be mistaken for clean and
+    hidden. Keys not handled here return ``findings`` (i.e. always shown)."""
+    if key == "check_link_chain":
+        if not _feature_has_run(wm, "f7"):
+            return "not_run"
+        _hr, nodes = _feature_tree_nodes(wm, "f7")
+        clean = _f7_dependency_summary(nodes) == "✓ no dependency issues found"
+        return "clean" if clean else "findings"
+    if key == "find_broken_links":
+        if not _feature_has_run(wm, "f7links"):
+            return "not_run"
+        return "clean" if not len(wm.filelink_broken_libs) else "findings"
+    if key == "find_reconnectable":
+        if not wm.filelink_missing_scanned:
+            return "not_run"
+        return "clean" if not len(wm.filelink_missing_blocks) else "findings"
+    if key == "find_missing_textures":
+        if not wm.filelink_tex_scanned:
+            return "not_run"
+        clean = not len(wm.filelink_broken_imgs) and not len(wm.filelink_linked_missing_imgs)
+        return "clean" if clean else "findings"
+    if key == "check_library_paths":
+        if not _feature_has_run(wm, "f7fix"):
+            return "not_run"
+        return "clean" if _path_normalization_clean(wm) else "findings"
+    if key == "find_flattenable_chains":
+        if not wm.filelink_flatten_plans_json:
+            return "not_run"
+        return "clean" if not len(wm.filelink_flatten_candidates) else "findings"
+    if key == "check_deform":
+        if not wm.filelink_deform_scanned:
+            return "not_run"
+        return "clean" if not len(wm.filelink_deform_rows) else "findings"
+    if key == "find_orphans":
+        if not _feature_has_run(wm, "f4"):
+            return "not_run"
+        return "clean" if not len(wm.filelink_orphan_rows) else "findings"
+    return "findings"
+
+
+def _gate(wm, key: str, *, show_passed: bool, counter: list) -> bool:
+    """Whether to DRAW this check now (v0.3.x progressive disclosure). A clean
+    check is counted toward its phase's passed-tally and hidden unless that
+    tally is expanded; a not-run or findings check always draws."""
+    if _check_status(wm, key) == "clean":
+        counter[0] += 1
+        return show_passed
+    return True
+
+
+def _draw_phase_tally(layout, wm, phase: str, n: int, expanded: set) -> None:
+    """A phase's "N passed" footer toggle — collapsed by default, so clean
+    checks fold out of sight (the UI shrinks to what needs attention);
+    expanding re-draws them in their normal place. One per phase, per the
+    user's "one tally per phase" choice (2026-07-14)."""
+    if not n:
+        return
+    key = f"phasepass:{phase}"
+    is_open = key in expanded
+    row = layout.row(align=True)
+    op = row.operator("filelink.row_toggle", text="",
+                      icon="TRIA_DOWN" if is_open else "TRIA_RIGHT", emboss=False)
+    op.key, op.prop = key, "filelink_detail_expanded"
+    sub = row.row()
+    sub.active = False
+    sub.label(text=f"{n} check{'s' if n != 1 else ''} passed", icon="CHECKMARK")
+
+
 class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
     """Phase 3a (2026-06-25) — the second named section: every "look for
     problems in the CURRENT file" trigger, in one place, plus an Analyze All
@@ -1953,55 +2024,72 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
 
         layout.operator("filelink.analyze_all", icon="PLAY")
 
+        # Progressive disclosure (v0.3.x): a check that has run and found NOTHING
+        # folds into its phase's "N passed" tally (collapsed by default), so the
+        # panel shrinks to what actually needs attention. `_gate` decides per
+        # check; the primary trigger buttons (Find All Missing, Make Local,
+        # Audit, Check Materials, the Deduplicate group, Memory/Disk) always show.
+        expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
+
         # ---- Phase B · Connect — resolve dangling references first ----
         _draw_phase_header(layout, "Connect", "Fix missing / broken references first",
                            "LIBRARY_DATA_BROKEN")
-        _analyze_row(layout, wm, "check_link_chain", "filelink.scan_dependencies",
-                     "Check Link Chain", "VIEWZOOM", has_run=_feature_has_run(wm, "f7"))
-        _draw_report_detail(layout, wm, "f7")
+        clean = [0]
+        show = "phasepass:connect" in expanded
+        if _gate(wm, "check_link_chain", show_passed=show, counter=clean):
+            _analyze_row(layout, wm, "check_link_chain", "filelink.scan_dependencies",
+                         "Check Link Chain", "VIEWZOOM", has_run=_feature_has_run(wm, "f7"))
+            _draw_report_detail(layout, wm, "f7")
         # The meta-button that fires all three missing-scans below at once —
         # now including Missing Textures (2026-07-14; it used to skip them).
         _analyze_row(layout, wm, "", "filelink.scan_all_missing",
                      "Find All Missing", "VIEWZOOM", _all_missing_summary(wm))
-        _analyze_row(layout, wm, "find_broken_links", "filelink.scan_broken_links",
-                     "Find Broken Library Links", "LIBRARY_DATA_BROKEN",
-                     _broken_links_headline(wm),
-                     draw_action=(lambda r: r.operator(
-                         "filelink.relink_selected", text="Relink Selected", icon="FILE_REFRESH"))
-                     if len(wm.filelink_broken_libs) else None)
-        _draw_broken_links(layout, wm)
-        _analyze_row(layout, wm, "find_reconnectable", "filelink.scan_reconnect_targets",
-                     "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
-                     _reconnect_headline(wm),
-                     draw_action=(lambda r: r.operator(
-                         "filelink.reconnect_selected", text="Reconnect Selected", icon="LINKED"))
-                     if wm.filelink_missing_scanned and len(wm.filelink_missing_blocks) else None)
-        _draw_reconnect(layout, wm)
-        _analyze_row(layout, wm, "find_missing_textures", "filelink.scan_broken_textures",
-                     "Find Missing Textures", "IMAGE_DATA",
-                     _missing_textures_headline(wm, narrow))
-        _draw_missing_textures(layout, wm, narrow)
-        _analyze_row(layout, wm, "check_library_paths", "filelink.normalize_library_paths",
-                     "Check Library Paths", "FILE_REFRESH",
-                     _path_normalization_headline(wm),
-                     draw_action=_normalize_action_button
-                     if _feature_has_run(wm, "f7fix") and not _path_normalization_clean(wm)
-                     else None).apply = False
-        _draw_path_normalization(layout, wm)
+        if _gate(wm, "find_broken_links", show_passed=show, counter=clean):
+            _analyze_row(layout, wm, "find_broken_links", "filelink.scan_broken_links",
+                         "Find Broken Library Links", "LIBRARY_DATA_BROKEN",
+                         _broken_links_headline(wm),
+                         draw_action=(lambda r: r.operator(
+                             "filelink.relink_selected", text="Relink Selected", icon="FILE_REFRESH"))
+                         if len(wm.filelink_broken_libs) else None)
+            _draw_broken_links(layout, wm)
+        if _gate(wm, "find_reconnectable", show_passed=show, counter=clean):
+            _analyze_row(layout, wm, "find_reconnectable", "filelink.scan_reconnect_targets",
+                         "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
+                         _reconnect_headline(wm),
+                         draw_action=(lambda r: r.operator(
+                             "filelink.reconnect_selected", text="Reconnect Selected", icon="LINKED"))
+                         if wm.filelink_missing_scanned and len(wm.filelink_missing_blocks) else None)
+            _draw_reconnect(layout, wm)
+        if _gate(wm, "find_missing_textures", show_passed=show, counter=clean):
+            _analyze_row(layout, wm, "find_missing_textures", "filelink.scan_broken_textures",
+                         "Find Missing Textures", "IMAGE_DATA",
+                         _missing_textures_headline(wm, narrow))
+            _draw_missing_textures(layout, wm, narrow)
+        if _gate(wm, "check_library_paths", show_passed=show, counter=clean):
+            _analyze_row(layout, wm, "check_library_paths", "filelink.normalize_library_paths",
+                         "Check Library Paths", "FILE_REFRESH",
+                         _path_normalization_headline(wm),
+                         draw_action=_normalize_action_button
+                         if _feature_has_run(wm, "f7fix") and not _path_normalization_clean(wm)
+                         else None).apply = False
+            _draw_path_normalization(layout, wm)
+        _draw_phase_tally(layout, wm, "connect", clean[0], expanded)
 
         # ---- Phase C · Restructure — simplify the link graph ----
         _draw_phase_header(layout, "Restructure", "Simplify the link graph", "NODETREE")
+        clean = [0]
+        show = "phasepass:restructure" in expanded
         _analyze_row(layout, wm, "audit_file", "filelink.analyze_overrides",
                      "Audit This File", "LIBRARY_DATA_OVERRIDE", has_run=_feature_has_run(wm, "f7live"))
         _draw_report_detail(layout, wm, "f7live")
-        # Merged 2026-06-26 (docs/TODO.md #41) -- "Find Flattenable Link
-        # Chains" and "Find Flattenable Characters" were really one workflow
-        # wearing two buttons; one click now runs both.
-        _analyze_row(layout, wm, "find_flattenable_chains", "filelink.find_flattenable_links",
-                     "Find Flattenable Links", "LIBRARY_DATA_OVERRIDE",
-                     _flatten_candidates_summary(wm))
-        _draw_report_detail(layout, wm, "f7chain")
-        _draw_flatten_candidates(layout, wm)
+        if _gate(wm, "find_flattenable_chains", show_passed=show, counter=clean):
+            # Merged 2026-06-26 (docs/TODO.md #41): "Find Flattenable Link
+            # Chains" + "Find Flattenable Characters" run as one button.
+            _analyze_row(layout, wm, "find_flattenable_chains", "filelink.find_flattenable_links",
+                         "Find Flattenable Links", "LIBRARY_DATA_OVERRIDE",
+                         _flatten_candidates_summary(wm))
+            _draw_report_detail(layout, wm, "f7chain")
+            _draw_flatten_candidates(layout, wm)
         _analyze_row(layout, wm, "", "filelink.make_local",
                      "Make Local", "LIBRARY_DATA_DIRECT",
                      _makelocal_headline(wm), has_run=_feature_has_run(wm, "f2")).apply = False
@@ -2015,13 +2103,15 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
                             "the Shading workspace; there's no safe bulk fix.",
                             show=_feature_has_run(wm, "matdiag"))
         _draw_report_detail(layout, wm, "matdiag")
-        _analyze_row(layout, wm, "", "filelink.scan_deform_issues",
-                     "Check Armature Deformation", "MOD_ARMATURE",
-                     has_run=wm.filelink_deform_scanned)
-        _draw_advisory_note(layout, "Detection only — reweight flagged vertices to a deform "
-                            "bone in Weight Paint; the ticks are for a future fix pass.",
-                            show=wm.filelink_deform_scanned and len(wm.filelink_deform_rows))
-        _draw_deform_check(layout, wm)
+        if _gate(wm, "check_deform", show_passed=show, counter=clean):
+            _analyze_row(layout, wm, "", "filelink.scan_deform_issues",
+                         "Check Armature Deformation", "MOD_ARMATURE",
+                         has_run=wm.filelink_deform_scanned)
+            _draw_advisory_note(layout, "Detection only — reweight flagged vertices to a deform "
+                                "bone in Weight Paint; the ticks are for a future fix pass.",
+                                show=wm.filelink_deform_scanned and len(wm.filelink_deform_rows))
+            _draw_deform_check(layout, wm)
+        _draw_phase_tally(layout, wm, "restructure", clean[0], expanded)
 
         # ---- Phase D · Deduplicate — shrink redundancy ----
         _draw_phase_header(layout, "Deduplicate", "Shrink redundant data", "DUPLICATE")
@@ -2029,9 +2119,13 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
 
         # ---- Phase E · Purge — sweep leftovers once everything else is settled ----
         _draw_phase_header(layout, "Purge", "Remove unreferenced leftovers", "TRASH")
-        _analyze_row(layout, wm, "find_orphans", "filelink.scan_orphans",
-                     "Find Orphans", "NONE", _orphans_headline(wm)).purge_orphans = False
-        _draw_orphans(layout, wm)
+        clean = [0]
+        show = "phasepass:purge" in expanded
+        if _gate(wm, "find_orphans", show_passed=show, counter=clean):
+            _analyze_row(layout, wm, "find_orphans", "filelink.scan_orphans",
+                         "Find Orphans", "NONE", _orphans_headline(wm)).purge_orphans = False
+            _draw_orphans(layout, wm)
+        _draw_phase_tally(layout, wm, "purge", clean[0], expanded)
 
         # ---- Phase F · Measure — footprint payoff (not a problem check) ----
         _draw_phase_header(layout, "Measure", "Footprint after cleanup", "DISK_DRIVE")
