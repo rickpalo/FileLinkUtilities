@@ -2823,6 +2823,24 @@ _RECONNECT_CONF = {
 }
 
 
+def _draw_tier_select(layout, collection: str) -> None:
+    """The reusable confidence bulk-select toolbar (v0.3.x) —
+    ``Select: High / High + Med / All / None`` over any WM collection whose
+    rows carry a ``confidence`` + ``selected`` (reconnect today; generalizes to
+    the texture/broken-link lists next). Ticks a whole tier at once via
+    ``filelink.select_by_confidence`` (core.confidence's shared ladder), so the
+    user grabs every safe match in one click without hand-ticking each — the
+    control that keeps the best-guess automation opt-in, per the flow redesign."""
+    from ..core.confidence import TIERS
+
+    row = layout.row(align=True)
+    row.label(text="Select:")
+    for tier, text in TIERS:
+        op = row.operator("filelink.select_by_confidence", text=text)
+        op.collection = collection
+        op.tier = tier
+
+
 def _draw_reconnect(layout, wm) -> None:
     """Batch C #2 — reconnect missing data-blocks' drill-down list. Rows group
     by their broken/renamed source LIBRARY (the natural unit — one library's
@@ -2842,6 +2860,10 @@ def _draw_reconnect(layout, wm) -> None:
     if not n:
         return
     box = layout.box().column(align=True)
+    # Tier bulk-select (v0.3.x) — only meaningful once some row has a graded
+    # match; before a source .blend is picked they're all "none".
+    if any(r.confidence not in ("none", "") for r in rows):
+        _draw_tier_select(box, "filelink_missing_blocks")
     box.template_list(
         "FILELINK_UL_reconnect_picker", "",
         wm, "filelink_reconnect_picker_rows",

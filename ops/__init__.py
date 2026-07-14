@@ -24,6 +24,7 @@ from .analyze_all import (
     FILELINK_OT_find_duplicates,
     FILELINK_OT_find_flattenable_links,
 )
+from .select_tier import FILELINK_OT_select_by_confidence
 from .relink import (
     FILELINK_OT_dup_lib_select,
     FILELINK_OT_make_selected_relative,
@@ -114,6 +115,7 @@ REGISTER_CLASSES = (
     FILELINK_OT_analyze_all,
     FILELINK_OT_find_duplicates,
     FILELINK_OT_find_flattenable_links,
+    FILELINK_OT_select_by_confidence,
     FILELINK_OT_scan_all_missing,
     FILELINK_OT_scan_broken_links,
     FILELINK_OT_relink_pick_file,

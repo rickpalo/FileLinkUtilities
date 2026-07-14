@@ -8,6 +8,17 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.3] — Confidence tier bulk-select toolbar
+
+### Added
+- **A "Select: High / High + Med / All / None" toolbar** on the Reconnectable Data-blocks list:
+  tick a whole confidence tier at once instead of hand-ticking each row. "High" grabs the
+  exact/near-exact matches, "High + Med" adds fuzzy ones, "All" includes weak guesses, "None"
+  clears. Built on a shared confidence ladder (`core.confidence`) so one control means the same
+  thing across every graded list (reconnect now; the texture/broken-link lists next), and one
+  generic operator (`filelink.select_by_confidence`) drives it. This is the "keep the automation
+  opt-in" control from the flow redesign — the safe matches are one click, not a hunt.
+
 ## [0.3.2] — Health dashboard: colored status dots + two-column layout
 
 ### Changed
