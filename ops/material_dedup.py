@@ -83,7 +83,7 @@ def _max_texture_res(mat) -> int:
 def _gather_steps(context):
     """Fingerprint every material, yielding ``(fraction, status)`` every
     ``_FP_CHUNK``. Returns ``(items, id_to_mat)`` (via the generator's value)."""
-    from .extract import extract_material
+    from .extract import datablock_risk_reason, extract_material
     from ..core.fingerprint import fingerprint_material
 
     prefs = get_prefs(context)
@@ -95,12 +95,18 @@ def _gather_steps(context):
     for i, mat in enumerate(mats, 1):
         mid = _material_id(mat)
         id_to_mat[mid] = mat
-        # A missing-linked-data placeholder material (ID.is_missing) has no real
-        # node-tree data allocated — walking it is a native access violation, not
-        # a catchable Python exception (same disease confirmed for meshes via
-        # crash4, 2026-06-25 -- see ops/instance_dedup.py). Skip the deep reads
-        # entirely rather than relying on try/except.
-        if getattr(mat, "is_missing", False):
+        # A missing-linked-data placeholder OR a Library Override material has
+        # no real node-tree data safely readable — walking it is a native
+        # access violation, not a catchable Python exception (same disease
+        # confirmed for meshes via crash4, 2026-06-25, see ops/instance_dedup.py,
+        # and already mitigated in Examine Library's _content_graph_match via
+        # this exact helper). Real crash, 2026-07-14 (PSM_Stage_v5.2.crash.txt):
+        # this used to check ONLY `mat.is_missing`, not `override_library` — a
+        # Library Override material's node tree walked straight into
+        # extract.py's `sock.links` access and took Blender down. Skip the
+        # deep reads entirely for EITHER risk, rather than relying on
+        # try/except (the access violation can't be caught).
+        if datablock_risk_reason(mat):
             fp, max_res = None, 0
         else:
             try:

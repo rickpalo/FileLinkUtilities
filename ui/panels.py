@@ -156,6 +156,17 @@ class FILELINK_UL_tree(bpy.types.UIList):
         if item.ram or item.vram or item.disk:
             for col, val in zip(_resource_columns(row), (item.ram, item.vram, item.disk)):
                 col.label(text=val)
+        elif item.key == "matdiag:empty_slot" and item.detail:
+            # User request, 2026-07-14: a direct fix action right on Check
+            # Materials' "Empty material slots" category row — the only
+            # category here with a genuinely safe bulk-delete (an empty slot
+            # has no content to lose), unlike shader-type/node-link which stay
+            # informational-only by the user's own earlier design call.
+            sub = row.row(align=True)
+            sub.alignment = "RIGHT"
+            sub.label(text=item.detail)
+            sub.operator("filelink.delete_empty_material_slots",
+                        text="Delete Empty Material Slots")
         elif item.detail:
             sub = row.row()
             sub.alignment = "RIGHT"
@@ -402,6 +413,10 @@ class FILELINK_PG_dup_family(bpy.types.PropertyGroup):
     material_override: bpy.props.PointerProperty(
         type=bpy.types.Material, update=_dup_override_updated)  # type: ignore[valid-type]
     removable: bpy.props.IntProperty()  # type: ignore[valid-type]
+    # Redundant members that are LINKED (2026-07-14) — reported, never merged;
+    # kept separate from `removable` so that number stays an honest count of
+    # what Merge Selected will actually remove.
+    linked_count: bpy.props.IntProperty()  # type: ignore[valid-type]
 
 
 # Keeps a strong reference to each row's reconnect-target enum items list, the
@@ -874,7 +889,9 @@ class FILELINK_UL_dup_tex_picker(bpy.types.UIList):
         bad = is_mismatch(real)
         name = row.row()
         name.alert = bad
-        name.label(text=f"{real.name}  (−{real.removable})", icon="ERROR" if bad else "IMAGE_DATA")
+        linked_suffix = f", +{real.linked_count} linked" if real.linked_count else ""
+        name.label(text=f"{real.name}  ({real.removable}{linked_suffix})",
+                  icon="ERROR" if bad else "IMAGE_DATA")
         # Alternate material picker (eyedropper): re-home a mis-attributed family
         # under the correct material. Shown when it looks wrong (or was already
         # overridden). Organizational only — doesn't rewire nodes.
@@ -1093,7 +1110,7 @@ class FILELINK_PT_automated_cleanup(_SceneFeaturePanel, bpy.types.Panel):
         if scene.filelink_cleanup_include_makelocal:
             _draw_makelocal_picker(layout, wm)
         if scene.filelink_cleanup_include_materials:
-            _draw_material_dups(layout, wm)
+            _draw_material_dups(layout, wm, key_suffix=":auto")
         if scene.filelink_cleanup_include_geometry:
             _draw_geo_dups(layout, wm)
         if scene.filelink_cleanup_include_orphans:
@@ -1462,6 +1479,7 @@ def _duplicate_textures_headline(wm, narrow: bool) -> str:
     families = wm.filelink_dup_families
     mats = len({row.material or "(no material)" for row in families})
     removable = wm.filelink_dup_removable
+    linked = wm.filelink_dup_linked
     conflicts = wm.filelink_dup_conflicts
     if not scanned:
         return ""
@@ -1470,6 +1488,8 @@ def _duplicate_textures_headline(wm, narrow: bool) -> str:
     if narrow:
         return f"Image Content — {mats} mat / {removable} tex"
     bits = [f"{mats} material(s)", f"{removable} texture(s) redundant"]
+    if linked:
+        bits.append(f"{linked} linked (stay in library)")
     if conflicts:
         bits.append(f"{conflicts} kept separate")
     return "Image Content — " + ", ".join(bits)
@@ -1482,6 +1502,11 @@ def _duplicates_has_run(wm) -> bool:
                 or _feature_has_run(wm, "geo") or wm.filelink_dup_scanned)
 
 
+def _duplicates_scanned_count(wm) -> int:
+    return sum([bool(wm.filelink_datablock_scanned), bool(wm.filelink_mat_scanned),
+                _feature_has_run(wm, "geo"), bool(wm.filelink_dup_scanned)])
+
+
 def _duplicates_overview_summary(wm) -> str:
     """"Find Duplicates" collapsed-header summary (docs/TODO.md item 46j,
     2026-07-04) — how many of the 4 folded-in scans have run, not each one's
@@ -1489,9 +1514,22 @@ def _duplicates_overview_summary(wm) -> str:
     once this section is expanded)."""
     if not _duplicates_has_run(wm):
         return "Find Duplicates"
-    scanned = sum([bool(wm.filelink_datablock_scanned), bool(wm.filelink_mat_scanned),
-                   _feature_has_run(wm, "geo"), bool(wm.filelink_dup_scanned)])
-    return f"Find Duplicates — {scanned}/4 scan(s) run"
+    return f"Find Duplicates — {_duplicates_scanned_count(wm)}/4 scan(s) run"
+
+
+def _duplicates_status_icon(wm) -> str:
+    """Tri-state status icon for the "Find Duplicates" header (user report,
+    2026-07-14: this section was the only collapsible group missing the
+    not-run/done icon its Analyze-row siblings all show) — RADIOBUT_OFF (none
+    of the 4 sub-scans have run), CHECKMARK (all 4 have), or RADIOBUT_ON as
+    the "some but not all" middle state (a 2-state icon can't represent a
+    group of independently-runnable sub-scans)."""
+    scanned = _duplicates_scanned_count(wm)
+    if scanned <= 0:
+        return "RADIOBUT_OFF"
+    if scanned >= 4:
+        return "CHECKMARK"
+    return "RADIOBUT_ON"
 
 
 def _draw_duplicates(layout, wm, narrow: bool) -> None:
@@ -1513,22 +1551,33 @@ def _draw_duplicates(layout, wm, narrow: bool) -> None:
     _draw_group_header(
         outer, key=key, prop="filelink_detail_expanded", is_exp=is_open,
         label=_duplicates_overview_summary(wm), icon="LIBRARY_DATA_OVERRIDE",
+        status_icon=_duplicates_status_icon(wm),
         action=lambda r: r.operator("filelink.find_duplicates",
                                     text="Find All Duplicates", icon="PLAY"))
     if not is_open:
         return
     col = outer.column(align=True)
-    col.operator("filelink.scan_datablock_dups",
-                 text="Find Duplicate Data-blocks", icon="LIBRARY_DATA_OVERRIDE")
+
+    def _child_button(opname: str, step_key: str, text: str, icon: str, has_run: bool):
+        crow = col.row(align=True)
+        crow.label(text="", icon=_analyze_step_status_icon(wm, step_key, has_run))
+        crow.operator(opname, text=text, icon=icon)
+
+    _child_button("filelink.scan_datablock_dups", "find_duplicate_datablocks",
+                  "Find Duplicate Data-blocks", "LIBRARY_DATA_OVERRIDE",
+                  bool(wm.filelink_datablock_scanned))
     _draw_datablock_dups(col, wm)
     col.separator()
-    col.operator("filelink.material_dedup", text="Find Duplicate Materials", icon="MATERIAL")
+    _child_button("filelink.material_dedup", "find_duplicate_materials",
+                  "Find Duplicate Materials", "MATERIAL", bool(wm.filelink_mat_scanned))
     _draw_material_dups(col, wm)
     col.separator()
-    col.operator("filelink.instance_geometry", text="Find Duplicate Geometry", icon="MESH_DATA")
+    _child_button("filelink.instance_geometry", "find_duplicate_geometry",
+                  "Find Duplicate Geometry", "MESH_DATA", _feature_has_run(wm, "geo"))
     _draw_geo_dups(col, wm)
     col.separator()
-    col.operator("filelink.scan_content_dups", text="Find Duplicate Textures", icon="IMAGE_DATA")
+    _child_button("filelink.scan_content_dups", "find_duplicate_content",
+                  "Find Duplicate Textures", "IMAGE_DATA", bool(wm.filelink_dup_scanned))
     _draw_duplicate_textures(col, wm, narrow)
 
 
@@ -2093,7 +2142,7 @@ class FILELINK_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         scanned = wm.filelink_examine_scanned
 
         box = layout.box().column(align=True)
-        box.label(text="Examine Library", icon="LIBRARY_DATA_DIRECT")
+        box.label(text="Retarget Library", icon="LIBRARY_DATA_DIRECT")
         box.label(text="Retarget everything a library provides to your local file or "
                   "another library (e.g. to break a circular reference).", icon="INFO")
         pick = box.row(align=True)
@@ -2231,7 +2280,8 @@ class FILELINK_PT_scene_deps(bpy.types.Panel):
 
 
 def _draw_group_header(layout, *, key: str, prop: str, is_exp: bool, label: str, icon: str,
-                       action=None, alert: bool = False, indent_factor: float = 0.0):
+                       action=None, alert: bool = False, indent_factor: float = 0.0,
+                       status_icon: str = ""):
     """One collapsible group-header row: expand/collapse triangle + icon +
     label [+ an optional trailing action]. Extracted (docs/TODO.md Group 12
     Phase 1, 2026-06-27) from the ~10 sections that each hand-built the same
@@ -2247,6 +2297,13 @@ def _draw_group_header(layout, *, key: str, prop: str, is_exp: bool, label: str,
     Blender's alert/red styling, for sections that flag a per-group problem
     (e.g. Duplicate Textures' material-mismatch warning).
 
+    ``status_icon``, when given, draws a not-run/done (or, for a group with
+    several independent sub-scans, a "some but not all" partial) indicator to
+    the LEFT of the expand triangle — matching every Analyze-row section's own
+    status icon (``_analyze_step_status_icon``). User report, 2026-07-14: "Find
+    Duplicates" was the one collapsible-group section missing this, unlike its
+    siblings (Check Link Chain, Audit This File, ...).
+
     Deliberately NOT used by Flatten v2's ``_draw_rig_group`` — that one's
     shape genuinely differs (a SECOND toggle for group-level select state,
     indent, a checkmark-when-done swap) and is the planned Phase 2 prototype
@@ -2254,6 +2311,8 @@ def _draw_group_header(layout, *, key: str, prop: str, is_exp: bool, label: str,
     row = layout.row(align=True)
     if indent_factor:
         row.separator(factor=indent_factor)
+    if status_icon:
+        row.label(text="", icon=status_icon)
     tog = row.operator("filelink.row_toggle", text="",
                        icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
     tog.key, tog.prop = key, prop
@@ -2320,7 +2379,7 @@ def _draw_datablock_dups(layout, wm) -> None:
         removable_here = sum(r.removable for r in members)
         is_exp = kind in expanded
         _draw_group_header(layout, key=kind, prop="filelink_datablock_expanded", is_exp=is_exp,
-                           label=f"{kind}  ({len(members)} family, −{removable_here})",
+                           label=f"{kind}  ({len(members)} family, {removable_here})",
                            icon="LIBRARY_DATA_OVERRIDE")
         if not is_exp:
             continue
@@ -2329,7 +2388,7 @@ def _draw_datablock_dups(layout, wm) -> None:
             frow.separator(factor=2.0)
             frow.prop(row, "selected", text="")
             base = row.name.split(":", 1)[-1]
-            frow.label(text=f"{base}  (−{row.removable})", icon="LIBRARY_DATA_OVERRIDE")
+            frow.label(text=f"{base}  ({row.removable})", icon="LIBRARY_DATA_OVERRIDE")
             keep = frow.row()
             keep.alignment = "RIGHT"
             keep.label(text="keep", icon="PINNED")
@@ -2441,19 +2500,38 @@ def _material_dups_headline(wm) -> str:
     return "Materials — " + ", ".join(bits)
 
 
-def _draw_material_dups(layout, wm) -> None:
+def _draw_material_dups(layout, wm, key_suffix: str = "") -> None:
     """Reformatted Find Duplicate Materials — keeper-dropdown + Merge Selected,
     the same actionable shape as Duplicate Data-blocks/Textures (user
     feedback, 2026-06-25: "does not allow me to do anything with the
     information"). Flat list, no kind-grouping needed (every row is already
     one fingerprint-identical material group). One section of the shared
-    "Find Duplicates" results area (docs/TODO.md #16, 2026-06-27)."""
+    "Find Duplicates" results area (docs/TODO.md #16, 2026-06-27).
+
+    ``key_suffix`` namespaces the collapse toggle so Automated Cleanup's OWN
+    occurrence of this same list (it deliberately reuses this exact function,
+    see ``FILELINK_PT_automated_cleanup``'s docstring) can default collapsed
+    independently of the standalone Find Duplicate Materials section — user
+    request, 2026-07-14: "I'm okay using the same results, but the automated
+    results section should default to collapsed." The underlying DATA
+    (``wm.filelink_mat_families``, checkboxes, keeper picks) still stays one
+    shared collection either way — only the expand/collapse state is split."""
     groups = wm.filelink_mat_families
     if not wm.filelink_mat_scanned:
         return
     conflicts = wm.filelink_mat_conflicts
-    layout.label(text=_material_dups_headline(wm), icon="MATERIAL")
     if not (len(groups) or conflicts):
+        layout.label(text=_material_dups_headline(wm), icon="MATERIAL")
+        return
+    # Collapsible (user report, 2026-07-14: this summary row used to be a bare
+    # label with no way to hide the group list below it, unlike every other
+    # group-header row in this file).
+    key = f"matdups:groups{key_suffix}"
+    expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
+    is_exp = key in expanded
+    _draw_group_header(layout, key=key, prop="filelink_detail_expanded", is_exp=is_exp,
+                       label=_material_dups_headline(wm), icon="MATERIAL")
+    if not is_exp:
         return
     if len(groups):
         layout.operator("filelink.merge_material_selected",
@@ -2462,7 +2540,7 @@ def _draw_material_dups(layout, wm) -> None:
             frow = layout.row(align=True)
             frow.prop(row, "selected", text="")
             label = row.name.split(" [", 1)[0]  # drop the "[library]" qualifier for display
-            frow.label(text=f"{label}  (−{row.removable})", icon="MATERIAL")
+            frow.label(text=f"{label}  ({row.removable})", icon="MATERIAL")
             keep = frow.row()
             keep.alignment = "RIGHT"
             keep.label(text="keep", icon="PINNED")
@@ -2515,7 +2593,7 @@ def _draw_geo_dups(layout, wm) -> None:
         for row in groups:
             frow = layout.row(align=True)
             frow.prop(row, "selected", text="")
-            frow.label(text=f"{row.name}  (−{row.removable})", icon="MESH_DATA")
+            frow.label(text=f"{row.name}  ({row.removable})", icon="MESH_DATA")
 
     conflict_lines = [ln for ln in wm.filelink_geo_conflicts_text.split("\n") if ln]
     _draw_kept_separate(layout, wm, "dupgeo:conflicts", conflict_lines)

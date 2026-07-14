@@ -29,7 +29,7 @@ def _mesh_id(me) -> str:
 def _gather_steps(context):
     """Fingerprint every mesh, yielding ``(fraction, status)`` every ``_FP_CHUNK``.
     Returns ``(items, id_to_db)`` (via the generator's value)."""
-    from .extract import extract_mesh
+    from .extract import datablock_risk_reason, extract_mesh
     from ..core.fingerprint import fingerprint_mesh
 
     meshes = list(bpy.data.meshes)
@@ -38,13 +38,20 @@ def _gather_steps(context):
     for i, me in enumerate(meshes, 1):
         mid = _mesh_id(me)
         id_to_db[mid] = me
-        # A missing-linked-data placeholder mesh (ID.is_missing) has no real
-        # vertex/polygon arrays allocated — reading them is a native access
-        # violation, not a catchable Python exception (confirmed via crash4,
-        # 2026-06-25: EXCEPTION_ACCESS_VIOLATION inside extract_mesh while
-        # walking bpy.data.meshes during Analyze All). Skip before extracting,
-        # same as every other generic bpy.data walk in this project already does.
-        if getattr(me, "is_missing", False):
+        # A missing-linked-data placeholder OR a Library Override mesh has no
+        # real vertex/polygon arrays safely readable — reading them is a
+        # native access violation, not a catchable Python exception (confirmed
+        # via crash4, 2026-06-25: EXCEPTION_ACCESS_VIOLATION inside
+        # extract_mesh while walking bpy.data.meshes during Analyze All).
+        # Fixed 2026-07-14: this used to check ONLY `me.is_missing`, the same
+        # narrow gap that just crashed F3 material dedup on a Library Override
+        # MATERIAL (PSM_Stage_v5.2.crash.txt) — extract.datablock_risk_reason's
+        # own docstring already documents meshes as being at risk here too
+        # ("a mesh datablock can itself be missing or an override"), so this
+        # file's own guard was simply never updated to match. Skip before
+        # extracting, same as every other generic bpy.data walk in this
+        # project already does via the shared helper.
+        if datablock_risk_reason(me):
             fp = None
         else:
             try:

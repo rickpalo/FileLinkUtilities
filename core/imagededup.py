@@ -3,11 +3,15 @@
 The image analogue of F3 material dedup: the same image imported more than once
 (under the same name — ``Leather``, ``Leather.001`` — or under a totally
 different one across folders) wastes memory as content-identical datablocks.
-This module groups LOCAL images by a **content fingerprint the operator
-supplies** (dimensions + a file/packed hash) regardless of name; any group of
-2+ identical-content datablocks is offered for LOSSLESS merge. This is the
-SAFETY RULE: content identity is verified before any merge — name is never
-trusted alone.
+This module groups images (local AND linked, 2026-07-14 — see ``ImgInfo.linked``)
+by a **content fingerprint the operator supplies** (dimensions + a file/packed
+hash) regardless of name; any group of 2+ identical-content datablocks is
+reported. This is the SAFETY RULE: content identity is verified before any
+merge — name is never trusted alone. Only a LOCAL member of a group can ever
+actually be merged away (removed) — a linked one stays in its own library, same
+rule F3 material dedup already applies; it's still worth REPORTING a linked
+duplicate even though this file can't remove it, so the user knows the
+cross-library overlap exists at all.
 
 (History: an earlier, narrower ``.NNN``-name-family-only scan, "Find .NNN",
 was removed 2026-06-24 — confirmed redundant, since this content-based scan
@@ -33,12 +37,17 @@ from .report import Finding, Report
 
 @dataclass
 class ImgInfo:
-    """A local image as the operator extracts it: a content ``fingerprint``
-    (``""`` when it couldn't be verified — missing/unhashable) and its user count."""
+    """An image as the operator extracts it: a content ``fingerprint``
+    (``""`` when it couldn't be verified — missing/unhashable), its user count,
+    and whether it's linked from a library (2026-07-14: the scan used to be
+    local-only; ``linked`` lets callers report a cross-library duplicate
+    without ever merging it — only a LOCAL victim can be removed, see
+    ``ops.image_dedup.FILELINK_OT_merge_dup_selected``)."""
 
     name: str
     fingerprint: str = ""
     users: int = 0
+    linked: bool = False
 
 
 def plan_content_merges(images: list[ImgInfo]) -> list[MergePlan]:

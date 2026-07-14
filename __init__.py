@@ -263,6 +263,10 @@ def register() -> None:
     bpy.types.WindowManager.filelink_dup_scanned = bpy.props.BoolProperty(default=False)
     bpy.types.WindowManager.filelink_dup_expanded = bpy.props.StringProperty(default="")
     bpy.types.WindowManager.filelink_dup_removable = bpy.props.IntProperty(default=0)
+    # 2026-07-14: redundant members that are LINKED (scan now includes linked
+    # images) — reported, never merged; tracked apart from filelink_dup_removable
+    # so that count stays an honest "what Merge Selected will actually remove".
+    bpy.types.WindowManager.filelink_dup_linked = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.filelink_dup_conflicts = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.filelink_dup_conflicts_text = bpy.props.StringProperty(default="")
     # Group 12 Phase 3 item 2: virtualized picker rows for Duplicate Textures
@@ -488,7 +492,7 @@ def unregister() -> None:
                 "filelink_dup_scanned",
                 "filelink_duptex_picker_rows", "filelink_duptex_picker_active",
                 "filelink_dup_expanded",
-                "filelink_dup_removable", "filelink_dup_conflicts",
+                "filelink_dup_removable", "filelink_dup_linked", "filelink_dup_conflicts",
                 "filelink_dup_conflicts_text",
                 "filelink_dep_verdict", "filelink_dep_verdict_text",
                 "filelink_missing_blocks", "filelink_missing_index",

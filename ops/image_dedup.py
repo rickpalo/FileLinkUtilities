@@ -69,13 +69,21 @@ def _fingerprint(img) -> str:
 def _fill_families(context, plans, conflicts):
     """Fill ``filelink_dup_families`` + the summary counts from a content-merge
     plan. Each row carries its members (for the keeper dropdown) and a
-    representative material."""
+    representative material.
+
+    ``removable`` counts only LOCAL redundant members — the ones Merge Selected
+    will actually remove. A redundant member that's linked (2026-07-14: the
+    scan now includes linked images, see ``FILELINK_OT_scan_content_dups``)
+    is tracked separately in ``linked_count`` and never merged — it's reported
+    so the user knows the cross-library overlap exists, not touched, same rule
+    F3 material dedup applies to its own linked victims."""
     from .image_relink import _image_material_map
 
     wm = context.window_manager
     coll = wm.filelink_dup_families
     coll.clear()
     mat_map = _image_material_map()
+    linked_total = 0
     for p in plans:
         members = [p.canonical, *p.redundant]  # canonical first => default keeper
         row = coll.add()
@@ -85,9 +93,14 @@ def _fill_families(context, plans, conflicts):
         # repoint it. Setting a dynamic-enum value explicitly is fragile, so don't.
         row.selected = True
         row.material = next((mat_map[m] for m in members if m in mat_map), "")
-        row.removable = len(p.redundant)
+        linked_here = sum(1 for m in p.redundant
+                          if (img := bpy.data.images.get(m)) is not None and img.library is not None)
+        row.removable = len(p.redundant) - linked_here
+        row.linked_count = linked_here
+        linked_total += linked_here
     wm.filelink_dup_index = 0
-    wm.filelink_dup_removable = imagededup.removable_count(plans)
+    wm.filelink_dup_removable = imagededup.removable_count(plans) - linked_total
+    wm.filelink_dup_linked = linked_total
     wm.filelink_dup_conflicts = len(conflicts)
     wm.filelink_dup_conflicts_text = "\n".join(f"{c.base} — {c.reason}" for c in conflicts)
 
@@ -147,7 +160,7 @@ def rebuild_dup_tex_picker_rows(wm) -> None:
         suffix = f", ⚠{mism} mismatch" if mism else ""
         specs.append(picker_mod.GroupSpec(
             key=key,
-            label=f"{key}  ({len(indices)} family, −{removable_here}{suffix})",
+            label=f"{key}  ({len(indices)} family, {removable_here}{suffix})",
             icon="ERROR" if mism else "MATERIAL",
             members=[picker_mod.MemberRef(ref_index=i) for i in indices],
             has_action=True,
@@ -220,6 +233,7 @@ class FILELINK_OT_merge_dup_selected(bpy.types.Operator):
         wm = context.window_manager
         wm.filelink_dup_families.clear()
         wm.filelink_dup_removable = 0
+        wm.filelink_dup_linked = 0
         wm.filelink_dup_conflicts = 0
         wm.filelink_dup_conflicts_text = ""
         rebuild_dup_tex_picker_rows(wm)
@@ -428,14 +442,18 @@ class FILELINK_OT_scan_content_dups(ModalProgressMixin, bpy.types.Operator):
     def run_steps(self, context):
         from . import report_store
 
-        local = [img for img in bpy.data.images
-                 if img.library is None
-                 and (img.source in _FILE_SOURCES or img.packed_file is not None)]
-        total = len(local)
+        # 2026-07-14 (user report: a local 1K + linked 2K identical-content pair
+        # was invisible because this used to filter to `img.library is None`
+        # before hashing) — now scans EVERY image, local or linked; only the
+        # MERGE step (below) still only ever removes a local one, same rule F3
+        # material dedup already applies to its own linked victims.
+        candidates = [img for img in bpy.data.images
+                      if img.source in _FILE_SOURCES or img.packed_file is not None]
+        total = len(candidates)
         infos: list[ImgInfo] = []
-        for idx, img in enumerate(local):
+        for idx, img in enumerate(candidates):
             infos.append(ImgInfo(name=img.name, fingerprint=_fingerprint(img),
-                                 users=img.users))
+                                 users=img.users, linked=img.library is not None))
             # Reserve the last 5% for planning/report; hashing is the long part.
             yield (0.95 * (idx + 1) / max(total, 1),
                    f"Hashing textures by content… {idx + 1}/{total}")

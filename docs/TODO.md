@@ -1,5 +1,157 @@
 # File & Link Utilities — TODO / backlog
 
+## 🔭 2026-07-14 (session close — NEXT SESSION plan, user's own call): before touching this
+## backlog again, do a DEEP-DIVE review of the addon's overall workflow/activity flow — is
+## everything here still efficient and pertinent to what the addon actually needs to do? This
+## file has grown a lot of surface area session over session (Examine/Retarget Library, F3/F5/F6
+## dedup family, Check Materials, Reconnect, Flatten, Resource Usage, ...) and the user
+## explicitly wants a step back to assess the SHAPE of it, not just keep adding to it.
+## **Deliberately deferred until after that deep-dive**: whittling down/pruning this TODO list
+## itself — don't pre-emptively trim or reorganize entries before that review happens, per the
+## user's own explicit sequencing ("I'll save whittling down the TODO list until after that").
+
+## ⏳ 2026-07-14 (designed, NOT built — came out of the F3 crash investigation below): a new
+## "audit every Library Override" feature, most natural home is the existing "Audit This File" /
+## Overrides section (`ops/datablock_inspect.py`'s `FILELINK_OT_analyze_overrides` /
+## `core/datablock_graph.py`, feature key `f7live`) since it already reports override dependency
+## loops + shape-keys-on-an-override-mesh there.
+
+## **Motivation**: today's F3 crash (below) was caused by a Library Override MATERIAL — every
+## override in a file is inherent crash-surface for any tool that fingerprints/deep-reads
+## datablocks (the whole `datablock_risk_reason` disease class). The user wants a way to find
+## overrides that are pure DEAD WEIGHT (nothing actually customized) so they can be pruned,
+## shrinking that crash-surface, plus a way to see which SURVIVING overrides look structurally
+## risky.
+
+## **Two checks, both confirmed SAFE and already-templated live reads in this codebase (NOT the
+## risky deep node-tree/mesh path — this is override BOOKKEEPING metadata only)**:
+## 1. **No-op override** — `len(block.override_library.properties) == 0` means the user (or
+##    Blender) never actually overrode anything on this block; pure overhead + crash-surface for
+##    zero benefit. `ops/linkchain.py`'s `read_live_override_properties` already iterates
+##    `override_library.properties` live, proven safe — reuse that exact pattern.
+## 2. **Structurally risky** — reuse the TWO signals `core/datablock_graph.py` already computes
+##    (`override_loop`, `shape_key_override_risk`) rather than reinventing them.
+
+## **Coverage gap to fix while building this**: `analyze_overrides` today only walks a hardcoded
+## ~14-type `_COLLECTIONS` list (`ops/datablock_inspect.py` line ~21-27). A new audit should
+## instead reuse the fully generic `_iter_all_blocks()` (same file, line ~38) — already the
+## shared walk `_iter_missing_blocks()` uses for `is_missing` — filtered on
+## `getattr(block, "override_library", None) is not None`, so it catches an override on ANY
+## bpy.data type, not just the usual ~14.
+
+## **One real unknown — needs a live Blender Python-console check before design commitment, not
+## guessed at**: whether `IDOverrideLibrary` exposes an actual readable "needs resync" / broken-
+## hierarchy RNA flag, as opposed to just the log-message text Blender prints at file-load time
+## ("needing resync, isolated from hierarchy root"). Every "resync" reference anywhere in this
+## codebase today is that log text, never a property read — `dir(obj.override_library)` in a
+## live console is the next concrete step if this sub-feature is picked up. `hierarchy_root` IS
+## confirmed present/safe/already used live elsewhere (`ops/linkchain.py`), separate from the
+## unconfirmed resync-flag question.
+
+## ✅ 2026-07-14 (real crash, root-caused from the user's own crashlog): Find Duplicate
+## Materials (F3) took Blender down mid-sweep on `PSM_Stage_v5.2.blend` — user uploaded
+## `PSM_Stage_v5.2.crash.txt`, which (unusually) included an embedded Python traceback
+## pinpointing the exact line, not just the native C stack: `ops/extract.py:86`
+## (`sock.links` inside `_extract_tree`) <- `extract_material` <- `ops/material_dedup.py:107`
+## (`_gather_steps`) <- `run_steps` <- the modal driver. `EXCEPTION_ACCESS_VIOLATION`.
+
+## **Root cause**: `material_dedup.py::_gather_steps` only skipped the deep node-tree
+## read for `mat.is_missing` — it never checked `mat.override_library is not None`, the
+## OTHER half of the documented "disease class" (`extract.datablock_risk_reason`,
+## generalized 2026-07-04 after the *same* thing crashed Find Orphans' mesh
+## fingerprinting, and already the reason Examine Library's `_content_graph_match`
+## checks BOTH). A Library Override material's node tree isn't safely walkable — reading
+## `sock.links` on it is a native access violation, not a catchable Python exception, so
+## the existing `try/except Exception` around the fingerprint call never had a chance to
+## help. F3 was simply never updated to use the shared `datablock_risk_reason` helper the
+## way the other hardened tools were — a real gap, not a new disease. **Fixed**: swapped
+## the narrow `is_missing`-only check for `datablock_risk_reason(mat)` in
+## `ops/material_dedup.py`.
+
+## **Found the identical unfixed gap while in there — fixed proactively**:
+## `ops/instance_dedup.py` (Find Duplicate Geometry, F5) had the EXACT SAME narrow
+## `me.is_missing`-only check, never updated to `datablock_risk_reason` either, despite
+## that helper's own docstring already naming meshes as an at-risk type ("a mesh
+## datablock can itself be missing or an override"). Same fix applied there. Neither fix
+## is live-verified yet (needs Blender, which I don't have available this session) —
+## **NEXT: user re-run Find Duplicate Materials on `PSM_Stage_v5.2.blend` (same file that
+## crashed) to confirm it completes clean now, and ideally also try Find Duplicate
+## Geometry once**, since it shares the identical root cause and has never been reported
+## crashing yet only because a Library-Override MESH is a rarer shape than an override
+## MATERIAL, not because it's actually safe.
+
+## ⏳ 2026-07-14 (standing requirement, confirmed MISSING — not just for Examine
+## Library): click-a-row → select + reveal in the Outliner (same as typing the name
+## into the Outliner's own search box) is an established, already-built pattern in
+## this addon — `ops.report_store.FILELINK_OT_select_datablock` (type+name → selects
+## the using object(s) via `bpy.data.user_map()`, sets the active material slot when
+## relevant, then `_reveal_in_outliner` calls `outliner.show_active()`/sets the
+## filter text on any open Outliner) — but it is NOT wired into every results
+## section. User caught this live-testing Examine Library: clicking a row does
+## nothing but toggle its own checkbox.
+
+## **Where it IS wired today**: the generic report tree (`ui.panels.FILELINK_UL_tree`,
+## used by F1/F3/F4/f7/f7chain/f7live/f9/matdiag/auto/matsearch/etc.) via
+## `FILELINK_OT_row_label`'s `ref_type`/`ref_name` → `select_datablock`; and the
+## manual (non-UIList) Orphans picker (`ui/panels.py` ~line 2630), which puts the
+## operator directly on the row label.
+
+## **Where it is MISSING — every "Group 12" virtualized `UIList` picker**
+## (`ui/panels.py`), each currently drawing its row identity as a plain
+## `row.label(...)`, not a `select_datablock`-backed button:
+## - `FILELINK_UL_examine_picker` (~line 972) — `real.name`/`real.kind` — THIS session's
+##   trigger case.
+## - `FILELINK_UL_deform_rows` (~line 328) — `item.name` IS an Object name directly,
+##   the most trivial of the set to wire.
+## - `FILELINK_UL_makelocal_picker` (~line 889) — `item.item_type`/`item.item_name`.
+## - `FILELINK_UL_reconnect_picker` (~line 914), member rows — `real.kind`/`real.name`
+##   (missing-placeholder blocks — clicking would find USERS via the same
+##   `user_map()` walk `select_datablock` already does, not the placeholder itself).
+## - `FILELINK_UL_missing_tex_picker` (~line 758) and `FILELINK_UL_dup_tex_picker`
+##   (~line 827), member rows — both are `Image` datablocks (`real.name`).
+
+## **Probably NOT a straight port (flagged, not solved)**:
+## `FILELINK_UL_broken_libs` (~line 668) rows are LIBRARY FILE PATHS, not datablocks —
+## same documented exception F1's link-map already has ("expected", see this file's
+## existing "Click-to-select in Outliner" note). `FILELINK_UL_flatten_picker`
+## (~line 702) rows are pre-baked label strings for characters/rigs/objects with no
+## `Type/Name` pair carried on the row today — wiring it would need a small data-shape
+## change first (thread a ref through, same as the tree rows already do via
+## `core.tree._parse_ref`), not just a one-line button swap like the others above.
+
+## **The fix, once picked up**: reuse `filelink.select_datablock` exactly as-is (it's
+## generic over any `Type/Name`, see `ops.report_store.resolve_datablock`) — wrap each
+## affected row's identity label in that operator button instead of a plain
+## `row.label`, mirroring how `FILELINK_OT_row_label`/the Orphans list already do it.
+## No new selection logic needed, this is purely a wiring gap.
+
+## **Going forward**: user wants this treated as a DEFAULT requirement for every
+## results/picker section, carried over automatically to any NEW section built from
+## here on, unless there's a concrete, stated reason a specific row can't support it
+## (e.g. the file-path-not-datablock case above) — not something to re-decide or
+## re-propose per section.
+
+## ⏳ 2026-07-14 (nice-to-have, low priority): `FILELINK_OT_examine_bulk_search_folder.
+## run_steps` (`ops/examine_library.py` around line 620-624) fakes its scanning-phase
+## progress with `min(0.5, walked / (walked + 20.0))` because it has no upfront count of
+## how many `.blend` files are under the chosen folder — the walk (`core.blendscan.
+## iter_blend_files`) IS the only pass, so the bar climbs fast then flatlines at 50% for
+## the rest of the scan, which reads as stuck.
+
+## **If touching this code again**: consider a real upfront count so the scanning phase
+## can report an honest fraction instead of the asymptotic formula. NOT a trivial
+## one-liner — a blocking `sum(1 for _ in iter_blend_files(...))` before the first
+## `yield` would freeze ESC/the UI for however long that counting walk takes (the
+## `ModalProgressMixin` only checks cancel/redraws BETWEEN `next()` calls on the
+## generator, per `ops/progress.py`'s `modal()`). Do it as its own mini phase that
+## yields every N files with a "Counting…" status, THEN run the existing scan using
+## that count as the denominator. Cost is low (just filename listing via `rglob`, no
+## file I/O/BAT parsing) but it's a real second directory-tree traversal, so on a very
+## large or slow (e.g. network/cloud-synced) folder the count itself could take a
+## noticeable moment before the bar starts moving. User confirmed this is a
+## nice-to-have, not urgent — flagged during a walkthrough of `November - Canaletto`,
+## no actual scan was stuck, just asked what the 50%-cap meant.
+
 ## 2026-07-14 (session close): today's `PSM_Stage_v5.2.crash.txt` (the Python-script-
 ## during-file-load crash, distinct from the known `tentRoof`/`Plane.019` mesh-read
 ## corruption) is NOT being root-caused this session — user's own read is "probably the

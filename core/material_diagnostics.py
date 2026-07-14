@@ -114,11 +114,15 @@ def build_node_link_findings(invalid_links: list[tuple[str, str, str]],
 
 def build_empty_slot_findings(empty_slots: list[tuple[str, int]]) -> list[Finding]:
     """``empty_slots``: (object_name, slot_index) pairs where
-    ``material_slots[index].material is None``."""
+    ``material_slots[index].material is None``. ``data`` carries the pair
+    STRUCTURALLY (2026-07-14 — it used to live only in the message text) so
+    ``FILELINK_OT_delete_empty_material_slots`` can target the exact slot
+    without re-parsing a human-readable string."""
     return [
         Finding(category="empty_slot", severity="info",
                 message=f"{obj}: material slot {idx} is empty",
-                items=[f"Object/{obj}"])
+                items=[f"Object/{obj}"],
+                data={"object": obj, "slot_index": idx})
         for obj, idx in empty_slots
     ]
 

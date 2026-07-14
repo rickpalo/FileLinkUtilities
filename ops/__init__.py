@@ -81,7 +81,10 @@ from .image_dedup import (
 from .progress import FILELINK_OT_toggle_pause, FILELINK_OT_request_cancel
 from .make_local import FILELINK_OT_make_local, FILELINK_OT_make_local_selected
 from .material_dedup import FILELINK_OT_material_dedup, FILELINK_OT_merge_material_selected
-from .material_diagnostics import FILELINK_OT_check_materials
+from .material_diagnostics import (
+    FILELINK_OT_check_materials,
+    FILELINK_OT_delete_empty_material_slots,
+)
 from .deform_check import FILELINK_OT_scan_deform_issues
 from .orphans import FILELINK_OT_purge_orphans_selected, FILELINK_OT_scan_orphans
 from .instance_dedup import (
@@ -163,6 +166,7 @@ REGISTER_CLASSES = (
     FILELINK_OT_material_dedup,
     FILELINK_OT_merge_material_selected,
     FILELINK_OT_check_materials,
+    FILELINK_OT_delete_empty_material_slots,
     FILELINK_OT_scan_deform_issues,
     FILELINK_OT_scan_orphans,
     FILELINK_OT_purge_orphans_selected,

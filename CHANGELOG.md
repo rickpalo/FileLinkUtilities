@@ -8,6 +8,39 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.2.121] — Find Duplicate Materials/Geometry crash fix; Find Duplicates UI polish
+
+### Fixed
+- **Crash**: Find Duplicate Materials (F3) could take Blender down mid-sweep on a file with a
+  Library Override material — `_gather_steps` only skipped its risky deep node-tree read for
+  `mat.is_missing`, never for `mat.override_library is not None`, the other half of the
+  documented disease class (`extract.datablock_risk_reason`, already used by Examine Library and
+  Find Orphans). Root-caused from a user-supplied crashlog with an embedded Python traceback
+  pointing straight at `extract.py:86`'s `sock.links` read. Fixed by switching to the shared
+  `datablock_risk_reason` check. Found and fixed the identical latent gap in Find Duplicate
+  Geometry (`ops/instance_dedup.py`, meshes) proactively — same narrow `is_missing`-only check,
+  never exercised into a crash yet only because a Library-Override mesh is a rarer shape than an
+  override material.
+
+### Added
+- **Find Duplicates** (the "Find Duplicate Data-blocks/Materials/Geometry/Textures" group) now
+  shows a not-run/some-run/all-run status icon on its own header, and a not-run/done icon on each
+  of its 4 child buttons — the one collapsible-group section that didn't already have this,
+  unlike every Analyze-row sibling.
+- **"Delete Empty Material Slots" button** on Check Materials' "Empty material slots" row —
+  removes every empty slot the last scan found (backup first), previously read-only.
+- **Find Duplicate Materials' result list is now collapsible**, and Automated Cleanup's own copy
+  of that same list collapses independently (defaults collapsed) instead of sharing one expand
+  state with the standalone section.
+- **Find Content Dups now scans linked images too** (previously local-only), reporting a linked
+  count per group/section; the merge step still only ever touches local duplicates.
+
+### Changed
+- Dropped the confusing leading dash from every "(−N)" removable-count label across Duplicate
+  Data-blocks/Materials/Geometry/Textures — now just "(N)".
+- "Examine Library" section retitled "Retarget Library" (the operator/button still reads
+  "Examine").
+
 ## [0.2.120] — Examine Library: content verification extended to the manual-pick paths
 
 ### Added

@@ -184,3 +184,79 @@ class FILELINK_OT_check_materials(ModalProgressMixin, bpy.types.Operator):
                if mat_labels or issues else "No materials or objects to check")
         level = "WARNING" if report.count("warning") else "INFO"
         self.report({level}, msg)
+
+
+class FILELINK_OT_delete_empty_material_slots(bpy.types.Operator):
+    """User request, 2026-07-14: a direct fix action for Check Materials'
+    "Empty material slots" category (that section was otherwise read-only by
+    the user's own earlier design call — this is additive, not a reversal of
+    that: an empty slot has no content to lose, so it's a genuinely safe
+    bulk-delete, unlike the shader-type/node-link categories which stay
+    informational). Reads the LAST-RUN Check Materials report rather than
+    re-scanning, so it only ever touches what's actually visible on screen."""
+
+    bl_idname = "filelink.delete_empty_material_slots"
+    bl_label = "Delete Empty Material Slots"
+    bl_description = ("Remove every empty material slot found by the last Check Materials "
+                       "run. Takes a backup first")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        from ..core.report import Report
+        from .report_store import data_prop, stash_report
+
+        wm = context.window_manager
+        raw = getattr(wm, data_prop("matdiag"), "")
+        if not raw:
+            self.report({"WARNING"}, "Run Check Materials first")
+            return {"CANCELLED"}
+        report = Report.from_json(raw)
+
+        by_object: dict[str, list[int]] = {}
+        for f in report.findings:
+            if f.category != "empty_slot":
+                continue
+            obj_name = f.data.get("object")
+            idx = f.data.get("slot_index")
+            if obj_name is not None and idx is not None:
+                by_object.setdefault(obj_name, []).append(idx)
+        if not by_object:
+            self.report({"WARNING"}, "No empty material slots to delete")
+            return {"CANCELLED"}
+
+        from .safety import auto_backup
+
+        backup = auto_backup(context)
+        removed = 0
+        prev_active = context.view_layer.objects.active
+        for obj_name, indices in by_object.items():
+            obj = bpy.data.objects.get(obj_name)
+            if obj is None:
+                continue
+            # Highest index first: removing a lower index shifts every later
+            # slot down by one, so this order never invalidates the next index.
+            for idx in sorted(indices, reverse=True):
+                if idx >= len(obj.material_slots) or obj.material_slots[idx].material is not None:
+                    continue  # stale (already changed since the report was built) -- skip
+                try:
+                    with context.temp_override(active_object=obj, object=obj):
+                        obj.active_material_index = idx
+                        bpy.ops.object.material_slot_remove()
+                    removed += 1
+                except RuntimeError:
+                    continue  # e.g. object type has no material slots to remove
+
+        context.view_layer.objects.active = prev_active
+
+        # Re-run Check Materials so the list reflects the new state, same
+        # post-mutate refresh every other Apply action in this addon does.
+        mat_labels, invalid_links, missing_image_nodes, empty_slots = _gather(context)
+        new_report = build_material_diagnostics_report(
+            mat_labels, invalid_links, missing_image_nodes, empty_slots)
+        stash_report(context, new_report, "matdiag")
+        if context.area:
+            context.area.tag_redraw()
+
+        tail = f" Backup: {backup}" if backup else " (no backup written)"
+        self.report({"INFO"}, f"Removed {removed} empty material slot(s).{tail}")
+        return {"FINISHED"}
