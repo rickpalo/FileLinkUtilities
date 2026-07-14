@@ -164,23 +164,40 @@ def sync_baseline(wm, cur: dict[str, int]) -> dict[str, int]:
     return base
 
 
-def rows(wm) -> list[tuple[str, str, int | None, int | None]]:
-    """The dashboard's display rows in fixed order: ``(label, unit, baseline,
-    current)``. ``baseline`` is None when unchanged-from-known or never
-    baselined; ``current`` is None when the metric is no longer known. A
+def rows(wm) -> list[tuple[str, str, str, int | None, int | None]]:
+    """The dashboard's display rows in fixed order: ``(key, label, unit,
+    baseline, current)``. ``baseline`` is None when unchanged-from-known or
+    never baselined; ``current`` is None when the metric is no longer known. A
     ``reveal_nonzero`` metric with neither a baseline nor a non-zero current is
     omitted entirely."""
     cur = current(wm)
     base = sync_baseline(wm, cur)
-    out: list[tuple[str, str, int | None, int | None]] = []
+    out: list[tuple[str, str, str, int | None, int | None]] = []
     for key in ORDER:
         label, unit, reveal_nonzero = _SPEC[key]
         cur_val = cur.get(key)
         base_val = base.get(key)
         if reveal_nonzero and base_val is None and not cur_val:
             continue
-        out.append((label, unit, base_val, cur_val))
+        out.append((key, label, unit, base_val, cur_val))
     return out
+
+
+def status(key: str, base: int | None, cur: int | None, *, missing: int = 0) -> str:
+    """"good" | "attention" | "neutral" — drives the row's colored status dot
+    (and red text on "attention"). An issue/duplicate metric reads attention
+    while non-zero and good once cleared to 0; a footprint metric reads good
+    once it has dropped below its baseline; ``linked_libs`` is attention while
+    any library is missing. Everything else is neutral (no dot)."""
+    if key == "linked_libs":
+        return "attention" if missing else "neutral"
+    if cur is None:
+        return "neutral"
+    if _SPEC.get(key, ("", "", False))[2]:  # reveal_nonzero -> it's an issue count
+        return "good" if cur == 0 else "attention"
+    if base is not None and cur < base:  # footprint dropped since baseline
+        return "good"
+    return "neutral"
 
 
 def fmt(unit: str, value: int) -> str:

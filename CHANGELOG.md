@@ -8,6 +8,16 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.2] — Health dashboard: colored status dots + two-column layout
+
+### Changed
+- **The Health dashboard now lays its metrics in two columns** (collapsing to one when the
+  Properties editor is narrow) and marks each with a **colored status dot**: green for a
+  resolved/good metric, red (with red value text) for one needing attention — missing libraries,
+  or an outstanding duplicate/missing/orphan count. Blender panels can't color arbitrary label
+  text, so the dots (fixed-color `COLORSET_*` icons) carry the signal that the mockup showed in
+  colored text; red text uses the one native color Blender exposes (`alert`).
+
 ## [0.3.1] — Health dashboard with live metric deltas
 
 ### Added

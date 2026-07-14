@@ -20,7 +20,7 @@
     which can stall Blender on startup). The BAT wheel is bundled per the manifest.
 
 .PARAMETER Blender
-    Path to blender.exe. Defaults to the installed Blender 5.1.
+    Path to blender.exe. Defaults to the installed Blender 5.2 (the target version).
 
 .PARAMETER Enable
     Pass -Enable to also enable the extension during install (its enabled state
@@ -32,10 +32,10 @@
     # build + install; then enable it once in Preferences > Add-ons (User Default)
 
 .EXAMPLE
-    pwsh tools/dev_install.ps1 -Blender "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
+    pwsh tools/dev_install.ps1 -Blender "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
 #>
 param(
-    [string]$Blender = "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe",
+    [string]$Blender = "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe",
     [switch]$Enable
 )
 

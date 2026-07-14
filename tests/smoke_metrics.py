@@ -36,7 +36,8 @@ def main():
         wm.filelink_metrics_baseline = ""  # simulate a just-opened file
 
         def dash():
-            return {t[0]: t for t in metrics.rows(wm)}
+            # key rows by label -> (key, label, unit, base, cur)
+            return {t[1]: t for t in metrics.rows(wm)}
 
         d = dash()
         checks.append(("size on disk always shown", "Size on disk" in d))
@@ -53,12 +54,16 @@ def main():
         d = dash()
         dm = d.get("Dup materials")
         checks.append(("dup materials revealed + baselined at 14",
-                       dm is not None and dm[2] == 14 and dm[3] == 14))
+                       dm is not None and dm[3] == 14 and dm[4] == 14))
+        checks.append(("dup materials > 0 reads 'attention'",
+                       metrics.status("dup_materials", 14, 14) == "attention"))
 
         # Merge down to 2 -> baseline 14 held, current 2.
         wm.filelink_mat_removable = 2
         dm = dash().get("Dup materials")
-        checks.append(("dup materials shows 14 -> 2", dm is not None and dm[2] == 14 and dm[3] == 2))
+        checks.append(("dup materials shows 14 -> 2", dm is not None and dm[3] == 14 and dm[4] == 2))
+        checks.append(("dup materials cleared to 0 reads 'good'",
+                       metrics.status("dup_materials", 14, 0) == "good"))
 
         # reveal_nonzero: a metric that scans to zero from the start stays hidden.
         wm.filelink_geo_scanned = True
@@ -69,14 +74,14 @@ def main():
         four_gb = 4 * 1024 ** 3
         wm.filelink_profiled_ram_b = str(four_gb)
         rr = dash().get("Render RAM")
-        checks.append(("render RAM appears once profiled", rr is not None and rr[3] == four_gb))
+        checks.append(("render RAM appears once profiled", rr is not None and rr[4] == four_gb))
 
         # Opening another file clears the baseline -> everything re-baselines.
         wm.filelink_metrics_baseline = ""
         wm.filelink_mat_removable = 2  # the newly-opened file's starting state
         dm = dash().get("Dup materials")
         checks.append(("after reset, dup mats re-baseline at 2",
-                       dm is not None and dm[2] == 2 and dm[3] == 2))
+                       dm is not None and dm[3] == 2 and dm[4] == 2))
 
         # Delta formatting uses a real minus sign; a reduction reads negative.
         checks.append(("count delta", metrics.delta_str("count", 14, 2) == "−12"))
