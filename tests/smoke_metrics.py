@@ -87,7 +87,11 @@ def main():
         checks.append(("count delta", metrics.delta_str("count", 14, 2) == "−12"))
         checks.append(("bytes delta negative on reduction",
                        metrics.delta_str("bytes", four_gb, 3 * 1024 ** 3).startswith("−")))
-        checks.append(("size_on_disk runs without error", isinstance(metrics.size_on_disk(), int)))
+        loc, lnk = metrics.size_on_disk()
+        checks.append(("size_on_disk returns (local, linked) ints",
+                       isinstance(loc, int) and isinstance(lnk, int)))
+        checks.append(("size_on_disk total is sum of local+linked",
+                       dash().get("Size on disk", (None,) * 5)[4] == loc + lnk))
 
         ok = all(p for _, p in checks)
         for label, p in checks:

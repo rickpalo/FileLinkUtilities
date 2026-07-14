@@ -59,13 +59,28 @@ def _canon(obj: Any) -> str:
     return json.dumps(_round(obj), sort_keys=True, default=default, separators=(",", ":"))
 
 
-def _round(obj: Any) -> Any:
+# Guard against pathological/cyclic extractor output blowing the C stack. Real
+# fingerprint payloads nest only a handful deep (a shape key ~4, a material node
+# tree with nested groups maybe ~30); 400 is far beyond any of them yet well
+# under the depth that overflows Python's C stack — especially inside the Analyze
+# All modal call chain, which has already consumed much of it. Crossing it raises
+# a normal ValueError, which every fingerprint caller already treats as
+# "unverified" (the block hashes to "" and is never merged). Without this, a
+# cyclic/deep structure recurses until a hard EXCEPTION_ACCESS_VIOLATION crash
+# that no try/except can catch (crash 2026-07-14, fingerprint_shape_key on the
+# PSM_Stage file during Find Duplicate Data-blocks).
+_MAX_FP_DEPTH = 400
+
+
+def _round(obj: Any, _depth: int = 0) -> Any:
+    if _depth > _MAX_FP_DEPTH:
+        raise ValueError("fingerprint structure too deep (possible cycle)")
     if isinstance(obj, float):
         return round(obj, _NDIGITS)
     if isinstance(obj, dict):
-        return {k: _round(v) for k, v in obj.items()}
+        return {k: _round(v, _depth + 1) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
-        return [_round(v) for v in obj]
+        return [_round(v, _depth + 1) for v in obj]
     return obj
 
 

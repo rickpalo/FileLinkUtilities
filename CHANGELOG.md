@@ -8,6 +8,22 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.4] — Crash fix (deep/cyclic fingerprint); Size on disk local/linked split
+
+### Fixed
+- **Blender crash during Analyze All → Find Duplicate Data-blocks** on a file whose shape-key
+  extraction produced a deeply-nested or cyclic structure: `core.fingerprint._round` recursed
+  until it overflowed the C stack — a hard `EXCEPTION_ACCESS_VIOLATION` that the caller's
+  `try/except` could not catch (a C-stack overflow isn't a Python exception). `_round` is now
+  depth-capped (400, far beyond any real payload's ~30 levels); crossing it raises a normal
+  `ValueError` that every fingerprint caller already treats as "unverified" — the block hashes to
+  `""` and is never merged, instead of crashing. Root-caused from a user crashlog (PSM_Stage file).
+
+### Changed
+- **The Health dashboard's "Size on disk" now shows a breakdown** — `34.8 GB (12 GB local + 22 GB
+  linked)`: the current `.blend` plus its own external images (local) vs. linked library files and
+  their images (linked). The disk walk runs once per redraw (previously it would have doubled).
+
 ## [0.3.3] — Confidence tier bulk-select toolbar
 
 ### Added

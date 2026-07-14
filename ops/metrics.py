@@ -53,16 +53,16 @@ def _as_int(wm, prop: str) -> int:
         return 0
 
 
-def size_on_disk() -> int:
-    """Bytes on disk for THIS project's directly-referenced files: the current
-    ``.blend`` + every linked library ``.blend`` + external (unpacked) image
-    files. Packed images already count inside the ``.blend``; a linked
-    library's own external textures are that library's footprint, not counted
-    here. Fast — one ``os.path.getsize`` (stat) per unique path, no BAT walk."""
-    total = 0
+def size_on_disk() -> tuple[int, int]:
+    """``(local_bytes, linked_bytes)`` on disk for THIS project's directly-
+    referenced files. Local = the current ``.blend`` + its own (non-linked)
+    external image files. Linked = every linked library ``.blend`` + external
+    images owned by a library. Packed images already count inside the
+    ``.blend``. Fast — one ``os.path.getsize`` (stat) per unique path, no BAT
+    walk."""
     seen: set[str] = set()
 
-    def add(path: str) -> int:
+    def size_of(path: str) -> int:
         try:
             resolved = os.path.normpath(bpy.path.abspath(path))
         except Exception:
@@ -75,17 +75,22 @@ def size_on_disk() -> int:
         except OSError:
             return 0
 
+    local = linked = 0
     if bpy.data.filepath:
-        total += add(bpy.data.filepath)
+        local += size_of(bpy.data.filepath)
     for lib in bpy.data.libraries:
         if lib.filepath:
-            total += add(lib.filepath)
+            linked += size_of(lib.filepath)
     for img in bpy.data.images:
         if img.packed_file is not None:
             continue
         if getattr(img, "source", "") in {"FILE", "SEQUENCE", "TILED"} and img.filepath:
-            total += add(img.filepath)
-    return total
+            nbytes = size_of(img.filepath)
+            if img.library is not None:
+                linked += nbytes
+            else:
+                local += nbytes
+    return local, linked
 
 
 def library_stats() -> tuple[int, int, int]:
@@ -115,7 +120,9 @@ def current(wm) -> dict[str, int]:
     dashboard rows)."""
     from .report_store import data_prop
 
-    cur: dict[str, int] = {"size_on_disk": size_on_disk()}
+    local, linked = size_on_disk()
+    cur: dict[str, int] = {"size_on_disk": local + linked,
+                           "size_local": local, "size_linked": linked}
     total, missing, absolute = library_stats()
     cur["linked_libs"] = total
     cur["libs_missing"] = missing
@@ -164,14 +171,15 @@ def sync_baseline(wm, cur: dict[str, int]) -> dict[str, int]:
     return base
 
 
-def rows(wm) -> list[tuple[str, str, str, int | None, int | None]]:
+def display_rows(cur: dict[str, int], base: dict[str, int]
+                 ) -> list[tuple[str, str, str, int | None, int | None]]:
     """The dashboard's display rows in fixed order: ``(key, label, unit,
-    baseline, current)``. ``baseline`` is None when unchanged-from-known or
-    never baselined; ``current`` is None when the metric is no longer known. A
-    ``reveal_nonzero`` metric with neither a baseline nor a non-zero current is
-    omitted entirely."""
-    cur = current(wm)
-    base = sync_baseline(wm, cur)
+    baseline, current)`` — pure (no I/O), given already-computed ``cur``/
+    ``base`` dicts, so the panel can gather metrics ONCE per draw and still read
+    ``cur`` for the size/library detail lines. ``baseline`` is None when
+    unchanged-from-known or never baselined; ``current`` is None when the metric
+    is no longer known. A ``reveal_nonzero`` metric with neither a baseline nor
+    a non-zero current is omitted entirely."""
     out: list[tuple[str, str, str, int | None, int | None]] = []
     for key in ORDER:
         label, unit, reveal_nonzero = _SPEC[key]
@@ -181,6 +189,14 @@ def rows(wm) -> list[tuple[str, str, str, int | None, int | None]]:
             continue
         out.append((key, label, unit, base_val, cur_val))
     return out
+
+
+def rows(wm) -> list[tuple[str, str, str, int | None, int | None]]:
+    """Convenience: gather + baseline + display in one call (used by tests and
+    any caller that doesn't need ``cur`` separately)."""
+    cur = current(wm)
+    base = sync_baseline(wm, cur)
+    return display_rows(cur, base)
 
 
 def status(key: str, base: int | None, cur: int | None, *, missing: int = 0) -> str:

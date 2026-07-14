@@ -1105,13 +1105,18 @@ class FILELINK_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
         fname = bpy.path.basename(bpy.data.filepath) or "(unsaved)"
         layout.label(text=fname, icon="FILE_BLEND")  # version lives in the panel header
 
-        _t, miss, absol = metrics.library_stats()
+        # Gather metrics ONCE (the size walk does disk I/O); read the same
+        # `cur` dict for both the rows and their size/library detail lines.
+        cur_vals = metrics.current(wm)
+        base_vals = metrics.sync_baseline(wm, cur_vals)
+        miss = cur_vals.get("libs_missing", 0)
+        absol = cur_vals.get("libs_absolute", 0)
         # Two columns when there's room; one when the Properties editor is
         # narrow (delta strings like "8.6 → 6.9 GB (−1.7)" need the width).
         wide = bool(context.region) and context.region.width >= 400
         grid = layout.grid_flow(row_major=True, columns=2 if wide else 1,
                                 even_columns=True, align=False)
-        for key, label, unit, base, cur in metrics.rows(wm):
+        for key, label, unit, base, cur in metrics.display_rows(cur_vals, base_vals):
             st = metrics.status(key, base, cur, missing=miss)
             cell = grid.row(align=True)
             cell.label(text="", icon=self._STATUS_DOT[st])
@@ -1124,6 +1129,10 @@ class FILELINK_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
                 extra = ([f"{miss} missing"] if miss else []) + \
                         ([f"{absol} absolute"] if absol else [])
                 detail = f"  ({', '.join(extra)})" if extra else ""
+            elif key == "size_on_disk":
+                loc = metrics.fmt("bytes", cur_vals.get("size_local", 0))
+                lnk = metrics.fmt("bytes", cur_vals.get("size_linked", 0))
+                detail = f"  ({loc} local + {lnk} linked)"
             if cur is None:
                 val.label(text="—")
             elif base is None or base == cur:

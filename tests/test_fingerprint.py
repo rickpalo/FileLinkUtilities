@@ -220,3 +220,30 @@ def test_image_identity_resolution_matters():
     a = {"filepath": "//wood.png", "size": [1024, 1024], "colorspace": "sRGB"}
     b = {"filepath": "//wood.png", "size": [2048, 2048], "colorspace": "sRGB"}
     assert fingerprint_image(a) != fingerprint_image(b)
+
+
+# --- crash guard: deep / cyclic input can't overflow the C stack -------------
+def test_round_raises_on_cycle_not_crash():
+    """A self-referential structure must raise a catchable ValueError, never
+    recurse until a hard C-stack crash (regression: fingerprint_shape_key on the
+    PSM_Stage file, 2026-07-14)."""
+    d = {}
+    d["self"] = d
+    with pytest.raises(ValueError):
+        fingerprint._canon(d)
+
+
+def test_round_raises_on_excessive_depth():
+    obj = cur = {}
+    for _ in range(fingerprint._MAX_FP_DEPTH + 50):
+        nxt = {}
+        cur["n"] = nxt
+        cur = nxt
+    with pytest.raises(ValueError):
+        fingerprint._canon(obj)
+
+
+def test_round_ok_within_depth():
+    """A realistically-nested payload still hashes fine (guard doesn't false-trip)."""
+    obj = {"a": [1.23456, {"b": [2.0, {"c": [3.5]}]}]}
+    assert fingerprint._sha(obj)
