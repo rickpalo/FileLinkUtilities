@@ -1077,52 +1077,6 @@ class _SceneFeaturePanel:
     bl_parent_id = "FILELINK_PT_scene_deps"
 
 
-class FILELINK_PT_automated_cleanup(_SceneFeaturePanel, bpy.types.Panel):
-    """docs/TODO.md #22 — Automated Cleanup, redesigned to a 3-phase Scan ->
-    Review (tick/untick) -> Apply Selected flow instead of the originally
-    locked Report-Only/Apply-&-Report split. Orchestration layer only: it
-    reuses the SAME wm state and draw functions Make Local/Materials/
-    Geometry/Orphans already have in "Analyze This File" below (those keep
-    working standalone, unchanged) rather than physically moving them into
-    new child panels — same data, same checkboxes, just also surfaced here
-    together with a combined Scan/Apply Selected pair of buttons."""
-
-    bl_label = "Automated Cleanup"
-    bl_idname = "FILELINK_PT_automated_cleanup"
-    bl_order = -1
-
-    def draw(self, context):
-        layout = self.layout
-        wm = context.window_manager
-        scene = context.scene
-
-        col = layout.column(align=True)
-        col.label(text="Include:")
-        row = col.row(align=True)
-        row.prop(scene, "filelink_cleanup_include_makelocal", toggle=True)
-        row.prop(scene, "filelink_cleanup_include_materials", toggle=True)
-        row2 = col.row(align=True)
-        row2.prop(scene, "filelink_cleanup_include_geometry", toggle=True)
-        row2.prop(scene, "filelink_cleanup_include_orphans", toggle=True)
-
-        layout.operator("filelink.cleanup_scan", text="Scan", icon="VIEWZOOM")
-
-        if scene.filelink_cleanup_include_makelocal:
-            _draw_makelocal_picker(layout, wm)
-        if scene.filelink_cleanup_include_materials:
-            _draw_material_dups(layout, wm, key_suffix=":auto")
-        if scene.filelink_cleanup_include_geometry:
-            _draw_geo_dups(layout, wm)
-        if scene.filelink_cleanup_include_orphans:
-            _draw_orphans(layout, wm)
-
-        layout.separator()
-        layout.prop(scene, "filelink_cleanup_save_after")
-        layout.operator("filelink.cleanup_apply_selected", text="Apply Selected",
-                        icon="CHECKMARK")
-        _draw_report_detail(layout, wm, "auto")
-
-
 class FILELINK_PT_current_file_data(_SceneFeaturePanel, bpy.types.Panel):
     """Phase 3a (2026-06-25) — the first of the 5 named top-level sections: the
     instant, no-scan "what is this file" summary. Content unchanged from before
@@ -1579,6 +1533,17 @@ def _draw_duplicates(layout, wm, narrow: bool) -> None:
     _child_button("filelink.scan_content_dups", "find_duplicate_content",
                   "Find Duplicate Textures", "IMAGE_DATA", bool(wm.filelink_dup_scanned))
     _draw_duplicate_textures(col, wm, narrow)
+    # Resolution Variants folded into this group (2026-07-14,
+    # project_flow_redesign) — it's redundant-material data too, so it belongs
+    # in the Deduplicate phase rather than floating among unrelated checks. It
+    # stays OUT of the "Find All Duplicates" sequencer in the header (a
+    # different kind of analysis — multi-res footprint, not strict duplicates)
+    # and keeps its own child button + results here.
+    col.separator()
+    _child_button("filelink.scan_res_variants", "find_resolution_variants",
+                  "Find Resolution Variants", "FULLSCREEN_ENTER",
+                  _feature_has_run(wm, "f6res"))
+    _draw_res_variants(col, wm)
 
 
 def _datablock_dups_headline(wm) -> str:
@@ -1617,15 +1582,20 @@ def _reconnect_headline(wm) -> str:
 
 
 def _all_missing_summary(wm) -> str:
-    """"Find All Missing" runs both the broken-library-link scan and the
-    datablock-reconnect scan; combine their counts into one line."""
+    """"Find All Missing" runs the broken-library-link, datablock-reconnect AND
+    missing-texture scans (2026-07-14 — textures used to be wrongly excluded
+    from this meta-button); combine their counts into one line."""
     if not wm.filelink_missing_scanned:
         return ""
     broken = len(wm.filelink_broken_libs)
     missing = len(wm.filelink_missing_blocks)
-    if not broken and not missing:
+    tex = len(wm.filelink_broken_imgs) if wm.filelink_tex_scanned else 0
+    if not broken and not missing and not tex:
         return "✓ nothing missing"
-    return f"{broken} broken link(s), {missing} missing data-block(s)"
+    bits = [f"{broken} broken link(s)", f"{missing} missing data-block(s)"]
+    if tex:
+        bits.append(f"{tex} missing texture(s)")
+    return ", ".join(bits)
 
 
 def _broken_links_headline(wm) -> str:
@@ -1878,6 +1848,36 @@ def _draw_flatten_candidates(layout, wm):
     _draw_report_detail(layout, wm, "f7flatten")
 
 
+def _draw_phase_header(layout, name: str, intent: str, icon: str) -> None:
+    """A visual divider between the Analyze pipeline's phases (2026-07-14,
+    project_flow_redesign) — a separator, then the phase name (with its icon)
+    and a muted one-line intent, so the flat button stack reads as an ordered
+    Connect → Restructure → Deduplicate → Purge → Measure sequence (fix what's
+    broken before optimizing what's redundant) instead of an undifferentiated
+    list. The intent line uses ``active = False`` for de-emphasis rather than
+    ``enabled = False``, which would read as a disabled control."""
+    layout.separator()
+    col = layout.column(align=True)
+    col.label(text=name, icon=icon)
+    sub = col.row()
+    sub.active = False
+    sub.label(text=intent)
+
+
+def _draw_advisory_note(layout, text: str, *, show: bool) -> None:
+    """A short "detection-only — here's what to do" line under an advisory
+    (no-auto-fix) check (2026-07-14) — shown once the check has run. Matches
+    the Missing-Textures / Retarget-Library standard of telling the user what
+    must happen by hand when the addon deliberately can't fix something
+    itself, so an advisory check isn't a silent dead end."""
+    if not show:
+        return
+    row = layout.row(align=True)
+    row.separator(factor=2.2)
+    row.active = False
+    row.label(text=text, icon="INFO")
+
+
 class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
     """Phase 3a (2026-06-25) — the second named section: every "look for
     problems in the CURRENT file" trigger, in one place, plus an Analyze All
@@ -1901,29 +1901,27 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
     bl_order = 1
 
     def draw(self, context):
+        # Ordered as the 6-phase repair pipeline (2026-07-14,
+        # project_flow_redesign) — the SAME sequence core.analyze_steps.STEPS
+        # runs, so what the user reads top-to-bottom matches what "Analyze All"
+        # fills in. Phase A (Understand) = Current File Data + the Analyze-All
+        # button; B–F get a _draw_phase_header divider each.
         layout = self.layout
         wm = context.window_manager
         narrow = bool(context.region) and context.region.width < 320
 
         layout.operator("filelink.analyze_all", icon="PLAY")
 
+        # ---- Phase B · Connect — resolve dangling references first ----
+        _draw_phase_header(layout, "Connect", "Fix missing / broken references first",
+                           "LIBRARY_DATA_BROKEN")
         _analyze_row(layout, wm, "check_link_chain", "filelink.scan_dependencies",
                      "Check Link Chain", "VIEWZOOM", has_run=_feature_has_run(wm, "f7"))
         _draw_report_detail(layout, wm, "f7")
-        _analyze_row(layout, wm, "audit_file", "filelink.analyze_overrides",
-                     "Audit This File", "LIBRARY_DATA_OVERRIDE", has_run=_feature_has_run(wm, "f7live"))
-        _draw_report_detail(layout, wm, "f7live")
-        # Merged 2026-06-26 (docs/TODO.md #41) -- "Find Flattenable Link
-        # Chains" and "Find Flattenable Characters" were really one workflow
-        # wearing two buttons (the second always needed the first's f7chain
-        # data already stashed); one click now runs both via
-        # filelink.find_flattenable_links.
-        _analyze_row(layout, wm, "find_flattenable_chains", "filelink.find_flattenable_links",
-                     "Find Flattenable Links", "LIBRARY_DATA_OVERRIDE",
-                     _flatten_candidates_summary(wm))
-        _draw_report_detail(layout, wm, "f7chain")
-        _draw_flatten_candidates(layout, wm)
-
+        # The meta-button that fires all three missing-scans below at once —
+        # now including Missing Textures (2026-07-14; it used to skip them).
+        _analyze_row(layout, wm, "", "filelink.scan_all_missing",
+                     "Find All Missing", "VIEWZOOM", _all_missing_summary(wm))
         _analyze_row(layout, wm, "find_broken_links", "filelink.scan_broken_links",
                      "Find Broken Library Links", "LIBRARY_DATA_BROKEN",
                      _broken_links_headline(wm),
@@ -1931,19 +1929,6 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
                          "filelink.relink_selected", text="Relink Selected", icon="FILE_REFRESH"))
                      if len(wm.filelink_broken_libs) else None)
         _draw_broken_links(layout, wm)
-        # Item 3, 2026-06-25 (user request): Find Duplicate Materials/Geometry/
-        # Content folded into ONE "Find Duplicates" trigger alongside Find
-        # Duplicate Data-blocks — one click runs all 4 scans; each one's own
-        # report/list section (below) is unchanged, so the result reads as one
-        # combined summary followed by what each individual button would have
-        # shown. Resolution Variants stays its OWN separate button (a
-        # different kind of analysis — multi-res footprint, not duplicates).
-        # Restructured into a collapsed-by-default sub-section (docs/TODO.md
-        # item 46j, 2026-07-04) — the "Find All Duplicates" trigger now lives
-        # in `_draw_duplicates`'s own collapsible header, alongside the 4
-        # individual per-type buttons its expanded body reveals.
-        _draw_duplicates(layout, wm, narrow)
-
         _analyze_row(layout, wm, "find_reconnectable", "filelink.scan_reconnect_targets",
                      "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
                      _reconnect_headline(wm),
@@ -1951,9 +1936,10 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
                          "filelink.reconnect_selected", text="Reconnect Selected", icon="LINKED"))
                      if wm.filelink_missing_scanned and len(wm.filelink_missing_blocks) else None)
         _draw_reconnect(layout, wm)
-        _analyze_row(layout, wm, "", "filelink.scan_all_missing",
-                     "Find All Missing", "VIEWZOOM", _all_missing_summary(wm))
-
+        _analyze_row(layout, wm, "find_missing_textures", "filelink.scan_broken_textures",
+                     "Find Missing Textures", "IMAGE_DATA",
+                     _missing_textures_headline(wm, narrow))
+        _draw_missing_textures(layout, wm, narrow)
         _analyze_row(layout, wm, "check_library_paths", "filelink.normalize_library_paths",
                      "Check Library Paths", "FILE_REFRESH",
                      _path_normalization_headline(wm),
@@ -1962,58 +1948,55 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
                      else None).apply = False
         _draw_path_normalization(layout, wm)
 
-        _analyze_row(layout, wm, "find_missing_textures", "filelink.scan_broken_textures",
-                     "Find Missing Textures", "IMAGE_DATA",
-                     _missing_textures_headline(wm, narrow))
-        _draw_missing_textures(layout, wm, narrow)
-
-        _analyze_row(layout, wm, "find_resolution_variants", "filelink.scan_res_variants",
-                     "Find Resolution Variants", "FULLSCREEN_ENTER",
-                     _res_variants_headline(wm))
-        _draw_res_variants(layout, wm)
-
-        _analyze_row(layout, wm, "find_orphans", "filelink.scan_orphans",
-                     "Find Orphans", "NONE", _orphans_headline(wm)).purge_orphans = False
-        _draw_orphans(layout, wm)
-
-        # Scene Debug-style material diagnostics (docs/TODO.md Group 9 #33,
-        # scoped 2026-07-04) — read-only, no bulk-fix action (unlike the
-        # other Find-a-problem buttons above): groups materials by shader
-        # type, flags dangling node links / broken Image Texture nodes, and
-        # empty material slots.
-        _analyze_row(layout, wm, "", "filelink.check_materials",
-                     "Check Materials", "MATERIAL", has_run=_feature_has_run(wm, "matdiag"))
-        _draw_report_detail(layout, wm, "matdiag")
-
-        # Check Armature Deformation (Group 16, 2026-07-09) — a mesh vertex
-        # weighted to a non-deform bone (real case found live: Reallusion/CC
-        # facial CTRL_ bones, likely from a body->garment weight transfer) gets
-        # dragged wildly out of place once posed, invisible in rest pose.
-        # Detection only — the checkbox list is for a LATER fix pass to read,
-        # nothing here mutates a mesh or its vertex groups yet.
-        _analyze_row(layout, wm, "", "filelink.scan_deform_issues",
-                     "Check Armature Deformation", "MOD_ARMATURE",
-                     has_run=wm.filelink_deform_scanned)
-        _draw_deform_check(layout, wm)
-
-        # Footprint/impact analyses — a different KIND of analysis (not "is
-        # something broken") — separated from the find-a-problem buttons above
-        # (user request, 2026-06-25).
-        layout.separator()
-        _analyze_row(layout, wm, "analyze_memory_disk", "filelink.analyze_resources",
-                     "Analyze Memory/Disk", "VIEWZOOM", _resource_summary(wm))
-        _draw_resource_breakdown(layout, wm)
-        # "Make Local" = the old Make Local panel's "Report (Dry Run)" button,
-        # relocated here for now (user request, 2026-06-25) — it will replace
-        # that panel once a Fix-it/Apply button joins it in Cleanup & Fixes
-        # (Phase 3c), at which point the whole Make Local panel can go.
-        # Renamed from "Make Local Impact" (docs/TODO.md item 46d,
-        # 2026-07-04) — confusing in the Analyze section, where every other
-        # button already names the ANALYSIS it runs, not its effect.
+        # ---- Phase C · Restructure — simplify the link graph ----
+        _draw_phase_header(layout, "Restructure", "Simplify the link graph", "NODETREE")
+        _analyze_row(layout, wm, "audit_file", "filelink.analyze_overrides",
+                     "Audit This File", "LIBRARY_DATA_OVERRIDE", has_run=_feature_has_run(wm, "f7live"))
+        _draw_report_detail(layout, wm, "f7live")
+        # Merged 2026-06-26 (docs/TODO.md #41) -- "Find Flattenable Link
+        # Chains" and "Find Flattenable Characters" were really one workflow
+        # wearing two buttons; one click now runs both.
+        _analyze_row(layout, wm, "find_flattenable_chains", "filelink.find_flattenable_links",
+                     "Find Flattenable Links", "LIBRARY_DATA_OVERRIDE",
+                     _flatten_candidates_summary(wm))
+        _draw_report_detail(layout, wm, "f7chain")
+        _draw_flatten_candidates(layout, wm)
         _analyze_row(layout, wm, "", "filelink.make_local",
                      "Make Local", "LIBRARY_DATA_DIRECT",
                      _makelocal_headline(wm), has_run=_feature_has_run(wm, "f2")).apply = False
         _draw_makelocal_picker(layout, wm)
+        # Advisory (detection-only) checks — no safe bulk fix, so each gets a
+        # "here's what to do by hand" line (2026-07-14) rather than being a
+        # silent dead end.
+        _analyze_row(layout, wm, "", "filelink.check_materials",
+                     "Check Materials", "MATERIAL", has_run=_feature_has_run(wm, "matdiag"))
+        _draw_advisory_note(layout, "Read-only — fix flagged shader/node issues by hand in "
+                            "the Shading workspace; there's no safe bulk fix.",
+                            show=_feature_has_run(wm, "matdiag"))
+        _draw_report_detail(layout, wm, "matdiag")
+        _analyze_row(layout, wm, "", "filelink.scan_deform_issues",
+                     "Check Armature Deformation", "MOD_ARMATURE",
+                     has_run=wm.filelink_deform_scanned)
+        _draw_advisory_note(layout, "Detection only — reweight flagged vertices to a deform "
+                            "bone in Weight Paint; the ticks are for a future fix pass.",
+                            show=wm.filelink_deform_scanned and len(wm.filelink_deform_rows))
+        _draw_deform_check(layout, wm)
+
+        # ---- Phase D · Deduplicate — shrink redundancy ----
+        _draw_phase_header(layout, "Deduplicate", "Shrink redundant data", "DUPLICATE")
+        _draw_duplicates(layout, wm, narrow)
+
+        # ---- Phase E · Purge — sweep leftovers once everything else is settled ----
+        _draw_phase_header(layout, "Purge", "Remove unreferenced leftovers", "TRASH")
+        _analyze_row(layout, wm, "find_orphans", "filelink.scan_orphans",
+                     "Find Orphans", "NONE", _orphans_headline(wm)).purge_orphans = False
+        _draw_orphans(layout, wm)
+
+        # ---- Phase F · Measure — footprint payoff (not a problem check) ----
+        _draw_phase_header(layout, "Measure", "Footprint after cleanup", "DISK_DRIVE")
+        _analyze_row(layout, wm, "analyze_memory_disk", "filelink.analyze_resources",
+                     "Analyze Memory/Disk", "VIEWZOOM", _resource_summary(wm))
+        _draw_resource_breakdown(layout, wm)
         # Profile Render relocated to Utilities (Group 11 #42, 2026-06-26) — it
         # actually renders, more "one-off tool" than "is something broken."
 
@@ -2500,7 +2483,7 @@ def _material_dups_headline(wm) -> str:
     return "Materials — " + ", ".join(bits)
 
 
-def _draw_material_dups(layout, wm, key_suffix: str = "") -> None:
+def _draw_material_dups(layout, wm) -> None:
     """Reformatted Find Duplicate Materials — keeper-dropdown + Merge Selected,
     the same actionable shape as Duplicate Data-blocks/Textures (user
     feedback, 2026-06-25: "does not allow me to do anything with the
@@ -2508,14 +2491,9 @@ def _draw_material_dups(layout, wm, key_suffix: str = "") -> None:
     one fingerprint-identical material group). One section of the shared
     "Find Duplicates" results area (docs/TODO.md #16, 2026-06-27).
 
-    ``key_suffix`` namespaces the collapse toggle so Automated Cleanup's OWN
-    occurrence of this same list (it deliberately reuses this exact function,
-    see ``FILELINK_PT_automated_cleanup``'s docstring) can default collapsed
-    independently of the standalone Find Duplicate Materials section — user
-    request, 2026-07-14: "I'm okay using the same results, but the automated
-    results section should default to collapsed." The underlying DATA
-    (``wm.filelink_mat_families``, checkboxes, keeper picks) still stays one
-    shared collection either way — only the expand/collapse state is split."""
+    (Formerly took a ``key_suffix`` to namespace the collapse toggle for
+    Automated Cleanup's own second copy of this list — that panel was removed
+    in v0.3.0, so this now draws in exactly one place.)"""
     groups = wm.filelink_mat_families
     if not wm.filelink_mat_scanned:
         return
@@ -2526,7 +2504,7 @@ def _draw_material_dups(layout, wm, key_suffix: str = "") -> None:
     # Collapsible (user report, 2026-07-14: this summary row used to be a bare
     # label with no way to hide the group list below it, unlike every other
     # group-header row in this file).
-    key = f"matdups:groups{key_suffix}"
+    key = "matdups:groups"
     expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
     is_exp = key in expanded
     _draw_group_header(layout, key=key, prop="filelink_detail_expanded", is_exp=is_exp,

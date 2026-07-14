@@ -71,10 +71,10 @@ class FILELINK_OT_scan_all_missing(bpy.types.Operator):
     bl_idname = "filelink.scan_all_missing"
     bl_label = "Find All Missing"
     bl_description = (
-        "Run BOTH checks at once: broken library LINKS (whole .blend files that "
-        "can't be found) and reconnectable DATA-BLOCKS (individual linked materials "
-        "/ objects that didn't resolve — usually because a link is broken). "
-        "Read-only; the Reconnect list below fills in either way"
+        "Run all three Connect-phase checks at once: broken library LINKS (whole "
+        ".blend files that can't be found), reconnectable DATA-BLOCKS (individual "
+        "linked materials / objects that didn't resolve), and missing TEXTURES "
+        "(image files that moved). Read-only; each list below fills in either way"
     )
     bl_options = {"REGISTER"}
 
@@ -82,11 +82,13 @@ class FILELINK_OT_scan_all_missing(bpy.types.Operator):
         if not bpy.data.filepath:
             self.report({"ERROR"}, "Save the file first")
             return {"CANCELLED"}
-        bpy.ops.filelink.scan_broken_links()        # whole missing libraries
+        bpy.ops.filelink.scan_broken_links()         # whole missing libraries
         bpy.ops.filelink.scan_reconnect_targets()    # individual placeholder ids
+        bpy.ops.filelink.scan_broken_textures()      # missing image files (2026-07-14)
         if context.area:
             context.area.tag_redraw()
-        self.report({"INFO"}, "Checked broken library links + reconnectable data-blocks")
+        self.report({"INFO"},
+                    "Checked broken library links + reconnectable data-blocks + missing textures")
         return {"FINISHED"}
 
 

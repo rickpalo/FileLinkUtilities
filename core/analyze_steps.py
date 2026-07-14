@@ -29,32 +29,45 @@ class AnalyzeStep:
     kwargs: dict
 
 
+# Ordered as the 6-phase repair pipeline (2026-07-14, project_flow_redesign) —
+# fix what's broken before optimizing what's redundant. Both this Analyze-All
+# run AND the panel's own top-to-bottom draw order follow this one sequence:
+#   B Connect  → C Restructure → D Deduplicate → E Purge → F Measure
+# (A Understand = Current File Data + the Analyze-All button itself, no step).
+# Reordering is safe: DUPLICATE_STEPS/FLATTEN_STEPS derive from STEPS by key
+# and the tests assert membership/counts, not absolute position (only flatten's
+# chains-before-characters order is load-bearing, and it's preserved below).
 STEPS: tuple[AnalyzeStep, ...] = (
+    # --- Phase B · Connect — resolve every dangling reference first ---
     AnalyzeStep("check_link_chain", "Check Link Chain", "filelink.scan_dependencies", {}),
+    AnalyzeStep("find_broken_links", "Find Broken Library Links", "filelink.scan_broken_links", {}),
+    AnalyzeStep("find_reconnectable", "Find Reconnectable Data-blocks",
+                "filelink.scan_reconnect_targets", {}),
+    AnalyzeStep("find_missing_textures", "Find Missing Textures",
+                "filelink.scan_broken_textures", {}),
+    AnalyzeStep("check_library_paths", "Check Library Paths",
+                "filelink.normalize_library_paths", {"apply": False}),
+    # --- Phase C · Restructure — simplify the link graph ---
     AnalyzeStep("audit_file", "Audit This File", "filelink.analyze_overrides", {}),
     AnalyzeStep("find_flattenable_chains", "Find Flattenable Link Chains",
                 "filelink.scan_link_chains", {}),
     AnalyzeStep("find_flattenable_characters", "Group Flattenable Characters",
                 "filelink.scan_flatten_candidates", {}),
+    # --- Phase D · Deduplicate — shrink redundancy (contiguous now) ---
     AnalyzeStep("find_duplicate_datablocks", "Find Duplicate Data-blocks",
                 "filelink.scan_datablock_dups", {}),
-    AnalyzeStep("find_broken_links", "Find Broken Library Links", "filelink.scan_broken_links", {}),
-    AnalyzeStep("find_reconnectable", "Find Reconnectable Data-blocks",
-                "filelink.scan_reconnect_targets", {}),
-    AnalyzeStep("check_library_paths", "Check Library Paths",
-                "filelink.normalize_library_paths", {"apply": False}),
-    AnalyzeStep("find_missing_textures", "Find Missing Textures",
-                "filelink.scan_broken_textures", {}),
     AnalyzeStep("find_duplicate_materials", "Find Duplicate Materials",
                 "filelink.material_dedup", {"apply": False}),
     AnalyzeStep("find_duplicate_geometry", "Find Duplicate Geometry",
                 "filelink.instance_geometry", {"apply": False}),
-    AnalyzeStep("find_orphans", "Find Orphans", "filelink.scan_orphans",
-                {"purge_orphans": False}),
     AnalyzeStep("find_duplicate_content", "Find Duplicate Content",
                 "filelink.scan_content_dups", {}),
     AnalyzeStep("find_resolution_variants", "Find Resolution Variants",
                 "filelink.scan_res_variants", {}),
+    # --- Phase E · Purge — sweep leftovers once everything else is settled ---
+    AnalyzeStep("find_orphans", "Find Orphans", "filelink.scan_orphans",
+                {"purge_orphans": False}),
+    # --- Phase F · Measure — footprint payoff (not a problem check) ---
     AnalyzeStep("analyze_memory_disk", "Analyze Memory/Disk",
                 "filelink.analyze_resources", {}),
 )
@@ -91,34 +104,5 @@ FLATTEN_STEPS: tuple[AnalyzeStep, ...] = tuple(
 )
 
 
-# docs/TODO.md #22 — Automated Cleanup, redesigned to a Scan -> Review ->
-# Apply Selected flow. Deliberately a SEPARATE, small step list rather than a
-# STEPS subset (unlike DUPLICATE_STEPS/FLATTEN_STEPS above): Make Local's
-# scan is intentionally excluded from the main "Analyze All" run (it's a
-# footprint/impact measurement, not a "look for problems" check — see this
-# module's own docstring), but it IS one of the 4 cleanup functions, so it
-# needs its own entry here.
-CLEANUP_SCAN_STEPS: tuple[AnalyzeStep, ...] = (
-    AnalyzeStep("cleanup_make_local", "Make Local", "filelink.make_local", {"apply": False}),
-    AnalyzeStep("cleanup_materials", "Duplicate Materials", "filelink.material_dedup",
-                {"apply": False}),
-    AnalyzeStep("cleanup_geometry", "Duplicate Geometry", "filelink.instance_geometry",
-                {"apply": False}),
-    AnalyzeStep("cleanup_orphans", "Orphans", "filelink.scan_orphans", {"purge_orphans": False}),
-)
-
-# The ticked-selection apply counterpart to each CLEANUP_SCAN_STEPS entry —
-# same ``key``s (so a single include-toggle filter works for both scan and
-# apply), different (real, already-existing except Make Local's) operator.
-CLEANUP_APPLY_STEPS: tuple[AnalyzeStep, ...] = (
-    AnalyzeStep("cleanup_make_local", "Make Local", "filelink.make_local_selected", {}),
-    AnalyzeStep("cleanup_materials", "Duplicate Materials", "filelink.merge_material_selected",
-                {}),
-    AnalyzeStep("cleanup_geometry", "Duplicate Geometry", "filelink.instance_geometry_selected",
-                {}),
-    AnalyzeStep("cleanup_orphans", "Orphans", "filelink.purge_orphans_selected", {}),
-)
-
-
 __all__ = ["AnalyzeStep", "STEPS", "step_by_key", "DUPLICATE_STEP_KEYS", "DUPLICATE_STEPS",
-           "FLATTEN_STEP_KEYS", "FLATTEN_STEPS", "CLEANUP_SCAN_STEPS", "CLEANUP_APPLY_STEPS"]
+           "FLATTEN_STEP_KEYS", "FLATTEN_STEPS"]

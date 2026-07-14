@@ -80,32 +80,6 @@ def register() -> None:
         update=_debug_update,
     )
 
-    # docs/TODO.md #22 — Automated Cleanup: per-function include toggles
-    # (persisted in the file, per the locked design) + the post-Apply save
-    # offer. Make Local defaults OFF (more destructive than the other 3,
-    # locked decision); the rest default ON.
-    bpy.types.Scene.filelink_cleanup_include_makelocal = bpy.props.BoolProperty(
-        name="Make Local", description="Include Make Local in Scan / Apply Selected",
-        default=False,
-    )
-    bpy.types.Scene.filelink_cleanup_include_materials = bpy.props.BoolProperty(
-        name="Duplicate Materials",
-        description="Include Duplicate Materials in Scan / Apply Selected", default=True,
-    )
-    bpy.types.Scene.filelink_cleanup_include_geometry = bpy.props.BoolProperty(
-        name="Duplicate Geometry",
-        description="Include Duplicate Geometry in Scan / Apply Selected", default=True,
-    )
-    bpy.types.Scene.filelink_cleanup_include_orphans = bpy.props.BoolProperty(
-        name="Orphans", description="Include Orphans in Scan / Apply Selected", default=True,
-    )
-    bpy.types.Scene.filelink_cleanup_save_after = bpy.props.BoolProperty(
-        name="Save file after Apply",
-        description="Save the file once Apply Selected finishes (skipped if the file has "
-        "never been saved)",
-        default=False,
-    )
-
     global _load_post_handler
     from bpy.app.handlers import persistent
 
@@ -461,9 +435,7 @@ def unregister() -> None:
     _load_post_handler = None
 
     for attr in ("filelink_scan_dir", "filelink_dep_target", "filelink_debug_log",
-                "filelink_cleanup_include_makelocal", "filelink_cleanup_include_materials",
-                "filelink_cleanup_include_geometry", "filelink_cleanup_include_orphans",
-                "filelink_cleanup_save_after", "filelink_material_search_pattern"):
+                "filelink_material_search_pattern"):
         if hasattr(bpy.types.Scene, attr):
             delattr(bpy.types.Scene, attr)
     from .ops.report_store import FEATURES, INLINE_DETAIL_FEATURES

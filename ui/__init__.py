@@ -30,7 +30,6 @@ from .panels import (
     FILELINK_UL_examine_picker,
     FILELINK_UL_deform_rows,
     FILELINK_PT_scene_deps,
-    FILELINK_PT_automated_cleanup,
     FILELINK_PT_current_file_data,
     FILELINK_PT_analyze,
     FILELINK_PT_analyze_external,
@@ -40,11 +39,11 @@ from .panels import (
 # PropertyGroup + UIList first (panels' template_list draws them, and the WM
 # CollectionProperty in register() needs the PropertyGroup to exist), then the
 # parent Scene panel (must register BEFORE its bl_parent_id children below),
-# then its collapsible children (bl_order: Automated Cleanup=-1, Current File
-# Data=0, Analyze This File=1, Analyze External Files=2, Utilities=7 — the
-# legacy Batch-5 panels 3-6 were folded into Analyze/Utilities one by one and
-# deleted, Results=8 last of all, deleted in the Group 11 panel-consolidation
-# pass, 2026-06-26 — see each remaining class for its number).
+# then its collapsible children (bl_order: Current File Data=0, Analyze This
+# File=1, Analyze External Files=2, Utilities=7 — the legacy Batch-5 panels 3-6
+# were folded into Analyze/Utilities one by one and deleted, Results=8 deleted
+# in the Group 11 panel-consolidation pass 2026-06-26, and Automated Cleanup=-1
+# deleted in v0.3.0 once the re-sequenced Analyze flow replaced it).
 REGISTER_CLASSES = (
     FILELINK_PG_tree_row,
     FILELINK_PG_analyze_step,
@@ -70,7 +69,6 @@ REGISTER_CLASSES = (
     FILELINK_UL_examine_picker,
     FILELINK_UL_deform_rows,
     FILELINK_PT_scene_deps,
-    FILELINK_PT_automated_cleanup,
     FILELINK_PT_current_file_data,
     FILELINK_PT_analyze,
     FILELINK_PT_analyze_external,

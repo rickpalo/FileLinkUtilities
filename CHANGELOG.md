@@ -8,6 +8,38 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.0] — Analyze re-sequenced into a 6-phase pipeline; Automated Cleanup removed
+
+A larger UX change than the 0.2.x stream (hence the minor bump), from a full flow review: the
+"Analyze This File" section now leads the user biggest-fix-first instead of presenting an
+undifferentiated stack of buttons.
+
+### Changed
+- **"Analyze This File" is now one ordered repair pipeline.** Both the panel's top-to-bottom
+  order AND the "Analyze All" run follow the same sequence, grouped under labeled phase dividers:
+  **Connect** (fix missing/broken references first) → **Restructure** (simplify the link graph) →
+  **Deduplicate** → **Purge** → **Measure** (footprint). The four duplicate scans are contiguous
+  now instead of scattered through the run.
+- **"Find All Missing" also scans missing textures.** It previously ran only the broken-library-
+  link and reconnectable-data-block scans, silently skipping textures — the one kind of "missing"
+  a user would most expect it to cover.
+- **Find Resolution Variants moved into the "Find Duplicates" group** (it's redundant-material
+  data too) instead of floating as a standalone row. It stays out of the "Find All Duplicates"
+  one-click sequencer — still a different kind of analysis (multi-res footprint, not strict
+  duplicates).
+
+### Added
+- **Advisory "what to do" lines** under the two detection-only checks (Check Materials, Check
+  Armature Deformation): they now say how to fix the flagged issues by hand, and why there's no
+  safe bulk fix, instead of being silent dead ends.
+
+### Removed
+- **The "Automated Cleanup" section is gone.** The re-sequenced, self-paced Analyze flow already
+  walks through the same fixes in order, so the separate one-click batch panel — its Scan /
+  Apply Selected operators, per-function include toggles, post-Apply save option, and savings
+  report — was redundant. Automation is moving into per-section best-guess defaults rather than a
+  single magic button.
+
 ## [0.2.121] — Find Duplicate Materials/Geometry crash fix; Find Duplicates UI polish
 
 ### Fixed

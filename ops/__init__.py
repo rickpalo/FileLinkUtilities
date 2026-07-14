@@ -24,10 +24,6 @@ from .analyze_all import (
     FILELINK_OT_find_duplicates,
     FILELINK_OT_find_flattenable_links,
 )
-from .cleanup import (
-    FILELINK_OT_cleanup_apply_selected,
-    FILELINK_OT_cleanup_scan,
-)
 from .relink import (
     FILELINK_OT_dup_lib_select,
     FILELINK_OT_make_selected_relative,
@@ -161,8 +157,6 @@ REGISTER_CLASSES = (
     FILELINK_OT_request_cancel,
     FILELINK_OT_make_local,
     FILELINK_OT_make_local_selected,
-    FILELINK_OT_cleanup_scan,
-    FILELINK_OT_cleanup_apply_selected,
     FILELINK_OT_material_dedup,
     FILELINK_OT_merge_material_selected,
     FILELINK_OT_check_materials,
