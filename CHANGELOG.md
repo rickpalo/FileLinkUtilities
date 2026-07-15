@@ -8,6 +8,17 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.11] — "Open in new Blender" links for cross-file fixes
+
+### Added
+- **Wherever the addon points at a problem to fix in a different file, the file name is now a
+  clickable link** that opens that `.blend` in a separate new Blender instance — so you can go fix
+  it without disturbing the current session. First wired into the "Linked — fix at the source
+  library" texture list (the library name is the link); it's the foundation for the Connect-phase
+  redesign, where each missing library will offer Relink / Retarget / Merge / fix-at-source. New
+  `filelink.open_blend_external` operator (launches `bpy.app.binary_path` on the file) and a
+  `_draw_file_link` helper that shows the basename without the `.blend` extension.
+
 ## [0.3.10] — Crash fix: guard the last two unguarded heavy-read paths (resource, actions)
 
 ### Fixed

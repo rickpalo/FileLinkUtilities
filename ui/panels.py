@@ -2951,6 +2951,18 @@ _RECONNECT_CONF = {
 }
 
 
+def _draw_file_link(row, filepath: str, *, icon: str = "FILE_BLEND") -> None:
+    """A clickable "link" to open another .blend in a NEW Blender instance
+    (user request 2026-07-15) — used everywhere the addon points at a problem
+    that must be fixed in a DIFFERENT file (fix-at-source library, indirect
+    duplicate, ...). Shows the file's basename WITHOUT the .blend extension,
+    drawn flat (``emboss=False``) so it reads as a link rather than a button.
+    Draws into the caller's ``row`` so it can sit inline after a label."""
+    name = os.path.splitext(os.path.basename(filepath))[0] or filepath
+    op = row.operator("filelink.open_blend_external", text=name, icon=icon, emboss=False)
+    op.filepath = filepath
+
+
 def _draw_tier_select(layout, collection: str) -> None:
     """The reusable confidence bulk-select toolbar (v0.3.x) —
     ``Select: High / High + Med / All / None`` over any WM collection whose
@@ -3203,8 +3215,6 @@ def _draw_linked_missing_textures(tex, wm) -> None:
     tex.label(text=f"Linked — fix at the source library ({len(rows)})",
              icon="LIBRARY_DATA_BROKEN")
 
-    from ..core.datablock_links import basename as _lib_basename
-
     LM = "\x03"  # namespaced so these keys don't collide with the lists above
     expanded = set(filter(None, wm.filelink_tex_expanded.split("\n")))
     groups: dict[str, list] = {}
@@ -3215,8 +3225,15 @@ def _draw_linked_missing_textures(tex, wm) -> None:
         members = groups[lib]
         ckey = LM + lib
         is_exp = ckey in expanded
-        _draw_group_header(tex, key=ckey, prop="filelink_tex_expanded", is_exp=is_exp,
-                           label=f"{_lib_basename(lib)}  ({len(members)})", icon="FILE_BLEND")
+        known = lib != "(unknown library)"
+        # The library NAME is a clickable link that opens that .blend in a new
+        # Blender to fix the texture paths there (user request 2026-07-15).
+        _draw_group_header(
+            tex, key=ckey, prop="filelink_tex_expanded", is_exp=is_exp,
+            label=(f"Fix {len(members)} texture(s) in" if known
+                   else f"{len(members)} texture(s) — unknown library"),
+            icon="LIBRARY_DATA_BROKEN",
+            action=(lambda r, lib=lib: _draw_file_link(r, lib)) if known else None)
         if not is_exp:
             continue
         for item in members:
