@@ -8,6 +8,16 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.12] — Retarget Library moves into the Connect phase
+
+### Changed
+- **"Retarget Library" moved out of Utilities and into the Connect phase**, right after Find Broken
+  Library Links — retargeting a missing or split library IS a connectivity fix, so it belongs where
+  you fix broken links rather than buried among one-off tools. The operators are unchanged; only its
+  location moved. (Stage 1 of the Connect redesign; later stages fold Relink / Retarget / Merge /
+  fix-at-source per library into a single "Fix Missing Libraries" section.) Find Material Across
+  Files stays in Utilities — it's a cross-file lookup, not a fix.
+
 ## [0.3.11] — "Open in new Blender" links for cross-file fixes
 
 ### Added

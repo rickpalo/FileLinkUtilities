@@ -1919,6 +1919,57 @@ def _draw_advisory_note(layout, text: str, *, show: bool) -> None:
     row.label(text=text, icon="INFO")
 
 
+def _draw_retarget_library(layout, context, wm) -> None:
+    """Retarget Library — list everything the current file links from a chosen
+    library and re-source it: from memory first (local, then another loaded
+    library), else Make Local or a per-row manual file+item pick. Grouped by
+    KIND; virtualized via ``FILELINK_UL_examine_picker`` over
+    ``wm.filelink_examine_picker_rows``. Relocated from Utilities into the
+    Connect phase (v0.3.12) — retargeting a missing/circular library IS a
+    connectivity fix, so it belongs where you fix broken links (stage 1 of the
+    Connect redesign; later it folds per-library into Fix Missing Libraries)."""
+    rows = wm.filelink_examine_rows
+    scanned = wm.filelink_examine_scanned
+
+    box = layout.box().column(align=True)
+    box.label(text="Retarget Library", icon="LIBRARY_DATA_DIRECT")
+    box.label(text="Retarget everything a library provides to your local file or "
+              "another library (e.g. to break a circular reference).", icon="INFO")
+    pick = box.row(align=True)
+    pick.prop_search(wm, "filelink_examine_library_pick", bpy.data, "libraries", text="")
+    pick.operator("filelink.examine_library", text="Examine", icon="VIEWZOOM")
+
+    # Persistent Apply Selected result: Apply clears filelink_examine_rows on
+    # success, so without this the one-shot toast is the only feedback.
+    if wm.filelink_examine_apply_summary:
+        box.label(text=wm.filelink_examine_apply_summary, icon="INFO")
+
+    if scanned and len(rows):
+        staged = sum(1 for r in rows if r.selected)
+        suggested = sum(1 for r in rows if r.suggested_kind != "none")
+        box.label(text=f"{len(rows)} data-block(s) from {wm.filelink_examine_library} — "
+                  f"{suggested} in-memory match(es), {staged} staged",
+                  icon="LIBRARY_DATA_OVERRIDE")
+        if any(r.suggested_kind == "none" for r in rows):
+            box.operator("filelink.examine_bulk_pick_folder",
+                         text="Search a Folder (all unresolved)", icon="VIEWZOOM")
+        box.operator("filelink.examine_apply_selected",
+                     text="Apply Selected (Backup)", icon="LINKED")
+    elif scanned:
+        box.label(text="✓ Nothing currently links from that library", icon="CHECKMARK")
+    if not (scanned and len(rows)):
+        return
+
+    n = len(wm.filelink_examine_picker_rows)
+    if n:
+        box.template_list(
+            "FILELINK_UL_examine_picker", "",
+            wm, "filelink_examine_picker_rows",
+            wm, "filelink_examine_picker_active",
+            rows=min(12, max(3, n)),
+        )
+
+
 def _draw_preflight(layout) -> None:
     """Pre-flight risk banner (v0.3.x) — the first thing in the Analyze
     pipeline. Flags, from an instant no-scan check, the high-risk condition
@@ -2077,6 +2128,10 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
                              "filelink.relink_selected", text="Relink Selected", icon="FILE_REFRESH"))
                          if len(wm.filelink_broken_libs) else None)
             _draw_broken_links(layout, wm)
+        # Retarget Library — the alternative to Relink when a library is gone or
+        # was split into several files. Relocated from Utilities into Connect
+        # (v0.3.12, stage 1); an always-available tool, so not gated.
+        _draw_retarget_library(layout, context, wm)
         if _gate(wm, "find_reconnectable", show_passed=show, counter=clean):
             _analyze_row(layout, wm, "find_reconnectable", "filelink.scan_reconnect_targets",
                          "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
@@ -2248,9 +2303,9 @@ class FILELINK_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         # reachable via the now-deleted generic Reports selector.
         _draw_report_detail(dry, wm, "f9")
 
-        layout.separator()
-        self._draw_examine_library(context, layout, wm)
-
+        # Retarget Library moved to the Connect phase in v0.3.12 (it's a
+        # connectivity fix). Find Material Across Files stays here — it's a
+        # cross-file lookup tool, not a fix.
         layout.separator()
         self._draw_material_search(context, layout, wm)
 
@@ -2272,57 +2327,6 @@ class FILELINK_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         skipped_lines = [ln for ln in wm.filelink_matsearch_skipped_text.split("\n") if ln]
         _draw_kept_separate(box, wm, "matsearch:skipped", skipped_lines,
                             label=f"Skipped — unreadable ({len(skipped_lines)})", icon="ERROR")
-
-    def _draw_examine_library(self, context, layout, wm):
-        """Examine Library: list everything the current file links from a chosen
-        (working) library and offer to re-source it from memory first — local,
-        then another already-loaded library — falling back to Make Local or a
-        per-row manual file+item pick. Grouped by KIND, mirrors the Duplicate
-        Data-blocks section's shape. Virtualized (Group 12 Phase 3 item 4,
-        2026-07-03) via FILELINK_UL_examine_picker over
-        wm.filelink_examine_picker_rows."""
-        rows = wm.filelink_examine_rows
-        scanned = wm.filelink_examine_scanned
-
-        box = layout.box().column(align=True)
-        box.label(text="Retarget Library", icon="LIBRARY_DATA_DIRECT")
-        box.label(text="Retarget everything a library provides to your local file or "
-                  "another library (e.g. to break a circular reference).", icon="INFO")
-        pick = box.row(align=True)
-        pick.prop_search(wm, "filelink_examine_library_pick", bpy.data, "libraries", text="")
-        pick.operator("filelink.examine_library", text="Examine", icon="VIEWZOOM")
-
-        # Persistent Apply Selected result (docs/TODO.md, 2026-07-09): Apply
-        # Selected clears filelink_examine_rows on success, so the panel falls
-        # straight back to this pre-scan look — without this, the one-shot
-        # toast was the ONLY feedback a user had that anything happened at all.
-        if wm.filelink_examine_apply_summary:
-            box.label(text=wm.filelink_examine_apply_summary, icon="INFO")
-
-        if scanned and len(rows):
-            staged = sum(1 for r in rows if r.selected)
-            suggested = sum(1 for r in rows if r.suggested_kind != "none")
-            box.label(text=f"{len(rows)} data-block(s) from {wm.filelink_examine_library} — "
-                      f"{suggested} in-memory match(es), {staged} staged",
-                      icon="LIBRARY_DATA_OVERRIDE")
-            if any(r.suggested_kind == "none" for r in rows):
-                box.operator("filelink.examine_bulk_pick_folder",
-                             text="Search a Folder (all unresolved)", icon="VIEWZOOM")
-            box.operator("filelink.examine_apply_selected",
-                         text="Apply Selected (Backup)", icon="LINKED")
-        elif scanned:
-            box.label(text="✓ Nothing currently links from that library", icon="CHECKMARK")
-        if not (scanned and len(rows)):
-            return
-
-        n = len(wm.filelink_examine_picker_rows)
-        if n:
-            box.template_list(
-                "FILELINK_UL_examine_picker", "",
-                wm, "filelink_examine_picker_rows",
-                wm, "filelink_examine_picker_active",
-                rows=min(12, max(3, n)),
-            )
 
 
 def _draw_progress(layout, wm):
