@@ -37,7 +37,9 @@ def main():
 
     addon = __import__(PKG)
     addon.register()
-    rr = import_module(f"{PKG}.ops.extract").datablock_risk_reason
+    extract = import_module(f"{PKG}.ops.extract")
+    rr = extract.datablock_risk_reason
+    skr = extract.shape_key_risk_reason
 
     checks = []
     try:
@@ -50,6 +52,15 @@ def main():
                        rr(_block(library=SimpleNamespace(is_missing=False))) == ""))
         checks.append(("linked from MISSING library flagged (the fix)",
                        "missing library" in rr(_block(library=SimpleNamespace(is_missing=True)))))
+
+        # shape_key_risk_reason must flag the KEY datablock itself, not only its
+        # owner (PSM_Stage v0.3.6: a linked-from-missing Key on a local owner).
+        risky_key = _block(library=SimpleNamespace(is_missing=True), user=None)
+        checks.append(("shape_key_risk flags a risky KEY itself",
+                       "missing library" in skr(risky_key)))
+        clean_key = _block(user=SimpleNamespace())  # owner isn't a bpy Mesh -> safe/""
+        checks.append(("shape_key_risk clean key + non-mesh owner is safe",
+                       skr(clean_key) == ""))
 
         ok = all(p for _, p in checks)
         for label, p in checks:

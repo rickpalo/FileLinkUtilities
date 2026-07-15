@@ -8,6 +8,17 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.7] — Crash fix: shape-key risk check missed the Key datablock itself
+
+### Fixed
+- **A fourth native crash in Analyze All → Find Duplicate Data-blocks** on the same missing-library
+  file. `shape_key_risk_reason` guarded the shape key's OWNER mesh but never the **Key datablock
+  itself**, so a Key linked from a missing library (carried by a *local* override owner, which
+  looked safe) slipped through and reading its per-point `kb.data` crashed. Now both the Key and
+  its owner are risk-checked, and a linked Key or owner is skipped outright (never a local merge
+  candidate). Builds on v0.3.6's missing-library detection, which was right but only reached the
+  owner.
+
 ## [0.3.6] — Crash fix: geometry reads on data linked from a missing library
 
 ### Fixed

@@ -192,14 +192,23 @@ def datablock_risk_reason(block) -> str:
 
 def shape_key_risk_reason(key) -> str:
     """Why :func:`extract_shape_key` would refuse to read ``key``'s per-vertex
-    data, or ``""`` if there's no known risk — :func:`datablock_risk_reason`
-    applied to the shape key's OWNER mesh (a shape key can never be its own
-    override, only inherited via its owner; `ops.datablock_inspect`'s Audit
-    already flags exactly this combination as `shape_key_risks` without ever
-    reading `kb.data` on it). Split out from `extract_shape_key` itself so
-    callers can report WHICH shape keys got skipped and why, instead of
-    silently dropping them (user 2026-06-28: needs to be visible by name so
-    they can investigate the underlying file corruption)."""
+    data, or ``""`` if there's no known risk. Two heavy reads happen, so BOTH
+    datablocks are checked via :func:`datablock_risk_reason`:
+
+    * the **Key datablock itself** — its own per-point ``kb.data`` is read. The
+      Key can be missing / override / linked-from-a-missing-library
+      independently of its owner (a *local* override mesh can carry a *linked*,
+      dangling Key), and reading ``kb.data`` then crashes natively even though
+      the owner looks fine (PSM_Stage crash v0.3.6 — the owner-only check here
+      let a linked-from-missing Key straight through).
+    * its **owner mesh** — :func:`extract_shape_key` reads the owner's geometry.
+
+    Split out from `extract_shape_key` so callers can report WHICH shape keys
+    got skipped and why (user 2026-06-28: visible by name to investigate the
+    underlying file corruption)."""
+    reason = datablock_risk_reason(key)
+    if reason:
+        return reason
     owner = key.user
     if not isinstance(owner, bpy.types.Mesh):
         return ""
@@ -218,14 +227,13 @@ def extract_shape_key(key) -> dict:
         return {}
     if shape_key_risk_reason(key):
         return {}
-    # A LINKED owner mesh is never a local merge candidate (you can't merge a
-    # datablock a library owns), so its geometry fingerprint has no use — and
-    # reading that geometry can crash `extract_mesh` with an uncatchable native
-    # null read on a file with missing libraries / override loops, even when the
-    # mesh is flagged NEITHER missing nor override (PSM_Stage crash, v0.3.4:
-    # the owner was linked from one of 3 missing libraries). Nothing to gain,
+    # A LINKED Key or owner mesh is never a local merge candidate (you can't
+    # merge a datablock a library owns), so its fingerprint has no use — and
+    # reading either's heavy data can crash natively (uncatchable null read) on
+    # a file with missing libraries / override loops, even when flagged NEITHER
+    # missing nor override (PSM_Stage crashes v0.3.4/v0.3.6). Nothing to gain,
     # real risk — skip to "unverified".
-    if owner.library is not None:
+    if key.library is not None or owner.library is not None:
         return {}
     blocks = [{"name": kb.name, "co": [list(p.co) for p in kb.data]}
               for kb in key.key_blocks]
