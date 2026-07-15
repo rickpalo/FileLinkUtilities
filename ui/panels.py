@@ -1970,6 +1970,45 @@ def _draw_retarget_library(layout, context, wm) -> None:
         )
 
 
+def _draw_missing_libraries(layout, context, wm, narrow: bool) -> None:
+    """Stage 2 of the Connect redesign (v0.3.13): the merged **Fix Missing
+    Libraries** section — Find Broken Library Links (Relink), Retarget Library,
+    and Reconnectable Data-blocks under ONE header with a single "Scan All"
+    (``filelink.scan_all_missing`` runs all three + textures). Replaces the
+    three separate top-level Connect sub-sections AND the standalone Find All
+    Missing button. Each sub-part's existing list + apply action is reused as-is
+    (the headline shows status, the list draws only once its scan has data);
+    Stage 3 will fold Relink / Retarget / Merge / fix-at-source per library row."""
+    hdr = layout.row(align=True)
+    hdr.label(text="Fix Missing Libraries", icon="LIBRARY_DATA_BROKEN")
+    hdr.operator("filelink.scan_all_missing", text="Scan All", icon="VIEWZOOM")
+    if wm.filelink_missing_scanned:
+        srow = layout.row()
+        srow.active = False
+        srow.label(text=_all_missing_summary(wm))
+
+    # Broken library links → Relink (whole .blend files that can't be found).
+    bh = _broken_links_headline(wm)
+    if bh:
+        brow = layout.row(align=True)
+        brow.label(text=bh, icon="LIBRARY_DATA_BROKEN")
+        if len(wm.filelink_broken_libs):
+            brow.operator("filelink.relink_selected", text="Relink Selected", icon="FILE_REFRESH")
+    _draw_broken_links(layout, wm)
+
+    # Retarget — the alternative to Relink when a library is gone or was split.
+    _draw_retarget_library(layout, context, wm)
+
+    # Reconnectable data-blocks → Reconnect (individual ids a library fix left over).
+    rh = _reconnect_headline(wm)
+    if rh:
+        rrow = layout.row(align=True)
+        rrow.label(text=rh, icon="LIBRARY_DATA_OVERRIDE")
+        if wm.filelink_missing_scanned and len(wm.filelink_missing_blocks):
+            rrow.operator("filelink.reconnect_selected", text="Reconnect Selected", icon="LINKED")
+    _draw_reconnect(layout, wm)
+
+
 def _draw_preflight(layout) -> None:
     """Pre-flight risk banner (v0.3.x) — the first thing in the Analyze
     pipeline. Flags, from an instant no-scan check, the high-risk condition
@@ -2116,30 +2155,11 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
             _analyze_row(layout, wm, "check_link_chain", "filelink.scan_dependencies",
                          "Check Link Chain", "VIEWZOOM", has_run=_feature_has_run(wm, "f7"))
             _draw_report_detail(layout, wm, "f7")
-        # The meta-button that fires all three missing-scans below at once —
-        # now including Missing Textures (2026-07-14; it used to skip them).
-        _analyze_row(layout, wm, "", "filelink.scan_all_missing",
-                     "Find All Missing", "VIEWZOOM", _all_missing_summary(wm))
-        if _gate(wm, "find_broken_links", show_passed=show, counter=clean):
-            _analyze_row(layout, wm, "find_broken_links", "filelink.scan_broken_links",
-                         "Find Broken Library Links", "LIBRARY_DATA_BROKEN",
-                         _broken_links_headline(wm),
-                         draw_action=(lambda r: r.operator(
-                             "filelink.relink_selected", text="Relink Selected", icon="FILE_REFRESH"))
-                         if len(wm.filelink_broken_libs) else None)
-            _draw_broken_links(layout, wm)
-        # Retarget Library — the alternative to Relink when a library is gone or
-        # was split into several files. Relocated from Utilities into Connect
-        # (v0.3.12, stage 1); an always-available tool, so not gated.
-        _draw_retarget_library(layout, context, wm)
-        if _gate(wm, "find_reconnectable", show_passed=show, counter=clean):
-            _analyze_row(layout, wm, "find_reconnectable", "filelink.scan_reconnect_targets",
-                         "Find Reconnectable Data-blocks", "LIBRARY_DATA_OVERRIDE",
-                         _reconnect_headline(wm),
-                         draw_action=(lambda r: r.operator(
-                             "filelink.reconnect_selected", text="Reconnect Selected", icon="LINKED"))
-                         if wm.filelink_missing_scanned and len(wm.filelink_missing_blocks) else None)
-            _draw_reconnect(layout, wm)
+        # Merged "Fix Missing Libraries" — Broken Library Links (Relink),
+        # Retarget, and Reconnectable Data-blocks under one header with a single
+        # "Scan All" (Connect redesign stage 2, v0.3.13). Always shown (it IS the
+        # phase's primary work); its sub-lists self-hide until scanned.
+        _draw_missing_libraries(layout, context, wm, narrow)
         if _gate(wm, "find_missing_textures", show_passed=show, counter=clean):
             _analyze_row(layout, wm, "find_missing_textures", "filelink.scan_broken_textures",
                          "Find Missing Textures", "IMAGE_DATA",

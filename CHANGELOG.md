@@ -8,6 +8,16 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.13] — Connect redesign stage 2: one "Fix Missing Libraries" section
+
+### Changed
+- **Find Broken Library Links + Retarget Library + Find Reconnectable Data-blocks are now a single
+  "Fix Missing Libraries" section** in Connect, under one header with one **Scan All** button (runs
+  the broken-link, reconnect, and texture scans together). Replaces the three separate sub-sections
+  plus the standalone "Find All Missing" button — fewer buttons, one place to fix libraries. The
+  Relink / Retarget / Reconnect lists and their apply actions are unchanged; stage 3 will fold
+  Relink / Retarget / Merge / fix-at-source per library row.
+
 ## [0.3.12] — Retarget Library moves into the Connect phase
 
 ### Changed
