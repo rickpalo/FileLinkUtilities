@@ -54,9 +54,16 @@ def _fingerprint_for(attr: str, block, skipped: list[tuple[str, str]]) -> str:
     the caller can surface WHICH ones by name instead of silently dropping
     them into the generic "unverified" bucket."""
     if attr == "actions":
-        from .extract import extract_action
+        from .extract import datablock_risk_reason, extract_action
         from ..core.fingerprint import fingerprint_action
 
+        # extract_action reads fc.keyframe_points — the same uncatchable native
+        # crash on dangling data as the mesh/shape-key reads, so gate it the
+        # same way (covers the wholesale missing-library case too).
+        reason = datablock_risk_reason(block)
+        if reason:
+            skipped.append((block.name, reason))
+            return ""
         try:
             return fingerprint_action(extract_action(block))
         except Exception:

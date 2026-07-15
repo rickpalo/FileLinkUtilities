@@ -8,6 +8,21 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.10] — Crash fix: guard the last two unguarded heavy-read paths (resource, actions)
+
+### Fixed
+- **Analyze All crashed on its FINAL step (Analyze Memory/Disk)** on the missing-library file:
+  `resource._gather_steps` read `len(mesh.vertices)` for its RAM estimate without the risk guard
+  every other geometry path uses, so it was the one place left to crash after v0.3.9 got the run
+  all the way to the end. It now skips risky/dangling datablocks via `datablock_risk_reason`
+  (which includes the missing-library wholesale gate); a skipped block just isn't counted in the
+  footprint estimate.
+- **Proactively guarded the last unguarded heavy read in Find Duplicate Data-blocks — actions.**
+  `extract_action` reads `fc.keyframe_points`, the same uncatchable native crash risk as mesh/
+  shape-key data. An audit of every heavy-read path in the Analyze All flow (mesh geometry,
+  shape-key points, action keyframes; image reads are metadata-only and safe) confirms these two
+  were the last gaps.
+
 ## [0.3.9] — Crash fix (definitive): skip all content reads while a library is missing
 
 ### Fixed

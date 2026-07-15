@@ -40,7 +40,17 @@ def _image_disk(img) -> int:
 
 def _gather_steps(context):
     """Estimate RAM/VRAM/disk for every image + mesh, yielding ``(fraction,
-    status)`` every ``_EST_CHUNK``. Returns the ``items`` list."""
+    status)`` every ``_EST_CHUNK``. Returns the ``items`` list.
+
+    Skips datablocks flagged risky by :func:`extract.datablock_risk_reason` —
+    reading ``img.size`` / ``len(me.vertices)`` on data that's missing, an
+    override, or linked from a missing library is the same uncatchable native
+    crash the fingerprint scans guard against (PSM_Stage v0.3.9: this was the
+    ONE geometry-reading path in Analyze All that still didn't, so the run
+    crashed here on the final step). A skipped block just isn't counted — the
+    estimate is a footprint reading, not a correctness check."""
+    from .extract import datablock_risk_reason
+
     images = list(bpy.data.images)
     meshes = list(bpy.data.meshes)
     total = (len(images) + len(meshes)) or 1
@@ -48,25 +58,27 @@ def _gather_steps(context):
     items = []
     done = 0
     for img in images:
-        w, h = (img.size[0], img.size[1]) if len(img.size) >= 2 else (0, 0)
-        est = image_estimate({"width": w, "height": h, "depth": img.depth})
-        items.append({
-            "type": "Image", "name": img.name,
-            "ram": est["ram"], "vram": est["vram"], "disk": _image_disk(img),
-            "users": img.users,
-        })
+        if not datablock_risk_reason(img):
+            w, h = (img.size[0], img.size[1]) if len(img.size) >= 2 else (0, 0)
+            est = image_estimate({"width": w, "height": h, "depth": img.depth})
+            items.append({
+                "type": "Image", "name": img.name,
+                "ram": est["ram"], "vram": est["vram"], "disk": _image_disk(img),
+                "users": img.users,
+            })
         done += 1
         if done % _EST_CHUNK == 0:
             yield (0.85 * done / total, f"Estimating resources {done}/{total}…")
     for me in meshes:
-        est = mesh_estimate({
-            "verts": len(me.vertices), "edges": len(me.edges),
-            "loops": len(me.loops), "polys": len(me.polygons),
-        })
-        items.append({
-            "type": "Mesh", "name": me.name,
-            "ram": est["ram"], "vram": est["vram"], "disk": 0, "users": me.users,
-        })
+        if not datablock_risk_reason(me):
+            est = mesh_estimate({
+                "verts": len(me.vertices), "edges": len(me.edges),
+                "loops": len(me.loops), "polys": len(me.polygons),
+            })
+            items.append({
+                "type": "Mesh", "name": me.name,
+                "ram": est["ram"], "vram": est["vram"], "disk": 0, "users": me.users,
+            })
         done += 1
         if done % _EST_CHUNK == 0:
             yield (0.85 * done / total, f"Estimating resources {done}/{total}…")
