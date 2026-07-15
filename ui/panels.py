@@ -1919,6 +1919,30 @@ def _draw_advisory_note(layout, text: str, *, show: bool) -> None:
     row.label(text=text, icon="INFO")
 
 
+def _draw_preflight(layout) -> None:
+    """Pre-flight risk banner (v0.3.x) — the first thing in the Analyze
+    pipeline. Flags, from an instant no-scan check, the high-risk condition
+    that both makes later results incomplete AND historically crashed on
+    dangling data: missing libraries. Data linked from a missing library
+    can't be read, so the Deduplicate / Geometry / Orphan checks skip it —
+    the fix is to relink (Connect), not to keep skipping. Shown only when
+    there's a risk, so a healthy file never sees it."""
+    from ..ops import metrics
+
+    _total, missing, _absolute = metrics.library_stats()
+    if not missing:
+        return
+    box = layout.box().column(align=True)
+    warn = box.row()
+    warn.alert = True
+    warn.label(text=f"{missing} missing librar{'y' if missing == 1 else 'ies'} — "
+               "analysis will be incomplete", icon="ERROR")
+    note = box.row()
+    note.active = False
+    note.label(text="Data linked from a missing library can't be read, so Deduplicate, Geometry "
+               "and Orphan checks skip it. Relink in Connect below first.", icon="INFO")
+
+
 def _check_status(wm, key: str) -> str:
     """``not_run`` | ``clean`` | ``findings`` for the checks that take part in
     progressive disclosure (v0.3.x). Decided from each check's real COUNT, never
@@ -2022,6 +2046,7 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         wm = context.window_manager
         narrow = bool(context.region) and context.region.width < 320
 
+        _draw_preflight(layout)
         layout.operator("filelink.analyze_all", icon="PLAY")
 
         # Progressive disclosure (v0.3.x): a check that has run and found NOTHING

@@ -8,6 +8,16 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.8] — Pre-flight risk banner: incomplete-analysis warning for missing libraries
+
+### Added
+- **A pre-flight risk banner at the top of "Analyze This File"** when the current file has missing
+  libraries: *"N missing libraries — analysis will be incomplete,"* explaining that data linked
+  from a missing library can't be read, so the Deduplicate / Geometry / Orphan checks skip it — and
+  to relink in Connect first. Instant (no scan), shown only when there's a risk. This surfaces the
+  connect-before-deduplicate consequence up front — the very condition behind the recent crash
+  chain — so you fix connectivity before running geometry-heavy scans over dangling data.
+
 ## [0.3.7] — Crash fix: shape-key risk check missed the Key datablock itself
 
 ### Fixed
