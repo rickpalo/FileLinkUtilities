@@ -14,6 +14,18 @@ import subprocess
 
 import bpy
 
+# Fire-and-forget child Blenders we launch but never wait on. We keep each
+# Popen referenced here on purpose: if it were discarded, CPython finalizes it
+# later (whenever GC runs) and — seeing the child still alive — emits a
+# ResourceWarning. That warning can fire mid-frame while a modal operator is
+# pumping its run_steps generator (e.g. Analyze All), and emitting a warning
+# with a suspended generator frame on the stack crashed Blender with an access
+# violation in the CPython frame walker (v0.3.13 crash, EXCEPTION_ACCESS_VIOLATION
+# reading 0xA8). Holding the reference defers finalization to interpreter
+# shutdown, when no modal is running. Each launch first reaps already-exited
+# children via poll() (which clears their returncode so they, too, never warn).
+_LAUNCHED: list[subprocess.Popen] = []
+
 
 class FILELINK_OT_open_blend_external(bpy.types.Operator):
     bl_idname = "filelink.open_blend_external"
@@ -35,9 +47,14 @@ class FILELINK_OT_open_blend_external(bpy.types.Operator):
             self.report({"ERROR"}, "Can't locate the Blender executable to launch")
             return {"CANCELLED"}
         try:
+            # Reap any previously launched children that have since exited, so
+            # the list stays bounded and their Popen objects finalize cleanly
+            # (poll() sets returncode → no ResourceWarning on GC).
+            _LAUNCHED[:] = [p for p in _LAUNCHED if p.poll() is None]
             # Detached: a fresh independent Blender, not a child that dies with
-            # this one and not something we wait on.
-            subprocess.Popen([blender, path], close_fds=True)
+            # this one and not something we wait on. Keep the handle in _LAUNCHED
+            # (see module note) so its finalizer can't warn mid-modal and crash.
+            _LAUNCHED.append(subprocess.Popen([blender, path], close_fds=True))
         except Exception as exc:  # noqa: BLE001 — surface any launch failure to the user
             self.report({"ERROR"}, f"Couldn't launch Blender: {exc}")
             return {"CANCELLED"}

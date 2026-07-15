@@ -26,6 +26,21 @@ from .datablock_inspect import _iter_missing_blocks
 from .pickers import FilePickerMixin, resolve_existing_file
 
 
+def _norm_lib_path(path: str) -> str:
+    """Canonical form for comparing a library path across sources (a reconnect
+    group's stored source path vs. a broken-link's stored path): resolve any
+    ``//`` relative form against the current .blend, then normcase/normpath +
+    forward slashes. Returns "" for a blank/unresolvable path so callers can skip
+    it. Used by the stage 3b-2 broken-link↔reconnect correlation."""
+    if not path:
+        return ""
+    try:
+        path = bpy.path.abspath(path)
+    except Exception:
+        pass
+    return os.path.normpath(path).replace("\\", "/").lower()
+
+
 def _populate_missing_blocks(context) -> list[missingdata.MissingBlock]:
     """Refill ``filelink_missing_blocks`` from the current file's placeholder
     (``is_missing``) data-blocks. A library group that already had a source .blend
@@ -199,6 +214,14 @@ def rebuild_reconnect_picker_rows(wm) -> None:
     for i, item in enumerate(coll):
         groups.setdefault(item.library, []).append(i)
 
+    # Stage 3b-2 (v0.3.18): a reconnect group whose source library is ALSO a
+    # broken library LINK gets flagged "MISSING LIBRARY — relink first", so one
+    # per-library row tells the whole story (the link is broken AND left these
+    # data-blocks dangling). Correlate by EXACT normalized path only — basename
+    # matching would over-flag genuinely different files that share a name (e.g. a
+    # local D:\ copy vs. the SynologyDrive original). No match ⇒ no flag (safe).
+    broken_paths = {p for p in (_norm_lib_path(bl.stored) for bl in wm.filelink_broken_libs) if p}
+
     specs = []
     for library in sorted(groups, key=lambda lib: (-len(groups[lib]), lib.lower())):
         indices = groups[library]
@@ -209,6 +232,15 @@ def rebuild_reconnect_picker_rows(wm) -> None:
         external = sum(1 for m in members_rows if m.confidence == "external")
         lib_found = members_rows[0].library_found
         has_source = bool(members_rows[0].source_blend)
+        is_broken_link = bool(library) and _norm_lib_path(library) in broken_paths
+        # Stage 3b-3 (v0.3.19): if the source library file actually exists on disk,
+        # offer "Open in New Blender" on the group so the user can go fix the
+        # renamed/removed data-blocks at their source. Computed here (once per
+        # rebuild), never in draw_item — os.path.isfile on a Synology path every
+        # redraw would stutter the UI. A broken (missing) library has no file to
+        # open, so never both this and the broken-link flag.
+        source_exists = (not is_broken_link and bool(library)
+                         and os.path.isfile(os.path.normpath(bpy.path.abspath(library))))
         disp = library or "(unknown library)"
         bits = []
         if matched:
@@ -218,13 +250,19 @@ def rebuild_reconnect_picker_rows(wm) -> None:
         if external:
             bits.append(f"{external} fix at the source library")
         label = f"{disp}  ({', '.join(bits)})" if bits else f"{disp}  ({len(members_rows)})"
+        if is_broken_link:
+            label = "⚠ MISSING LIBRARY — relink first · " + label
         info, info_icon = _group_info_line(members_rows[0].source_blend, lib_found)
         specs.append(picker_mod.GroupSpec(
             key=library,
             label=label,
-            icon="LIBRARY_DATA_BROKEN" if (lib_found or has_source) else "ERROR",
+            # A broken-link group leads with the error icon + red label: its blocks
+            # can't be reconnected until the library itself is relinked above.
+            icon="ERROR" if (is_broken_link or not (lib_found or has_source)) else "LIBRARY_DATA_BROKEN",
             members=[picker_mod.MemberRef(ref_index=i) for i in indices],
             has_action=True,
+            has_action2=source_exists,
+            alert=is_broken_link,
             info=info,
             info_icon=info_icon,
         ))
@@ -244,6 +282,7 @@ def rebuild_reconnect_picker_rows(wm) -> None:
         item.label = pr.label
         item.icon = pr.icon
         item.has_action = pr.has_action
+        item.has_action2 = pr.has_action2
         item.alert = pr.alert
         item.is_expanded = pr.is_expanded
 

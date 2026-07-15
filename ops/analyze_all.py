@@ -16,6 +16,8 @@ marked "error" — one bad step shouldn't stop the rest from running.
 
 from __future__ import annotations
 
+import warnings
+
 import bpy
 
 from ..core.analyze_steps import DUPLICATE_STEPS, FLATTEN_STEPS, STEPS
@@ -24,7 +26,15 @@ from .progress import ModalProgressMixin, set_result
 
 def _call(opname: str, kwargs: dict):
     category, name = opname.split(".", 1)
-    getattr(getattr(bpy.ops, category), name)(**kwargs)
+    op = getattr(getattr(bpy.ops, category), name)
+    # Cheap, harmless defence — NOT the actual crash fix (v0.3.15 tried this alone
+    # and the crash reproduced identically at v0.3.16). The real fix is running the
+    # sequencer synchronously (see _AnalyzeSequencerMixin.invoke); the warning
+    # frame-walk that crashed happens regardless of this filter. Kept only to keep
+    # step-time warning noise out of the console. See reference_modal_warning_crash.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        op(**kwargs)
 
 
 class _AnalyzeSequencerMixin:
@@ -44,6 +54,23 @@ class _AnalyzeSequencerMixin:
 
     _steps = STEPS
     _run_label = "Analyze All"
+
+    def invoke(self, context, event):
+        """Run SYNCHRONOUSLY (drain the generator via ``execute``) instead of the
+        modal step-pump. Every crash of this sequencer (v0.3.13–v0.3.16,
+        EXCEPTION_ACCESS_VIOLATION in the CPython frame walker) had
+        ``rna_operator_modal_cb`` in the stack: the modal pumps ``run_steps`` as a
+        SUSPENDED generator and calls ``bpy.ops`` sub-operators from inside it, so
+        a Python warning during a nested call walks the suspended generator frame
+        and dereferences NULL. The synchronous ``execute`` path drives the same
+        generator from a normal for-loop frame (valid ``f_back``) and has NEVER
+        crashed — it's what every headless test and the scripting console use.
+        v0.3.15's ``warnings.catch_warnings`` suppression (kept below as cheap
+        defence) did NOT help, because the frame walk happens regardless of the
+        filter. Trade-off: no progress bar / ESC-cancel during the run; restoring
+        those needs a generator-free modal (pump one step per tick directly), a
+        later step. See reference_modal_warning_crash memory."""
+        return self.execute(context)
 
     def run_steps(self, context):
         wm = context.window_manager

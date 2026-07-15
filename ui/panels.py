@@ -259,6 +259,14 @@ class FILELINK_PG_picker_row(bpy.types.PropertyGroup):
     icon: bpy.props.StringProperty()           # type: ignore[valid-type]
     checkbox_state: bpy.props.StringProperty()  # "none"|"checked"|"unchecked"|"done"  # type: ignore[valid-type]
     has_action: bpy.props.BoolProperty()       # group rows only: show the header's action button  # type: ignore[valid-type]
+    has_action2: bpy.props.BoolProperty()      # group rows only: show a SECOND header action (section-defined)  # type: ignore[valid-type]
+    # group rows only: draw the header label in Blender's alert/red styling. The
+    # rebuild copy-loops (reconnect/dup-tex/image-dedup/examine) all assign
+    # ``item.alert = pr.alert`` from the bpy-free core.picker PickerRow; without
+    # this declaration that assignment raises AttributeError the moment any group
+    # actually sets alert=True (it was latent until stage 3b-2's broken-link flag
+    # became the first reconnect group to do so).
+    alert: bpy.props.BoolProperty()            # type: ignore[valid-type]
     is_expanded: bpy.props.BoolProperty()      # type: ignore[valid-type]
 
 
@@ -712,6 +720,12 @@ class FILELINK_UL_broken_libs(bpy.types.UIList):
         else:
             target.label(text="no match — pick a file", icon="QUESTION")
         row.operator("filelink.relink_pick_file", text="", icon="FILEBROWSER").index = index
+        # (v0.3.22) A "Retarget" button was here (stage 3b-3b) but removed: these
+        # rows are always MISSING libraries, and Examine/Retarget reads what a
+        # library provides — unsafe on a missing one (crashed reading a dangling
+        # placeholder's name, v0.3.21). Missing libraries are for Relink (here) or
+        # Datablock Reconnect; Retarget stays for WORKING libraries in its own
+        # section, its documented purpose.
 
 
 class FILELINK_UL_flatten_picker(bpy.types.UIList):
@@ -960,7 +974,19 @@ class FILELINK_UL_reconnect_picker(bpy.types.UIList):
                                icon="TRIA_DOWN" if item.is_expanded else "TRIA_RIGHT",
                                emboss=False)
             tog.key, tog.prop = item.key, "filelink_missing_expanded"
-            row.label(text=item.label, icon=item.icon)
+            # Stage 3b-2: a group flagged as also-a-broken-link draws its label in
+            # Blender's alert red (item.alert) — reddening only the label sub-row,
+            # not the toggle or the pick-source action beside it.
+            lab = row.row()
+            lab.alert = item.alert
+            lab.label(text=item.label, icon=item.icon)
+            # Stage 3b-3: fix-at-source — open the resolvable source library in a
+            # new Blender to fix its renamed/removed data-blocks (precomputed
+            # has_action2; the group key IS the library path).
+            if item.has_action2:
+                op = row.operator("filelink.open_blend_external", text="",
+                                  icon="WINDOW")
+                op.filepath = item.key
             if item.has_action:
                 pop = row.operator("filelink.reconnect_pick_source", text="",
                                    icon="FILEBROWSER")
@@ -1657,9 +1683,12 @@ def _broken_links_headline(wm) -> str:
 def _path_normalization_headline(wm) -> str:
     """Path Normalization's own header summary, mirrors ``_reconnect_headline``
     (Group 11 #43, 2026-06-26). Counts renames from the f7fix report + the
-    duplicate-library/absolute-path GROUPS from the interactive checkbox
-    lists below (the actionable surface) — deliberately skips drawing the
-    read-only f7fix tree itself, same reasoning as Broken Library Links."""
+    absolute-path GROUPS from the interactive checkbox list below (the
+    actionable surface) — deliberately skips drawing the read-only f7fix tree
+    itself, same reasoning as Broken Library Links. Duplicate-library groups are
+    NOT counted here anymore (stage 3b-1, v0.3.16) — their Merge UI moved to Fix
+    Missing Libraries, which reports its own count, so counting them here too
+    would advertise an action this row no longer offers."""
     from ..core.report import Report
     from ..ops.report_store import data_prop
 
@@ -1670,15 +1699,12 @@ def _path_normalization_headline(wm) -> str:
         renames = sum(1 for f in report.findings if f.category == "normalize_path")
     except Exception:
         renames = 0
-    dup_groups = len({item.group for item in wm.filelink_dup_lib_members})
     abs_groups = len({item.group for item in wm.filelink_abs_path_members})
-    if not renames and not dup_groups and not abs_groups:
+    if not renames and not abs_groups:
         return "Path Normalization — ✓ clean"
     bits = []
     if renames:
         bits.append(f"{renames} path(s) to normalize")
-    if dup_groups:
-        bits.append(f"{dup_groups} duplicate-library group(s)")
     if abs_groups:
         bits.append(f"{abs_groups} absolute-path drive group(s)")
     return "Path Normalization — " + ", ".join(bits)
@@ -1700,9 +1726,12 @@ def _path_normalization_clean(wm) -> bool:
         renames = sum(1 for f in report.findings if f.category == "normalize_path")
     except Exception:
         renames = 0
-    dup_groups = len({item.group for item in wm.filelink_dup_lib_members})
+    # Duplicate-library groups deliberately excluded (stage 3b-1, v0.3.16): the
+    # "Normalize" action only fixes renames/absolute paths, never the dup-merge
+    # (that's the separate "Use Selected Paths" op, now in Fix Missing Libraries),
+    # so a dup-only file is genuinely "nothing to Normalize" here.
     abs_groups = len({item.group for item in wm.filelink_abs_path_members})
-    return not renames and not dup_groups and not abs_groups
+    return not renames and not abs_groups
 
 
 def _normalize_action_button(row) -> None:
@@ -1889,20 +1918,28 @@ def _draw_flatten_candidates(layout, wm):
     _draw_report_detail(layout, wm, "f7flatten")
 
 
-def _draw_phase_header(layout, name: str, intent: str, icon: str) -> None:
+def _draw_phase_header(layout, name: str, intent: str, icon: str):
     """A visual divider between the Analyze pipeline's phases (2026-07-14,
-    project_flow_redesign) — a separator, then the phase name (with its icon)
-    and a muted one-line intent, so the flat button stack reads as an ordered
-    Connect → Restructure → Deduplicate → Purge → Measure sequence (fix what's
-    broken before optimizing what's redundant) instead of an undifferentiated
-    list. The intent line uses ``active = False`` for de-emphasis rather than
-    ``enabled = False``, which would read as a disabled control."""
+    project_flow_redesign) — a separator, then the phase name (with its icon) and
+    a muted one-line intent ON THE SAME ROW (2026-07-15: the two-line version made
+    phases hard to pick out), so the flat button stack reads as an ordered
+    Connect → Restructure → Deduplicate → Purge → Measure sequence. The intent uses
+    ``active = False`` for de-emphasis rather than ``enabled = False``, which would
+    read as a disabled control.
+
+    RETURNS an indented ``body`` column the caller draws the phase's contents into,
+    so each phase reads as a titled, slightly-inset block instead of a flat run of
+    buttons flush with the headers (user request, 2026-07-15). Callers must draw
+    into the returned layout, not the original ``layout``."""
     layout.separator()
-    col = layout.column(align=True)
-    col.label(text=name, icon=icon)
-    sub = col.row()
+    hdr = layout.row()
+    hdr.label(text=name, icon=icon)
+    sub = hdr.row()
     sub.active = False
     sub.label(text=intent)
+    inset = layout.row()
+    inset.separator(factor=1.4)  # left gutter = the slight indent
+    return inset.column(align=False)
 
 
 def _draw_advisory_note(layout, text: str, *, show: bool) -> None:
@@ -1977,11 +2014,30 @@ def _draw_missing_libraries(layout, context, wm, narrow: bool) -> None:
     (``filelink.scan_all_missing`` runs all three + textures). Replaces the
     three separate top-level Connect sub-sections AND the standalone Find All
     Missing button. Each sub-part's existing list + apply action is reused as-is
-    (the headline shows status, the list draws only once its scan has data);
-    Stage 3 will fold Relink / Retarget / Merge / fix-at-source per library row."""
+    (the headline shows status, the list draws only once its scan has data).
+    Stage 3b folded per library: Merge moved in (3b-1), reconnect groups whose
+    library is also a broken link are flagged (3b-2), and resolvable groups get an
+    Open-in-New-Blender fix-at-source button (3b-3). Retarget's per-row fold is
+    still deferred; Stage 4 added the "▶ Start here" pointer below the header."""
     hdr = layout.row(align=True)
     hdr.label(text="Fix Missing Libraries", icon="LIBRARY_DATA_BROKEN")
     hdr.operator("filelink.scan_all_missing", text="Scan All", icon="VIEWZOOM")
+
+    # Stage 4 (v0.3.20): "start here" pointer. Fixing a missing library cascades —
+    # it auto-resolves many downstream missing data-blocks/textures — so whenever a
+    # library is missing this section is unambiguously the first place to act. The
+    # order is FIXED (this section leads Connect since 3a; core/analyze_steps STEPS
+    # is libraries-first), never dynamically reordered (disorienting); this cue
+    # guides the eye instead. Reuses the instant, no-scan library_stats the
+    # pre-flight banner already computes.
+    from ..ops import metrics
+    _total, _missing_libs, _absolute = metrics.library_stats()
+    if _missing_libs:
+        prow = layout.row()
+        prow.label(text=f"▶ Start here — relink/retarget {_missing_libs} missing "
+                   f"librar{'y' if _missing_libs == 1 else 'ies'} first; other fixes cascade",
+                   icon="FORWARD")
+
     if wm.filelink_missing_scanned:
         srow = layout.row()
         srow.active = False
@@ -2007,6 +2063,12 @@ def _draw_missing_libraries(layout, context, wm, narrow: bool) -> None:
         if wm.filelink_missing_scanned and len(wm.filelink_missing_blocks):
             rrow.operator("filelink.reconnect_selected", text="Reconnect Selected", icon="LINKED")
     _draw_reconnect(layout, wm)
+
+    # Duplicate library paths → Merge (stage 3b-1, v0.3.16): the SAME real .blend
+    # reached via 2+ stored path forms — merging the forms is a connectivity fix,
+    # so it lives here now rather than under Check Library Paths. Populated by the
+    # Check Library Paths scan (filelink_dup_lib_members) and self-hides until then.
+    _draw_duplicate_library_paths(layout, wm)
 
 
 def _draw_preflight(layout) -> None:
@@ -2147,91 +2209,94 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
 
         # ---- Phase B · Connect — resolve dangling references first ----
-        _draw_phase_header(layout, "Connect", "Fix missing / broken references first",
-                           "LIBRARY_DATA_BROKEN")
+        body = _draw_phase_header(layout, "Connect", "Fix missing / broken references first",
+                                  "LIBRARY_DATA_BROKEN")
         clean = [0]
         show = "phasepass:connect" in expanded
-        if _gate(wm, "check_link_chain", show_passed=show, counter=clean):
-            _analyze_row(layout, wm, "check_link_chain", "filelink.scan_dependencies",
-                         "Check Link Chain", "VIEWZOOM", has_run=_feature_has_run(wm, "f7"))
-            _draw_report_detail(layout, wm, "f7")
         # Merged "Fix Missing Libraries" — Broken Library Links (Relink),
         # Retarget, and Reconnectable Data-blocks under one header with a single
         # "Scan All" (Connect redesign stage 2, v0.3.13). Always shown (it IS the
-        # phase's primary work); its sub-lists self-hide until scanned.
-        _draw_missing_libraries(layout, context, wm, narrow)
+        # phase's primary work); its sub-lists self-hide until scanned. Leads the
+        # Connect phase (stage 3a, v0.3.14) — Broken Library Links is the first fix.
+        _draw_missing_libraries(body, context, wm, narrow)
+        # Check Link Chain is a diagnostic read of the link graph, not a fix, so it
+        # moves BELOW the relink/retarget work it informs (stage 3a, v0.3.14).
+        if _gate(wm, "check_link_chain", show_passed=show, counter=clean):
+            _analyze_row(body, wm, "check_link_chain", "filelink.scan_dependencies",
+                         "Check Link Chain", "VIEWZOOM", has_run=_feature_has_run(wm, "f7"))
+            _draw_report_detail(body, wm, "f7")
         if _gate(wm, "find_missing_textures", show_passed=show, counter=clean):
-            _analyze_row(layout, wm, "find_missing_textures", "filelink.scan_broken_textures",
+            _analyze_row(body, wm, "find_missing_textures", "filelink.scan_broken_textures",
                          "Find Missing Textures", "IMAGE_DATA",
                          _missing_textures_headline(wm, narrow))
-            _draw_missing_textures(layout, wm, narrow)
+            _draw_missing_textures(body, wm, narrow)
         if _gate(wm, "check_library_paths", show_passed=show, counter=clean):
-            _analyze_row(layout, wm, "check_library_paths", "filelink.normalize_library_paths",
+            _analyze_row(body, wm, "check_library_paths", "filelink.normalize_library_paths",
                          "Check Library Paths", "FILE_REFRESH",
                          _path_normalization_headline(wm),
                          draw_action=_normalize_action_button
                          if _feature_has_run(wm, "f7fix") and not _path_normalization_clean(wm)
                          else None).apply = False
-            _draw_path_normalization(layout, wm)
-        _draw_phase_tally(layout, wm, "connect", clean[0], expanded)
+            _draw_path_normalization(body, wm)
+        _draw_phase_tally(body, wm, "connect", clean[0], expanded)
 
         # ---- Phase C · Restructure — simplify the link graph ----
-        _draw_phase_header(layout, "Restructure", "Simplify the link graph", "NODETREE")
+        body = _draw_phase_header(layout, "Restructure", "Simplify the link graph", "NODETREE")
         clean = [0]
         show = "phasepass:restructure" in expanded
-        _analyze_row(layout, wm, "audit_file", "filelink.analyze_overrides",
+        _analyze_row(body, wm, "audit_file", "filelink.analyze_overrides",
                      "Audit This File", "LIBRARY_DATA_OVERRIDE", has_run=_feature_has_run(wm, "f7live"))
-        _draw_report_detail(layout, wm, "f7live")
+        _draw_report_detail(body, wm, "f7live")
         if _gate(wm, "find_flattenable_chains", show_passed=show, counter=clean):
             # Merged 2026-06-26 (docs/TODO.md #41): "Find Flattenable Link
             # Chains" + "Find Flattenable Characters" run as one button.
-            _analyze_row(layout, wm, "find_flattenable_chains", "filelink.find_flattenable_links",
+            _analyze_row(body, wm, "find_flattenable_chains", "filelink.find_flattenable_links",
                          "Find Flattenable Links", "LIBRARY_DATA_OVERRIDE",
                          _flatten_candidates_summary(wm))
-            _draw_report_detail(layout, wm, "f7chain")
-            _draw_flatten_candidates(layout, wm)
-        _analyze_row(layout, wm, "", "filelink.make_local",
+            _draw_report_detail(body, wm, "f7chain")
+            _draw_flatten_candidates(body, wm)
+        _analyze_row(body, wm, "", "filelink.make_local",
                      "Make Local", "LIBRARY_DATA_DIRECT",
                      _makelocal_headline(wm), has_run=_feature_has_run(wm, "f2")).apply = False
-        _draw_makelocal_picker(layout, wm)
+        _draw_makelocal_picker(body, wm)
         # Advisory (detection-only) checks — no safe bulk fix, so each gets a
         # "here's what to do by hand" line (2026-07-14) rather than being a
         # silent dead end.
-        _analyze_row(layout, wm, "", "filelink.check_materials",
+        _analyze_row(body, wm, "", "filelink.check_materials",
                      "Check Materials", "MATERIAL", has_run=_feature_has_run(wm, "matdiag"))
-        _draw_advisory_note(layout, "Read-only — fix flagged shader/node issues by hand in "
+        _draw_advisory_note(body, "Read-only — fix flagged shader/node issues by hand in "
                             "the Shading workspace; there's no safe bulk fix.",
                             show=_feature_has_run(wm, "matdiag"))
-        _draw_report_detail(layout, wm, "matdiag")
+        _draw_report_detail(body, wm, "matdiag")
         if _gate(wm, "check_deform", show_passed=show, counter=clean):
-            _analyze_row(layout, wm, "", "filelink.scan_deform_issues",
+            _analyze_row(body, wm, "", "filelink.scan_deform_issues",
                          "Check Armature Deformation", "MOD_ARMATURE",
                          has_run=wm.filelink_deform_scanned)
-            _draw_advisory_note(layout, "Detection only — reweight flagged vertices to a deform "
+            _draw_advisory_note(body, "Detection only — reweight flagged vertices to a deform "
                                 "bone in Weight Paint; the ticks are for a future fix pass.",
                                 show=wm.filelink_deform_scanned and len(wm.filelink_deform_rows))
-            _draw_deform_check(layout, wm)
-        _draw_phase_tally(layout, wm, "restructure", clean[0], expanded)
+            _draw_deform_check(body, wm)
+        _draw_phase_tally(body, wm, "restructure", clean[0], expanded)
 
         # ---- Phase D · Deduplicate — shrink redundancy ----
-        _draw_phase_header(layout, "Deduplicate", "Shrink redundant data", "DUPLICATE")
-        _draw_duplicates(layout, wm, narrow)
+        body = _draw_phase_header(layout, "Deduplicate", "Shrink redundant data", "DUPLICATE")
+        _draw_duplicates(body, wm, narrow)
 
         # ---- Phase E · Purge — sweep leftovers once everything else is settled ----
-        _draw_phase_header(layout, "Purge", "Remove unreferenced leftovers", "TRASH")
+        body = _draw_phase_header(layout, "Purge", "Remove unreferenced leftovers", "TRASH")
         clean = [0]
         show = "phasepass:purge" in expanded
         if _gate(wm, "find_orphans", show_passed=show, counter=clean):
-            _analyze_row(layout, wm, "find_orphans", "filelink.scan_orphans",
+            _analyze_row(body, wm, "find_orphans", "filelink.scan_orphans",
                          "Find Orphans", "NONE", _orphans_headline(wm)).purge_orphans = False
-            _draw_orphans(layout, wm)
-        _draw_phase_tally(layout, wm, "purge", clean[0], expanded)
+            _draw_orphans(body, wm)
+        _draw_phase_tally(body, wm, "purge", clean[0], expanded)
 
         # ---- Phase F · Measure — footprint payoff (not a problem check) ----
-        _draw_phase_header(layout, "Measure", "Footprint after cleanup", "DISK_DRIVE")
-        _analyze_row(layout, wm, "analyze_memory_disk", "filelink.analyze_resources",
+        body = _draw_phase_header(layout, "Measure", "Footprint after cleanup", "DISK_DRIVE")
+        _analyze_row(body, wm, "analyze_memory_disk", "filelink.analyze_resources",
                      "Analyze Memory/Disk", "VIEWZOOM", _resource_summary(wm))
-        _draw_resource_breakdown(layout, wm)
+        _draw_resource_breakdown(body, wm)
         # Profile Render relocated to Utilities (Group 11 #42, 2026-06-26) — it
         # actually renders, more "one-off tool" than "is something broken."
 
@@ -3151,14 +3216,17 @@ def _draw_absolute_paths(layout, wm) -> None:
 
 
 def _draw_path_normalization(layout, wm) -> None:
-    """Path Normalization's interactive checkbox lists — duplicate library
-    paths (radio-select which stored form to keep) + absolute paths (tick
-    which to convert). Relocated under its Analyze row (Group 11 #43,
-    2026-06-26) — Check/Normalize now live on that row; this just keeps the
-    drill-down lists + their per-group action buttons."""
+    """Path Normalization's interactive absolute-path list (tick which to
+    convert). Relocated under its Analyze row (Group 11 #43, 2026-06-26) —
+    Check/Normalize now live on that row; this just keeps the drill-down list +
+    its per-group action buttons. The duplicate-library-paths (Merge) list moved
+    OUT to Fix Missing Libraries in the Connect phase (stage 3b-1, v0.3.16):
+    merging two stored path forms of the same library IS a library-connectivity
+    fix, so it belongs with Relink / Retarget / Reconnect, not with path tidy-up.
+    Absolute-path conversion stays here — it's cosmetic normalization, not a
+    broken/duplicate reference."""
     if not _feature_has_run(wm, "f7fix"):
         return
-    _draw_duplicate_library_paths(layout, wm)
     _draw_absolute_paths(layout, wm)
 
 

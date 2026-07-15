@@ -260,6 +260,20 @@ def test_group_member_alert_defaults_false():
     assert rows[0].alert is False
 
 
+def test_group_member_has_action2_propagated():
+    g = GroupSpec(key="lib.blend", label="lib.blend  (3)", icon="LIBRARY_DATA_BROKEN",
+                 members=[MemberRef(ref_index=0)], has_action2=True)
+    rows = flatten_group_member_rows([g], set(), "x")
+    assert rows[0].has_action2 is True
+
+
+def test_group_member_has_action2_defaults_false():
+    g = GroupSpec(key="lib.blend", label="lib.blend", icon="LIBRARY_DATA_BROKEN",
+                 members=[MemberRef(ref_index=0)])
+    rows = flatten_group_member_rows([g], set(), "x")
+    assert rows[0].has_action2 is False
+
+
 def test_group_member_order_is_respected():
     a = GroupSpec(key="B", label="B", icon="MATERIAL", members=[MemberRef(ref_index=0)])
     b = GroupSpec(key="A", label="A", icon="MATERIAL", members=[MemberRef(ref_index=1)])

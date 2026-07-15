@@ -42,6 +42,7 @@ class PickerRow:
     icon: str = ""
     checkbox_state: str = "none"  # "none" | "checked" | "unchecked" | "done"
     has_action: bool = False   # group rows only: show the header's action button
+    has_action2: bool = False  # group rows only: show a SECOND header action (section-defined)
     alert: bool = False        # group rows only: show the header's label in alert/red styling
     is_expanded: bool = False
 
@@ -200,6 +201,7 @@ class GroupSpec:
     icon: str
     members: list[MemberRef]
     has_action: bool = False  # show the header's action button
+    has_action2: bool = False  # show a SECOND header action (meaning is section-defined)
     alert: bool = False       # show the header's label in Blender's alert/red styling
     info: str = ""      # optional one-line status shown right under an expanded group
     info_icon: str = "INFO"  # icon for the info line (e.g. an error/question state)
@@ -296,6 +298,7 @@ def flatten_group_member_rows(
             label=g.label,
             icon=g.icon,
             has_action=g.has_action,
+            has_action2=g.has_action2,
             alert=g.alert,
             is_expanded=is_exp,
         ))

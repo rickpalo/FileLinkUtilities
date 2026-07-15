@@ -343,6 +343,16 @@ class FILELINK_OT_examine_library(bpy.types.Operator):
         if library is None:
             self.report({"ERROR"}, "Pick a library to examine")
             return {"CANCELLED"}
+        # Guard (v0.3.22): Examine/Retarget lists what a library PROVIDES by reading
+        # the local data-blocks linked from it. On a MISSING library those are
+        # dangling placeholders, and reading them crashed Blender (v0.3.21,
+        # access violation in pyrna_prop_to_py reading a freed name). Retarget is
+        # for a WORKING library you want to drop; a missing one is a Relink or
+        # Datablock Reconnect job instead.
+        if getattr(library, "is_missing", False):
+            self.report({"ERROR"}, f"'{library.name}' is MISSING — relink it, or use Datablock "
+                        "Reconnect for its data-blocks. Retarget only works on a library that loads.")
+            return {"CANCELLED"}
         context.window_manager.filelink_examine_apply_summary = ""
         n = _populate_examine_rows(context, library)
         rebuild_examine_picker_rows(context.window_manager)

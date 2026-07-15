@@ -8,6 +8,142 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.22] — Revert the crashing Retarget-on-broken-links; guard Examine; phase-header polish
+
+### Fixed
+- **Fixed a crash (`EXCEPTION_ACCESS_VIOLATION`) when clicking Retarget on a broken library link.**
+  v0.3.21 put a "Retarget" button on Broken Library Links rows, but those rows are always MISSING
+  libraries, and Examine/Retarget reads the data-blocks a library *provides* — on a missing library
+  those are dangling placeholders, and reading one's name crashed Blender (`pyrna_prop_to_py` →
+  `PyUnicode_DecodeUTF8` on freed memory). The button and its operator are removed. Missing libraries
+  are handled by **Relink** (same row) or **Datablock Reconnect**; **Retarget stays for working
+  libraries** in its own section, its documented purpose.
+- **Examine now refuses a missing library** with a clear message ("relink it, or use Datablock
+  Reconnect") instead of risking the same read — protects the standalone Retarget picker too.
+- Good news confirmed in the same crash log: **Analyze All ran all 15 steps and finished** before the
+  Retarget click — the v0.3.17 synchronous-sequencer fix held on the real file.
+
+### Changed
+- **Phase headers are easier to pick out:** the phase name and its one-line intent now sit on the
+  SAME row (was two lines), and each phase's contents are **slightly indented** beneath its header,
+  so Connect / Restructure / Deduplicate / Purge / Measure read as titled blocks.
+
+## [0.3.21] — Connect redesign stage 3b-3b: Retarget as a per-library remedy on broken links
+
+### Added
+- **Each Broken Library Links row now has a "Retarget" button** beside its Relink file-picker — the
+  second per-library remedy. Retarget is the documented fix when a library is *gone or was split*
+  into several files (Relink can't help then): it lists everything that library provides and
+  re-sources it from your local file or another loaded library. The button seeds and runs the
+  existing Retarget Library section (results appear there). This realizes the "per missing library,
+  choose the remedy (Relink / Retarget / Merge / fix-at-source)" design — Relink + Retarget now sit
+  on the row itself, Merge and fix-at-source already fold into the reconnect groups.
+- Content-safe on a missing library: the Examine engine gates every heavy read behind
+  `extract.datablock_risk_reason` (the 2026-07-09 hardening), so a missing placeholder is never read.
+  Verified headless in Blender 5.1 (registration + reconnect + examine smoke tests pass).
+
+## [0.3.20] — Connect redesign stage 4: "Start here" pointer + libraries-first order locked
+
+### Added
+- **A "▶ Start here" pointer** now appears under the Fix Missing Libraries header whenever the file
+  has missing libraries: "relink/retarget N missing libraries first; other fixes cascade." Fixing a
+  missing library auto-resolves many downstream missing data-blocks/textures, so it's unambiguously
+  the first place to act. Uses the same instant, no-scan `library_stats` as the pre-flight banner.
+
+### Notes
+- The libraries-first order is fixed by design — Fix Missing Libraries leads the Connect phase (3a)
+  and `core/analyze_steps.STEPS` is libraries-first — deliberately NOT dynamically reordered (that
+  was judged disorienting); the pointer guides attention instead. This completes the Connect redesign
+  arc (3a → 3b-1/2/3 → 4); the Retarget per-row fold remains the one deferred piece.
+
+## [0.3.19] — Connect redesign stage 3b-3: "Open in New Blender" on resolvable reconnect groups
+
+### Added
+- **A Datablock Reconnect group whose source library exists on disk now has an "Open in New Blender"
+  button** on its header (fix-at-source) — jump into the real library file to fix the renamed/removed
+  data-blocks at their source, without disturbing the current session. Shown only when the library
+  actually resolves (a broken/missing library has no file to open, and is flagged for relink instead).
+  Whether to show it is precomputed at scan time, never `os.stat`'d per redraw (Synology paths).
+- Generic second group-header action (`has_action2`) added to the reusable `core.picker` shell, so
+  any single-level picker section can expose a second per-group action; unit-tested in `test_picker.py`.
+
+### Deferred
+- Folding Retarget's "Examine" onto each per-library row (the other half of 3b-3) is a larger change
+  to the Examine engine and is held for a verifiable pass — Retarget stays its own section for now.
+
+## [0.3.18] — Connect redesign stage 3b-2: flag reconnect groups whose library is also a broken link
+
+### Changed
+- **A Datablock Reconnect group whose source library is also a broken library LINK is now flagged**
+  "⚠ MISSING LIBRARY — relink first" in red, so one per-library row tells the whole story: the link
+  is broken AND it left these data-blocks dangling — relink the library (above) before trying to
+  reconnect its blocks. Correlation is by exact normalized path only (a local `D:\` copy and the
+  SynologyDrive original that merely share a filename are deliberately NOT treated as the same
+  library); no match just means no flag.
+
+### Fixed
+- Declared the missing `alert` BoolProperty on `FILELINK_PG_picker_row`. Four picker rebuilds
+  (reconnect / duplicate-textures / image-dedup / examine) already assigned `item.alert` from the
+  bpy-free `core.picker` row, which would have raised `AttributeError` the first time any group set
+  `alert=True` — latent until this stage's broken-link flag became the first to do so.
+
+## [0.3.17] — Actually fix the Analyze All crash: run the sequencers synchronously
+
+### Fixed
+- **The Analyze All crash is fixed for real** (v0.3.15's warning-suppression did NOT work — it
+  reproduced identically at v0.3.16, same `materialMaster.crash` stack). Every crash across
+  v0.3.13–v0.3.16 had `rna_operator_modal_cb` in the stack: the modal step-pump drives `run_steps`
+  as a *suspended* generator and calls `bpy.ops` sub-operators from inside it, so a Python warning
+  during a nested call walks the suspended generator frame and dereferences NULL in CPython's frame
+  code. Analyze All / Find Duplicates / Find Flattenable Links now run **synchronously** (`invoke`
+  drains the generator via `execute`, a normal for-loop frame that every headless test already uses
+  and that has never crashed). The `warnings` suppression stays as cheap console-noise defence.
+- **Trade-off:** these three sequencers no longer show a live progress bar or accept ESC-cancel
+  mid-run (the UI is busy until they finish). Each individual check is still its own button with its
+  own modal progress. Restoring progress for the sequencers needs a generator-free modal (pump one
+  step per tick directly) — a later step.
+
+## [0.3.16] — Connect redesign stage 3b-1: Merge (duplicate library paths) moves into Fix Missing Libraries
+
+### Changed
+- **The duplicate-library-paths "Merge" list now lives in Fix Missing Libraries** (Connect phase),
+  alongside Relink / Retarget / Reconnect, instead of under Check Library Paths. Merging two stored
+  path forms of the *same* library is a connectivity fix, not path tidy-up. Absolute-path conversion
+  stays under Check Library Paths. First increment of stage 3b (folding the Connect fixes toward
+  per-library rows); the list, its radio-select, and its "Use Selected Paths" merge op are unchanged.
+- Check Library Paths' headline no longer counts duplicate-library groups (the Merge UI they refer to
+  moved), and its "Normalize" button no longer appears for a duplicate-only file — Normalize only ever
+  fixed renames/absolute paths, never the merge.
+
+### Note
+- The Merge list is still populated by the **Check Library Paths** scan, so it appears in Fix Missing
+  Libraries only after you run that check. Folding the dup scan into "Scan All" is a later 3b step.
+
+## [0.3.15] — Fix Analyze All crash (Python warning during the modal step pump)
+
+### Fixed
+- **Analyze All no longer crashes Blender (`EXCEPTION_ACCESS_VIOLATION`).** Its sequencer runs each
+  step by calling a sub-operator via `bpy.ops` from inside the modal's `run_steps` generator. If any
+  Python warning fires during one of those nested calls, CPython's warning machinery walks the
+  suspended generator frame and dereferences NULL in the frame code. Confirmed by two v0.3.13
+  crashes — `materialMaster.crash.txt` and `PSM_Stage_v5.2.crash.txt` — both stopping at the
+  `normalize_library_paths` (Check Library Paths) step, one with and one without a subprocess in
+  play, proving the *warning itself* is the trigger, not any single source. Fix: the nested
+  sub-operator call is now wrapped in `warnings.catch_warnings()` + `simplefilter("ignore")`, so no
+  step-time warning can reach the crashing frame walk.
+- **Secondary leak fixed:** `filelink.open_blend_external` ("Open in New Blender") launched the child
+  with `subprocess.Popen(...)` and discarded the handle, so Python later emitted a `ResourceWarning`
+  on GC — one possible source of the above. Launched handles are now retained and exited ones reaped
+  via `poll()`.
+
+## [0.3.14] — Connect redesign stage 3a: reorder Fix Missing Libraries above Check Link Chain
+
+### Changed
+- **The "Fix Missing Libraries" section now leads the Connect phase**, so Broken Library Links
+  (Relink) is the first fix you see. **Check Link Chain moved to just below it** — it's a
+  diagnostic read of the link graph, not a fix, so it belongs after the relink/retarget work it
+  informs. No behavior change; ordering only.
+
 ## [0.3.13] — Connect redesign stage 2: one "Fix Missing Libraries" section
 
 ### Changed
@@ -15,7 +151,7 @@ Entries below [0.2.106] are kept as originally written, under the old "AssetDoct
   "Fix Missing Libraries" section** in Connect, under one header with one **Scan All** button (runs
   the broken-link, reconnect, and texture scans together). Replaces the three separate sub-sections
   plus the standalone "Find All Missing" button — fewer buttons, one place to fix libraries. The
-  Relink / Retarget / Reconnect lists and their apply actions are unchanged; stage 3 will fold
+  Relink / Retarget / Reconnect lists and their apply actions are unchanged; stage 3b will fold
   Relink / Retarget / Merge / fix-at-source per library row.
 
 ## [0.3.12] — Retarget Library moves into the Connect phase
