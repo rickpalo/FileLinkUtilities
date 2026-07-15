@@ -8,6 +8,20 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.6] — Crash fix: geometry reads on data linked from a missing library
+
+### Fixed
+- **A deeper native crash in Analyze All → Find Duplicate Data-blocks (and, latent, Find Duplicate
+  Geometry)** on a file with missing libraries: a datablock linked from a library whose FILE is
+  missing can be flagged neither `is_missing` nor a Library Override, yet its geometry / shape-key
+  data is dangling — reading it (`extract_mesh`, shape-key coordinates) is an uncatchable native
+  null read. `datablock_risk_reason` now also flags "linked from a missing library" (via the owning
+  `Library.is_missing`), so **every** geometry-reading path (shape keys, Find Duplicate Geometry,
+  Orphans) skips it as "unverified" instead of crashing — not just the one that happened to crash
+  first. Shape-key fingerprinting additionally skips any linked owner mesh (never a local merge
+  candidate anyway). Follows v0.3.4's depth cap, which stopped the recursion crash but let Analyze
+  All reach this deeper one. Root-caused from three successive user crashlogs (PSM_Stage).
+
 ## [0.3.5] — Progressive disclosure: passed checks fold into a per-phase tally
 
 ### Added

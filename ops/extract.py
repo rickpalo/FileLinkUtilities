@@ -177,6 +177,16 @@ def datablock_risk_reason(block) -> str:
         return f"{block.name!r} is a missing placeholder"
     if getattr(block, "override_library", None) is not None:
         return f"{block.name!r} is a Library Override"
+    # 2026-07-14 (PSM_Stage crashes v0.3.4/v0.3.5): a datablock linked from a
+    # library whose FILE is missing can itself be flagged neither is_missing nor
+    # override, yet its heavy data is dangling — reading it (extract_mesh /
+    # shape-key co) is a native null read no try/except can catch. The owning
+    # Library's own is_missing IS set, so gate on that. This one shared check
+    # covers every geometry-reading path (shape keys, Find Duplicate Geometry,
+    # Orphans, ...), not just the one that happened to crash first.
+    lib = getattr(block, "library", None)
+    if lib is not None and getattr(lib, "is_missing", False):
+        return f"{block.name!r} is linked from a missing library"
     return ""
 
 
@@ -207,6 +217,15 @@ def extract_shape_key(key) -> dict:
     if not isinstance(owner, bpy.types.Mesh):
         return {}
     if shape_key_risk_reason(key):
+        return {}
+    # A LINKED owner mesh is never a local merge candidate (you can't merge a
+    # datablock a library owns), so its geometry fingerprint has no use — and
+    # reading that geometry can crash `extract_mesh` with an uncatchable native
+    # null read on a file with missing libraries / override loops, even when the
+    # mesh is flagged NEITHER missing nor override (PSM_Stage crash, v0.3.4:
+    # the owner was linked from one of 3 missing libraries). Nothing to gain,
+    # real risk — skip to "unverified".
+    if owner.library is not None:
         return {}
     blocks = [{"name": kb.name, "co": [list(p.co) for p in kb.data]}
               for kb in key.key_blocks]
