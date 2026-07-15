@@ -8,6 +8,20 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.9] — Crash fix (definitive): skip all content reads while a library is missing
+
+### Fixed
+- **The recurring Analyze All crash chain is closed at the root.** Four per-datablock guards
+  (v0.3.4–0.3.7) each only let the run reach the *next* dangling block; the fifth crash was a
+  **fully local** shape key whose point data was corrupt from the file's override loops — which no
+  per-block flag can detect. `datablock_risk_reason` now applies a **wholesale gate**: when the file
+  has ANY missing library, every content-fingerprint scan (Duplicate Materials / Meshes /
+  Data-blocks / Geometry, and Orphans) skips reading heavy data entirely, through each scan's
+  existing skip-and-report path (no false duplicates — skipped blocks are never clustered). Fix the
+  missing libraries — by **relink OR retarget** — and full fingerprinting resumes automatically.
+  This enforces "Connect before Deduplicate" at the engine level, matching the pre-flight banner.
+  The library-missing check is cached so it costs nothing per datablock.
+
 ## [0.3.8] — Pre-flight risk banner: incomplete-analysis warning for missing libraries
 
 ### Added

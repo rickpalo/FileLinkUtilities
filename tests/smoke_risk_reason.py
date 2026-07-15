@@ -62,6 +62,19 @@ def main():
         checks.append(("shape_key_risk clean key + non-mesh owner is safe",
                        skr(clean_key) == ""))
 
+        # Wholesale gate: ANY missing library makes EVERY block unsafe to read
+        # (the 5th PSM_Stage crash was fully local, corrupt from override loops —
+        # no per-block flag catches that).
+        checks.append(("factory file has no missing libraries",
+                       extract._any_missing_library() is False))
+        _orig = extract._any_missing_library
+        extract._any_missing_library = lambda: True
+        try:
+            checks.append(("missing library skips even a clean local block",
+                           "missing libraries" in rr(_block())))
+        finally:
+            extract._any_missing_library = _orig
+
         ok = all(p for _, p in checks)
         for label, p in checks:
             print(f"  [{'OK' if p else 'FAIL'}] {label}")

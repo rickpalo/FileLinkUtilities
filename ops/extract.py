@@ -10,9 +10,43 @@ resolution-stripped base name (see core.fingerprint.strip_resolution_tokens).
 
 from __future__ import annotations
 
+import os
+
 import bpy
 
 from ..core.fingerprint import fingerprint_mesh, strip_resolution_tokens
+
+# One-entry cache for _any_missing_library — recomputed only when the set of
+# library (filepath, is_missing) states actually changes, so the per-datablock
+# risk check (called thousands of times per scan) doesn't re-stat every library.
+_MISSING_LIB_CACHE: dict[tuple, bool] = {}
+
+
+def _any_missing_library() -> bool:
+    """True if ANY linked library is missing — its own ``is_missing`` flag is
+    set, or its file isn't on disk. Cheap (attribute reads) except the one-off
+    ``os.path.isfile`` when the library set changes."""
+    state = tuple((lib.filepath, getattr(lib, "is_missing", False))
+                  for lib in bpy.data.libraries)
+    if state in _MISSING_LIB_CACHE:
+        return _MISSING_LIB_CACHE[state]
+    result = False
+    for fp, missing in state:
+        if not fp:
+            continue
+        if missing:
+            result = True
+            break
+        try:
+            if not os.path.isfile(bpy.path.abspath(fp)):
+                result = True
+                break
+        except Exception:
+            result = True
+            break
+    _MISSING_LIB_CACHE.clear()  # keep it to a single live entry
+    _MISSING_LIB_CACHE[state] = result
+    return result
 
 # Cosmetic/layout node attributes that must not affect the fingerprint.
 _SKIP_NODE_PROPS = frozenset({
@@ -173,6 +207,19 @@ def datablock_risk_reason(block) -> str:
     disease crashed `ops.orphans`' mesh fingerprinting too (a mesh datablock
     can itself be missing or an override, not just a shape key's owner) —
     one shared check instead of two independent copies."""
+    # Wholesale gate (2026-07-15, PSM_Stage v0.3.8): once FOUR successive
+    # per-datablock guards each let Analyze All reach the next dangling block,
+    # the fifth crash was a FULLY LOCAL shape key (local key + local owner, no
+    # risk flag) whose point data is corrupt anyway — almost certainly from this
+    # file's override loops, which no queryable per-block flag reflects. When
+    # the file has ANY missing library, its whole dependency graph can carry
+    # this dangling/corrupt data, so treat EVERY block's heavy data as unsafe to
+    # read — every content-fingerprint scan (materials, meshes, shape keys,
+    # geometry, orphans) then skips via its existing skip-and-report path. This
+    # is the "Connect before Deduplicate" rule enforced: fix the missing
+    # libraries (relink OR retarget) and normal fingerprinting resumes.
+    if _any_missing_library():
+        return "file has missing libraries — relink or retarget them first (Connect)"
     if getattr(block, "is_missing", False):
         return f"{block.name!r} is a missing placeholder"
     if getattr(block, "override_library", None) is not None:
