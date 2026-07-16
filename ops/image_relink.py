@@ -33,6 +33,19 @@ def _walk_image_nodes(node_tree, seen):
     if node_tree is None or node_tree in seen:
         return
     seen.add(node_tree)
+    # Guard the heavy read (PSM_Stage crash.v0.3.26): a node tree that's dangling —
+    # linked from a missing library, or ANY node tree once the file has a missing
+    # library (the wholesale gate) — crashes Blender with an uncatchable access
+    # violation the moment ``.nodes`` is iterated. This is the same disease + same
+    # mitigation as every mesh/shape-key/geometry scan (extract.datablock_risk_reason);
+    # it was the one heavy-read path in Find Missing Textures that never got the guard.
+    # A linked material read here during Analyze All (after a save/reload with 3 libs
+    # still missing) is exactly the crash. Attribution is simply incomplete until the
+    # libraries are relinked/retargeted — consistent with every other gated scan.
+    from .extract import datablock_risk_reason
+
+    if datablock_risk_reason(node_tree):
+        return
     for node in node_tree.nodes:
         img = getattr(node, "image", None)
         if img is not None:

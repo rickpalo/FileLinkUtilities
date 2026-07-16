@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 # Unique extension id (no spaces). Becomes the python package name on install.
 id = "file_link_utilities"
-version = "0.3.26"
+version = "0.3.27"
 name = "File & Link Utilities"
 tagline = "Map, clean and rewire linked assets, materials and orphan data"
 maintainer = "rickpalo <rap2010@comcast.net>"

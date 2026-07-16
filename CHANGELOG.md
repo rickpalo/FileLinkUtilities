@@ -8,6 +8,19 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.27] — Fix a crash in Find Missing Textures on a file with missing libraries
+
+### Fixed
+- **Fixed a crash (`EXCEPTION_ACCESS_VIOLATION`) during Analyze All's Find Missing Textures step**
+  when the file still has missing libraries. `_walk_image_nodes` walks every material/world node tree
+  to attribute textures, but a node tree linked from a missing library is dangling — iterating its
+  `.nodes` is an uncatchable native crash. It was the one heavy-read path in Find Missing Textures that
+  never got the `extract.datablock_risk_reason` guard the mesh/shape-key/geometry/orphan scans already
+  use. Now guarded by the same wholesale gate: while any library is missing, node-tree walks are
+  skipped (texture→material attribution is simply incomplete until the libraries are relinked/retargeted,
+  consistent with every other gated scan). Repro: reconnect/relink on PSM_Stage, save + reload with libs
+  still missing, Analyze All (crash.v0.3.26).
+
 ## [0.3.26] — Retarget follow-through: reconnecting state, wider gate, clearer messaging
 
 ### Added
