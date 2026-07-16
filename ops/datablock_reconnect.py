@@ -264,7 +264,10 @@ def rebuild_reconnect_picker_rows(wm) -> None:
         # open, so never both this and the broken-link flag.
         source_exists = (not is_broken_link and bool(library)
                          and os.path.isfile(os.path.normpath(bpy.path.abspath(library))))
-        disp = library or "(unknown library)"
+        # "(source unknown)" not "(unknown library)" (user feedback 2026-07-15
+        # item 14): these are missing DATA-BLOCKS with no recorded source library —
+        # you reconnect the blocks, never "a library", so don't imply a library.
+        disp = library or "(source unknown — pick a .blend below)"
         bits = []
         if matched:
             bits.append(f"{matched} suggested")
@@ -281,6 +284,19 @@ def rebuild_reconnect_picker_rows(wm) -> None:
             # any source .blend (the split-library case) is exactly the point.
             label = "⚠ Source library missing · " + label
         info, info_icon = _group_info_line(members_rows[0].source_blend, lib_found)
+        # Suppress a redundant second line (user feedback 2026-07-15 items 7+8):
+        #   (a) a not-found library already says "Source library missing" in the
+        #       label and has the pick-source button, so drop the old "library not
+        #       found — pick a source manually" repeat; and
+        #   (b) a picked source whose basename equals the group's own library just
+        #       echoes the label (you picked the same-named upgraded library), so
+        #       only keep the info line when the source is a DIFFERENTLY-named file.
+        src = members_rows[0].source_blend
+        lib_base = os.path.basename(library) if library else ""
+        if src and os.path.basename(src) == lib_base:
+            info, info_icon = "", ""
+        elif not src and not lib_found:
+            info, info_icon = "", ""
         specs.append(picker_mod.GroupSpec(
             key=library,
             label=label,

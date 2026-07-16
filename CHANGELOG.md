@@ -8,6 +8,21 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.28] — Declutter Connect + simpler reconnect messaging
+
+### Changed
+- **Retarget Library moved out of the Connect phase back to Utilities.** It's a specialized tool for
+  *working* libraries (break a circular reference, stop depending on a healthy library), not part of the
+  missing-library fix flow — the per-row Retarget button already handles broken libraries by routing to
+  Datablock Reconnect. It was cluttering Connect.
+- **Datablock Reconnect group headers dropped their redundant second line.** A group whose source library
+  isn't found no longer repeats "library not found — pick a source manually" (the "⚠ Source library
+  missing" label + pick-source button already say it); a group whose picked source has the same name as
+  its library no longer echoes that name back. The info line now appears only when it adds something (a
+  *differently*-named source, or "no source picked yet").
+- **"(unknown library)" is now "(source unknown — pick a .blend below)"** — these are missing data-blocks
+  with no recorded source, and you reconnect the blocks, not a library, so the old label misled.
+
 ## [0.3.27] — Fix a crash in Find Missing Textures on a file with missing libraries
 
 ### Fixed

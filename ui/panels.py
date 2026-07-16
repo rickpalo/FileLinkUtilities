@@ -2122,8 +2122,11 @@ def _draw_missing_libraries(layout, context, wm, narrow: bool) -> None:
             brow.operator("filelink.relink_selected", text="Relink Selected", icon="FILE_REFRESH")
     _draw_broken_links(layout, wm)
 
-    # Retarget — the alternative to Relink when a library is gone or was split.
-    _draw_retarget_library(layout, context, wm)
+    # Retarget Library (Examine) moved OUT of Connect back to Utilities (user
+    # feedback 2026-07-15 item 1): it's for WORKING libraries (break a circular
+    # reference / stop depending on a healthy library), not the missing-library
+    # fix flow — the per-row Retarget button now covers the broken-library case by
+    # routing to Datablock Reconnect. Keeping it here cluttered the phase.
 
     # Reconnectable data-blocks → Reconnect (individual ids a library fix left over).
     rh = _reconnect_headline(wm)
@@ -2487,9 +2490,16 @@ class FILELINK_PT_utilities(_SceneFeaturePanel, bpy.types.Panel):
         # reachable via the now-deleted generic Reports selector.
         _draw_report_detail(dry, wm, "f9")
 
-        # Retarget Library moved to the Connect phase in v0.3.12 (it's a
-        # connectivity fix). Find Material Across Files stays here — it's a
-        # cross-file lookup tool, not a fix.
+        # Retarget Library (Examine) lives here (v0.3.28, reverting the v0.3.12 move
+        # into Connect): it's a specialized tool for WORKING libraries — re-source
+        # what a healthy library provides to break a circular reference or stop
+        # depending on it. The missing/broken-library case is handled by the per-row
+        # Retarget button in Connect (→ Datablock Reconnect), so this no longer
+        # belongs in the Connect fix flow (user feedback 2026-07-15 item 1).
+        layout.separator()
+        _draw_retarget_library(layout, context, wm)
+
+        # Find Material Across Files — a cross-file lookup tool, not a fix.
         layout.separator()
         self._draw_material_search(context, layout, wm)
 
