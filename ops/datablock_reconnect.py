@@ -544,3 +544,67 @@ class FILELINK_OT_reconnect_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class FILELINK_OT_retarget_broken_lib(bpy.types.Operator):
+    """Retarget a broken library LINK by handing its data-blocks to Datablock
+    Reconnect — the safe remedy when Relink can't help (the library is gone, was
+    split into several files, or is only linked indirectly).
+
+    It deliberately does NOT touch the missing library the way Examine/Retarget
+    does: Examine reads what a library *provides*, and on a missing library those
+    are dangling placeholders that crashed Blender when read (v0.3.21, since
+    guarded off). This instead stages the local placeholder blocks that link
+    *from* the library into the reconnect list below and expands that library's
+    group, so the user re-sources each one from their file or another library via
+    the existing, backed-up Reconnect Selected. Nothing is severed here — the
+    placeholders are already broken; reconnecting each one replaces the dead
+    reference safely (user design, 2026-07-15: "call it Retarget, but break the
+    library link and have the missing items do a Datablock Reconnect")."""
+
+    bl_idname = "filelink.retarget_broken_lib"
+    bl_label = "Retarget"
+    bl_options = {"REGISTER"}
+
+    stored: bpy.props.StringProperty()  # the broken library's stored path  # type: ignore[valid-type]
+
+    @classmethod
+    def description(cls, context, properties):
+        return ("Can't relink (library gone, split, or indirect)? Retarget: hand its "
+                "linked data-blocks to Datablock Reconnect below and re-source each "
+                "from your file or another library. Safe on a missing library — it "
+                "never reads the missing file")
+
+    def execute(self, context):
+        from .report_store import get_expanded, set_expanded
+
+        wm = context.window_manager
+        if not bpy.data.filepath:
+            self.report({"ERROR"}, "Save the file first")
+            return {"CANCELLED"}
+        # Populate the reconnect list if it hasn't been scanned yet (the same safe
+        # scan Scan All runs — reads local placeholders, never the missing library).
+        if not wm.filelink_missing_scanned:
+            bpy.ops.filelink.scan_reconnect_targets()
+        # Find the reconnect group whose source library matches this broken link.
+        # Correlate by EXACT normalized path (the 3b-2 rule) — basename would
+        # over-match a same-named local copy.
+        target_norm = _norm_lib_path(self.stored)
+        match = next((item.library for item in wm.filelink_missing_blocks
+                      if item.library and _norm_lib_path(item.library) == target_norm), None)
+        if match is None:
+            self.report({"WARNING"},
+                        "No reconnectable data-blocks link from this library — nothing to "
+                        "retarget here (try Relink, or Datablock Reconnect for another library)")
+            return {"CANCELLED"}
+        expanded = get_expanded(wm, "filelink_missing_expanded")
+        expanded.add(match)
+        set_expanded(wm, expanded, "filelink_missing_expanded")
+        rebuild_reconnect_picker_rows(wm)
+        if context.area:
+            context.area.tag_redraw()
+        count = sum(1 for item in wm.filelink_missing_blocks if item.library == match)
+        self.report({"INFO"},
+                    f"{count} data-block(s) from this library are staged in Datablock "
+                    "Reconnect below — pick a source and Reconnect Selected")
+        return {"FINISHED"}
+
+

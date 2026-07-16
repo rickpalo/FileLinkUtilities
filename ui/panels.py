@@ -701,31 +701,39 @@ class FILELINK_UL_broken_libs(bpy.types.UIList):
             layout.label(text=item.name)
             return
         row = layout.row(align=True)
-        row.prop(item, "selected", text="")
+        # "indirect" (docs/TODO.md Group 1 item 5, 2026-07-04): this library isn't
+        # linked by the current file directly, only by ANOTHER linked library — it's
+        # not in this file's own Outliner, and Relink here doesn't stick (the parent
+        # library re-imposes the path on reload). So indirect rows drop the bulk
+        # Relink checkbox + file-picker (they only mislead — user feedback 2026-07-15
+        # item 5: "that file cannot be relinked with that button") and rely on
+        # Retarget instead; direct rows keep the full Relink UI.
+        is_indirect = item.tag == "indirect"
+        if is_indirect:
+            row.label(text="", icon="BLANK1")
+        else:
+            row.prop(item, "selected", text="")
         row.label(text=item.name, icon="LIBRARY_DATA_BROKEN")
-        # "indirect" (docs/TODO.md Group 1 item 5, 2026-07-04): this library
-        # isn't linked by the current file directly, only by ANOTHER linked
-        # library — not visible in this file's own Outliner, so callers used
-        # to be confused why it showed up here at all. Only the surprising
-        # case gets a visible flag; "direct" is the expected default, no noise.
-        if item.tag == "indirect":
+        if is_indirect:
             ind = row.row()
             ind.alignment = "RIGHT"
-            ind.label(text="indirect", icon="INFO")
-        target = row.row()
-        target.alignment = "RIGHT"
-        if item.target:
-            target.label(text=os.path.basename(item.target) or item.target,
-                         icon="CHECKMARK" if item.has_candidate else "QUESTION")
+            ind.label(text="indirect — can't relink here", icon="INFO")
         else:
-            target.label(text="no match — pick a file", icon="QUESTION")
-        row.operator("filelink.relink_pick_file", text="", icon="FILEBROWSER").index = index
-        # (v0.3.22) A "Retarget" button was here (stage 3b-3b) but removed: these
-        # rows are always MISSING libraries, and Examine/Retarget reads what a
-        # library provides — unsafe on a missing one (crashed reading a dangling
-        # placeholder's name, v0.3.21). Missing libraries are for Relink (here) or
-        # Datablock Reconnect; Retarget stays for WORKING libraries in its own
-        # section, its documented purpose.
+            target = row.row()
+            target.alignment = "RIGHT"
+            if item.target:
+                target.label(text=os.path.basename(item.target) or item.target,
+                             icon="CHECKMARK" if item.has_candidate else "QUESTION")
+            else:
+                target.label(text="no match — pick a file", icon="QUESTION")
+            row.operator("filelink.relink_pick_file", text="", icon="FILEBROWSER").index = index
+        # Retarget (user design 2026-07-15, items 4+5): the second per-library remedy,
+        # for when Relink can't help (library gone, split, or indirect). It hands this
+        # library's data-blocks to Datablock Reconnect below — it NEVER calls the
+        # Examine/Retarget engine, which reads the missing library and crashed
+        # (v0.3.21). Safe: it stages the local placeholders that link FROM the library.
+        row.operator("filelink.retarget_broken_lib", text="Retarget",
+                     icon="FILE_REFRESH").stored = item.stored
 
 
 class FILELINK_UL_flatten_picker(bpy.types.UIList):
@@ -1918,7 +1926,8 @@ def _draw_flatten_candidates(layout, wm):
     _draw_report_detail(layout, wm, "f7flatten")
 
 
-def _draw_phase_header(layout, name: str, intent: str, icon: str):
+def _draw_phase_header(layout, name: str, intent: str, icon: str, *,
+                       action=None, alert_intent: bool = False):
     """A visual divider between the Analyze pipeline's phases (2026-07-14,
     project_flow_redesign) — a separator, then the phase name (with its icon) and
     a muted one-line intent ON THE SAME ROW (2026-07-15: the two-line version made
@@ -1930,16 +1939,49 @@ def _draw_phase_header(layout, name: str, intent: str, icon: str):
     RETURNS an indented ``body`` column the caller draws the phase's contents into,
     so each phase reads as a titled, slightly-inset block instead of a flat run of
     buttons flush with the headers (user request, 2026-07-15). Callers must draw
-    into the returned layout, not the original ``layout``."""
+    into the returned layout, not the original ``layout``.
+
+    ``intent`` may be a live status line (e.g. the Connect phase now shows its
+    missing-refs count here); ``alert_intent`` renders it in Blender's alert red
+    instead of muted grey, for a count that needs attention. ``action`` is an
+    optional ``fn(row)`` that draws a right-aligned control on the header row (the
+    Connect phase hosts its single Scan/Rescan-All button here, 2026-07-15)."""
     layout.separator()
     hdr = layout.row()
     hdr.label(text=name, icon=icon)
-    sub = hdr.row()
-    sub.active = False
-    sub.label(text=intent)
+    if intent:
+        sub = hdr.row()
+        if alert_intent:
+            sub.alert = True
+        else:
+            sub.active = False
+        sub.label(text=intent)
+    if action is not None:
+        act = hdr.row()
+        act.alignment = "RIGHT"
+        action(act)
     inset = layout.row()
     inset.separator(factor=1.4)  # left gutter = the slight indent
     return inset.column(align=False)
+
+
+def _phase_content(body, *, gated: bool):
+    """Item 4 (user feedback 2026-07-15): while the file has missing libraries,
+    the downstream Deduplicate / Purge / Measure phases are *incomplete and
+    unsafe* — data linked from a missing library can't be read, so those checks
+    skip it (they already do, via ``extract.datablock_risk_reason``) and their
+    results would be misleading. Rather than hide them, draw a one-line "fix
+    libraries first" note (kept readable) and return a DISABLED sub-column for the
+    phase body, so the fixes are visibly present-but-unavailable until Connect is
+    clean. When not gated, returns ``body`` unchanged."""
+    if not gated:
+        return body
+    note = body.row()
+    note.label(text="Fix missing libraries first — these skip linked data and stay "
+                    "incomplete until then", icon="INFO")
+    col = body.column(align=False)
+    col.enabled = False
+    return col
 
 
 def _draw_advisory_note(layout, text: str, *, show: bool) -> None:
@@ -2017,32 +2059,14 @@ def _draw_missing_libraries(layout, context, wm, narrow: bool) -> None:
     (the headline shows status, the list draws only once its scan has data).
     Stage 3b folded per library: Merge moved in (3b-1), reconnect groups whose
     library is also a broken link are flagged (3b-2), and resolvable groups get an
-    Open-in-New-Blender fix-at-source button (3b-3). Retarget's per-row fold is
-    still deferred; Stage 4 added the "▶ Start here" pointer below the header."""
-    hdr = layout.row(align=True)
-    hdr.label(text="Fix Missing Libraries", icon="LIBRARY_DATA_BROKEN")
-    hdr.operator("filelink.scan_all_missing", text="Scan All", icon="VIEWZOOM")
+    Open-in-New-Blender fix-at-source button (3b-3).
 
-    # Stage 4 (v0.3.20): "start here" pointer. Fixing a missing library cascades —
-    # it auto-resolves many downstream missing data-blocks/textures — so whenever a
-    # library is missing this section is unambiguously the first place to act. The
-    # order is FIXED (this section leads Connect since 3a; core/analyze_steps STEPS
-    # is libraries-first), never dynamically reordered (disorienting); this cue
-    # guides the eye instead. Reuses the instant, no-scan library_stats the
-    # pre-flight banner already computes.
-    from ..ops import metrics
-    _total, _missing_libs, _absolute = metrics.library_stats()
-    if _missing_libs:
-        prow = layout.row()
-        prow.label(text=f"▶ Start here — relink/retarget {_missing_libs} missing "
-                   f"librar{'y' if _missing_libs == 1 else 'ies'} first; other fixes cascade",
-                   icon="FORWARD")
-
-    if wm.filelink_missing_scanned:
-        srow = layout.row()
-        srow.active = False
-        srow.label(text=_all_missing_summary(wm))
-
+    The section's own "Fix Missing Libraries" header, its Scan/Rescan-All button,
+    the "▶ Start here" pointer and the post-scan summary all moved UP onto the
+    Connect phase header (user feedback 2026-07-15, items 1+3) — stacked under a
+    "Connect" header they read as a redundant second title. The broken-links /
+    retarget / reconnect / dup-path sub-blocks below each keep their own labelled
+    headline, so this content is still clearly titled without the wrapper."""
     # Broken library links → Relink (whole .blend files that can't be found).
     bh = _broken_links_headline(wm)
     if bh:
@@ -2209,8 +2233,25 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         expanded = set(filter(None, wm.filelink_detail_expanded.split("\n")))
 
         # ---- Phase B · Connect — resolve dangling references first ----
-        body = _draw_phase_header(layout, "Connect", "Fix missing / broken references first",
-                                  "LIBRARY_DATA_BROKEN")
+        # The phase header now carries the live missing-refs count (once scanned)
+        # and hosts the single Scan/Rescan-All button — the old separate "Fix
+        # Missing Libraries" sub-header, "▶ Start here" pointer and duplicate
+        # summary were redundant with it and were removed (user feedback
+        # 2026-07-15, items 1+3). ``_missing_libs`` also gates the downstream
+        # phases below (item 4). Instant, no-scan library_stats.
+        from ..ops import metrics as _metrics
+        _lt, _missing_libs, _la = _metrics.library_stats()
+        _connect_summary = _all_missing_summary(wm) if wm.filelink_missing_scanned else ""
+        _connect_findings = bool(_connect_summary) and not _connect_summary.startswith("✓")
+
+        def _connect_scan_action(row):
+            row.operator("filelink.scan_all_missing",
+                         text="Rescan All" if wm.filelink_missing_scanned else "Scan All",
+                         icon="VIEWZOOM")
+
+        body = _draw_phase_header(
+            layout, "Connect", _connect_summary, "LIBRARY_DATA_BROKEN",
+            action=_connect_scan_action, alert_intent=_connect_findings)
         clean = [0]
         show = "phasepass:connect" in expanded
         # Merged "Fix Missing Libraries" — Broken Library Links (Relink),
@@ -2279,11 +2320,16 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         _draw_phase_tally(body, wm, "restructure", clean[0], expanded)
 
         # ---- Phase D · Deduplicate — shrink redundancy ----
+        # Gated while libraries are missing (item 4): these read heavy content
+        # (materials/meshes/geometry/data-blocks) that a missing library leaves
+        # dangling, so they skip it and stay incomplete until Connect is clean.
         body = _draw_phase_header(layout, "Deduplicate", "Shrink redundant data", "DUPLICATE")
+        body = _phase_content(body, gated=bool(_missing_libs))
         _draw_duplicates(body, wm, narrow)
 
         # ---- Phase E · Purge — sweep leftovers once everything else is settled ----
         body = _draw_phase_header(layout, "Purge", "Remove unreferenced leftovers", "TRASH")
+        body = _phase_content(body, gated=bool(_missing_libs))
         clean = [0]
         show = "phasepass:purge" in expanded
         if _gate(wm, "find_orphans", show_passed=show, counter=clean):
@@ -2294,6 +2340,7 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
 
         # ---- Phase F · Measure — footprint payoff (not a problem check) ----
         body = _draw_phase_header(layout, "Measure", "Footprint after cleanup", "DISK_DRIVE")
+        body = _phase_content(body, gated=bool(_missing_libs))
         _analyze_row(body, wm, "analyze_memory_disk", "filelink.analyze_resources",
                      "Analyze Memory/Disk", "VIEWZOOM", _resource_summary(wm))
         _draw_resource_breakdown(body, wm)
@@ -3045,10 +3092,13 @@ def _draw_file_link(row, filepath: str, *, icon: str = "FILE_BLEND") -> None:
     (user request 2026-07-15) — used everywhere the addon points at a problem
     that must be fixed in a DIFFERENT file (fix-at-source library, indirect
     duplicate, ...). Shows the file's basename WITHOUT the .blend extension,
-    drawn flat (``emboss=False``) so it reads as a link rather than a button.
-    Draws into the caller's ``row`` so it can sit inline after a label."""
+    drawn flat (``emboss=False``) with a trailing ``↗`` external-link glyph so it
+    reads as an "opens elsewhere" link rather than a button (user pick 2026-07-15,
+    item 6 — Blender's Python UI has no coloured/underlined text, so the glyph +
+    flat style is the closest hyperlink affordance available). Draws into the
+    caller's ``row`` so it can sit inline after a label."""
     name = os.path.splitext(os.path.basename(filepath))[0] or filepath
-    op = row.operator("filelink.open_blend_external", text=name, icon=icon, emboss=False)
+    op = row.operator("filelink.open_blend_external", text=f"{name} ↗", icon=icon, emboss=False)
     op.filepath = filepath
 
 

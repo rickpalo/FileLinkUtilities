@@ -39,6 +39,7 @@ from .datablock_reconnect import (
     FILELINK_OT_scan_reconnect_targets,
     FILELINK_OT_reconnect_pick_source,
     FILELINK_OT_reconnect_selected,
+    FILELINK_OT_retarget_broken_lib,
 )
 from .datablock_dup import (
     FILELINK_OT_scan_datablock_dups,
@@ -129,6 +130,7 @@ REGISTER_CLASSES = (
     FILELINK_OT_scan_reconnect_targets,
     FILELINK_OT_reconnect_pick_source,
     FILELINK_OT_reconnect_selected,
+    FILELINK_OT_retarget_broken_lib,
     FILELINK_OT_scan_datablock_dups,
     FILELINK_OT_merge_datablock_selected,
     FILELINK_OT_examine_library,

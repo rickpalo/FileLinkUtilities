@@ -95,7 +95,11 @@ def _populate_broken_links(context) -> tuple[int, int]:
         cand = candidates.get(lib.name, "")
         item.target = cand
         item.has_candidate = bool(cand)
-        item.selected = bool(cand)  # pre-tick only the confident auto-matches
+        # Pre-tick only confident auto-matches, and only DIRECT links: an indirect
+        # library can't be bulk-relinked from here (its parent library owns the
+        # path), so pre-ticking it would let Relink Selected try and fail on it
+        # (user feedback 2026-07-15, item 5). Indirect rows go to Retarget instead.
+        item.selected = bool(cand) and lib.is_direct
         # Reuses the generic per-row `tag` (unused elsewhere for this list) to
         # carry "direct"/"indirect" — see core.relink.LibDesc.is_direct.
         item.tag = "direct" if lib.is_direct else "indirect"

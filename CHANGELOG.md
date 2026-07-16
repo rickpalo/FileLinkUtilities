@@ -8,6 +8,51 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.24] — Retarget as the safe per-library remedy on broken links + link affordance
+
+### Added
+- **Each broken library link now has a "Retarget" button** — the second per-library
+  remedy beside Relink, for when Relink can't help (the library is gone, was split into
+  several files, or is only linked indirectly). It hands that library's data-blocks to
+  **Datablock Reconnect** below (expanding its group) so you re-source each one from your
+  file or another library via the existing, backed-up Reconnect Selected. **It never calls
+  the Examine/Retarget engine** — that reads what a missing library *provides* (dangling
+  placeholders) and crashed Blender at v0.3.21; this reads only the local placeholders that
+  link *from* the library, the same safe scan Analyze All already runs. Nothing is severed
+  on click — the placeholders are already broken; reconnecting each one replaces the dead
+  reference safely. (Realizes the "call it Retarget, but break the library link and let the
+  missing items do a Datablock Reconnect" design.)
+
+### Changed
+- **Indirect broken libraries no longer offer a misleading Relink.** An indirect library
+  (linked only *through* another library, not by this file) can't be relinked from here —
+  its parent re-imposes the path on reload — so those rows drop the bulk-Relink checkbox and
+  file-picker, show "indirect — can't relink here", and route to **Retarget** instead. They're
+  also no longer pre-ticked for Relink Selected (it would have tried and failed on them).
+- **"Open in a new Blender" file links now carry a trailing ``↗`` glyph** and stay flat/
+  unembossed, so they read as "opens elsewhere." (Blender's Python UI has no coloured or
+  underlined text, so the glyph is the closest hyperlink affordance available.)
+
+## [0.3.23] — Connect header consolidation + gate crash-prone phases while libraries are missing
+
+### Changed
+- **The Connect phase header now carries the live missing-refs count and the single
+  Scan/Rescan-All button.** Stacked under a "Connect" title, the separate "Fix Missing
+  Libraries" sub-header read as a redundant second title, so it's gone — along with the
+  duplicate "▶ Start here" pointer (its double arrow, and the redundancy, were both called
+  out). After a scan the header shows e.g. "3 broken link(s), 31 missing data-block(s)" in
+  alert red; the button reads **Scan All** before a scan and **Rescan All** after one (so it
+  no longer invites re-running the scan Analyze All just did). The broken-links / retarget /
+  reconnect / duplicate-path blocks below each keep their own labelled headline.
+
+### Added
+- **The Deduplicate, Purge and Measure phases are now gated while the file has missing
+  libraries.** Those checks read heavy content (materials/meshes/geometry/data-blocks) that a
+  missing library leaves dangling — they already skip it (via the risk-reason guard) and their
+  results would be misleading, so they're drawn disabled beneath a "Fix missing libraries first
+  — these skip linked data and stay incomplete until then" note. They re-enable the moment the
+  libraries are relinked/retargeted. Restructure stays enabled.
+
 ## [0.3.22] — Revert the crashing Retarget-on-broken-links; guard Examine; phase-header polish
 
 ### Fixed
