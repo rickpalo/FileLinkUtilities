@@ -179,6 +179,29 @@ def _enumerate_group(context, library: str) -> str:
     return ""
 
 
+def _purge_reconnected_libraries() -> list[str]:
+    """Remove library datablocks that are now UNUSED (all their linked data was
+    reconnected away) AND still missing on disk, so a fully-reconnected library
+    stops showing as a broken link instead of lingering until the next Save
+    (user feedback 2026-07-15 item 5). Conservative: a library still holding real
+    linked data (``users != 0``) or one that resolves on disk is left untouched.
+    Returns the basenames removed, for the reconnect result message."""
+    removed: list[str] = []
+    for lib in list(bpy.data.libraries):
+        try:
+            if lib.users != 0:
+                continue  # still holds linked data — not fully reconnected
+            resolved = (os.path.normpath(bpy.path.abspath(lib.filepath))
+                        if lib.filepath else "")
+            if resolved and os.path.isfile(resolved):
+                continue  # resolves on disk — a working (just unused) lib, leave it
+            removed.append(os.path.basename(lib.filepath) or lib.name)
+            bpy.data.libraries.remove(lib)
+        except Exception:
+            continue
+    return removed
+
+
 def _group_info_line(source: str, lib_found: bool) -> tuple[str, str]:
     """The status line shown under an expanded group (source basename / no
     source yet / library not found) + its icon — the same 3-way message
@@ -251,7 +274,12 @@ def rebuild_reconnect_picker_rows(wm) -> None:
             bits.append(f"{external} fix at the source library")
         label = f"{disp}  ({', '.join(bits)})" if bits else f"{disp}  ({len(members_rows)})"
         if is_broken_link:
-            label = "⚠ MISSING LIBRARY — relink first · " + label
+            # Factual, not prescriptive (user feedback 2026-07-15 item 2): the old
+            # "⚠ MISSING LIBRARY — relink first" predated the Retarget button and
+            # contradicted the info line's own "pick a source .blend manually" — you
+            # do NOT have to relink the original library to reconnect these; picking
+            # any source .blend (the split-library case) is exactly the point.
+            label = "⚠ Source library missing · " + label
         info, info_icon = _group_info_line(members_rows[0].source_blend, lib_found)
         specs.append(picker_mod.GroupSpec(
             key=library,
@@ -521,11 +549,21 @@ class FILELINK_OT_reconnect_selected(bpy.types.Operator):
                 elif key in external_keys:
                     item.confidence = "external"
                     item.selected = False
+        # A library whose blocks were ALL reconnected is now unused — purge it so it
+        # stops showing as broken, and refresh the broken-links list to drop its row
+        # (and prune its "reconnecting" flag) (user feedback 2026-07-15 item 5).
+        delinked = _purge_reconnected_libraries()
+        if delinked:
+            from . import relink as _relink_ops
+            _relink_ops._refresh_broken_links(context)
         rebuild_reconnect_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()
         tail = f" Backup: {backup}" if backup else " (no backup written)"
         msg = f"Reconnected {reconnected} data-block(s). Save to persist.{tail}"
+        if delinked:
+            msg += (f" {len(delinked)} librar{'y' if len(delinked) == 1 else 'ies'} "
+                    "de-linked (fully reconnected).")
         if transitively_missing:
             msg += (f" {transitively_missing} candidate(s) were themselves unresolved "
                     "in the source .blend (missing further upstream — that library "
@@ -598,6 +636,13 @@ class FILELINK_OT_retarget_broken_lib(bpy.types.Operator):
         expanded = get_expanded(wm, "filelink_missing_expanded")
         expanded.add(match)
         set_expanded(wm, expanded, "filelink_missing_expanded")
+        # Mark this library "reconnecting" so its Broken Library Links row greys out
+        # to "→ reconnecting below" (user feedback 2026-07-15 item 3). Keyed by
+        # normalized path so it survives the raw stored/library path-form differences;
+        # _populate_broken_links prunes it once the library is no longer broken.
+        retargeted = get_expanded(wm, "filelink_retargeted_libs")
+        retargeted.add(_norm_lib_path(self.stored))
+        set_expanded(wm, retargeted, "filelink_retargeted_libs")
         rebuild_reconnect_picker_rows(wm)
         if context.area:
             context.area.tag_redraw()

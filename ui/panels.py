@@ -688,10 +688,16 @@ class FILELINK_PG_examine_row(bpy.types.PropertyGroup):
         description="Include this data-block when you Apply Selected")  # type: ignore[valid-type]
 
 
+# Equal fixed width (UI units) for the broken-link row's "Relink Library" +
+# "Retarget" remedy buttons, so they read as a matched pair (user feedback
+# 2026-07-15 item 2). Wide enough for the longer "Relink Library" label.
+_REMEDY_BTN_W = 7.0
+
+
 class FILELINK_UL_broken_libs(bpy.types.UIList):
-    """Per-link relink list: checkbox + broken library name + its target file (or
-    a 'pick a file' hint) + a file-picker button. Lets the user fix one specific
-    broken link without running a bulk pass."""
+    """Per-link relink list: checkbox + broken library name + auto-matched target
+    + two equal-width remedy buttons (Relink Library / Retarget). Lets the user fix
+    one specific broken link without running a bulk pass."""
 
     bl_idname = "FILELINK_UL_broken_libs"
 
@@ -701,6 +707,34 @@ class FILELINK_UL_broken_libs(bpy.types.UIList):
             layout.label(text=item.name)
             return
         row = layout.row(align=True)
+        # Retargeted (user feedback 2026-07-15 item 3): the user chose Retarget on
+        # this broken link, so its data-blocks are being reconnected below. Grey the
+        # row, drop Relink, show progress. It disappears once every block is
+        # reconnected (the library stops being broken). Retarget stays as a re-jump.
+        from ..ops.datablock_reconnect import _norm_lib_path
+        wm = context.window_manager
+        retargeted = set(filter(None, wm.filelink_retargeted_libs.split("\n")))
+        norm = _norm_lib_path(item.stored)
+        if norm in retargeted:
+            n = sum(1 for b in wm.filelink_missing_blocks
+                    if b.library and _norm_lib_path(b.library) == norm)
+            row.label(text="", icon="BLANK1")
+            nm = row.row()
+            nm.active = False
+            nm.label(text=item.name, icon="LIBRARY_DATA_BROKEN")
+            note = row.row()
+            note.active = False
+            note.alignment = "RIGHT"
+            if n:
+                note.label(text=f"→ reconnecting below ({n} block{'s' if n != 1 else ''})",
+                           icon="LINKED")
+            else:
+                note.label(text="→ reconnected — will clear on save", icon="CHECKMARK")
+            rt = row.row(align=True)
+            rt.ui_units_x = _REMEDY_BTN_W
+            rt.operator("filelink.retarget_broken_lib", text="Retarget",
+                        icon="FILE_REFRESH").stored = item.stored
+            return
         # "indirect" (docs/TODO.md Group 1 item 5, 2026-07-04): this library isn't
         # linked by the current file directly, only by ANOTHER linked library — it's
         # not in this file's own Outliner, and Relink here doesn't stick (the parent
@@ -714,26 +748,33 @@ class FILELINK_UL_broken_libs(bpy.types.UIList):
         else:
             row.prop(item, "selected", text="")
         row.label(text=item.name, icon="LIBRARY_DATA_BROKEN")
+        # Middle status (expands, so the two remedy buttons stay right-packed and
+        # equal-width). Indirect: the can't-relink note. Direct: the auto-matched
+        # target so the user sees what Relink Library will use — the old "no match —
+        # pick a file" hint + bare folder icon is gone, replaced by a full-text
+        # "Relink Library" button below (user feedback 2026-07-15 item 2).
+        mid = row.row()
+        mid.alignment = "RIGHT"
         if is_indirect:
-            ind = row.row()
-            ind.alignment = "RIGHT"
-            ind.label(text="indirect — can't relink here", icon="INFO")
-        else:
-            target = row.row()
-            target.alignment = "RIGHT"
-            if item.target:
-                target.label(text=os.path.basename(item.target) or item.target,
-                             icon="CHECKMARK" if item.has_candidate else "QUESTION")
-            else:
-                target.label(text="no match — pick a file", icon="QUESTION")
-            row.operator("filelink.relink_pick_file", text="", icon="FILEBROWSER").index = index
-        # Retarget (user design 2026-07-15, items 4+5): the second per-library remedy,
-        # for when Relink can't help (library gone, split, or indirect). It hands this
-        # library's data-blocks to Datablock Reconnect below — it NEVER calls the
-        # Examine/Retarget engine, which reads the missing library and crashed
-        # (v0.3.21). Safe: it stages the local placeholders that link FROM the library.
-        row.operator("filelink.retarget_broken_lib", text="Retarget",
-                     icon="FILE_REFRESH").stored = item.stored
+            mid.label(text="indirect — can't relink here", icon="INFO")
+        elif item.target:
+            mid.label(text=os.path.basename(item.target) or item.target,
+                      icon="CHECKMARK" if item.has_candidate else "QUESTION")
+        # The two remedies as equal-width buttons. Direct rows: Relink Library
+        # (opens the file picker) + Retarget. Indirect rows: Retarget only (Relink
+        # can't help — see above). Retarget hands this library's data-blocks to
+        # Datablock Reconnect; it NEVER calls the Examine engine that reads the
+        # missing library and crashed (v0.3.21) — it stages the local placeholders.
+        btns = row.row(align=True)
+        if not is_indirect:
+            b1 = btns.row(align=True)
+            b1.ui_units_x = _REMEDY_BTN_W
+            b1.operator("filelink.relink_pick_file", text="Relink Library",
+                        icon="FILEBROWSER").index = index
+        b2 = btns.row(align=True)
+        b2.ui_units_x = _REMEDY_BTN_W
+        b2.operator("filelink.retarget_broken_lib", text="Retarget",
+                    icon="FILE_REFRESH").stored = item.stored
 
 
 class FILELINK_UL_flatten_picker(bpy.types.UIList):
@@ -1976,9 +2017,14 @@ def _phase_content(body, *, gated: bool):
     clean. When not gated, returns ``body`` unchanged."""
     if not gated:
         return body
+    # Alert red (not muted) so the disabled state is unmistakable — Blender's
+    # enabled=False dim alone read as "still active" (user feedback 2026-07-15
+    # item 3). The gate is driven by library_stats, so it applies the same whether
+    # the user ran Scan All or Analyze All (the missing-library state is identical).
     note = body.row()
-    note.label(text="Fix missing libraries first — these skip linked data and stay "
-                    "incomplete until then", icon="INFO")
+    note.alert = True
+    note.label(text="Disabled until missing libraries are fixed — these skip linked "
+                    "data and would be incomplete", icon="ERROR")
     col = body.column(align=False)
     col.enabled = False
     return col
@@ -2115,8 +2161,8 @@ def _draw_preflight(layout) -> None:
                "analysis will be incomplete", icon="ERROR")
     note = box.row()
     note.active = False
-    note.label(text="Data linked from a missing library can't be read, so Deduplicate, Geometry "
-               "and Orphan checks skip it. Relink in Connect below first.", icon="INFO")
+    note.label(text="Linked data from a missing library is skipped — relink in Connect first.",
+               icon="INFO")
 
 
 def _check_status(wm, key: str) -> str:
@@ -2282,7 +2328,13 @@ class FILELINK_PT_analyze(_SceneFeaturePanel, bpy.types.Panel):
         _draw_phase_tally(body, wm, "connect", clean[0], expanded)
 
         # ---- Phase C · Restructure — simplify the link graph ----
+        # Gated with the other downstream phases (user feedback 2026-07-15 item 6,
+        # "pragmatic" scope): Audit / Make Local / Flatten / Check Materials read and
+        # MUTATE linked & override data, so they're incomplete or wrong until the
+        # missing libraries are fixed. Only the Connect fix tools + read-only Connect
+        # diagnostics stay live while libraries are missing.
         body = _draw_phase_header(layout, "Restructure", "Simplify the link graph", "NODETREE")
+        body = _phase_content(body, gated=bool(_missing_libs))
         clean = [0]
         show = "phasepass:restructure" in expanded
         _analyze_row(body, wm, "audit_file", "filelink.analyze_overrides",
@@ -2541,7 +2593,7 @@ class FILELINK_PT_scene_deps(bpy.types.Panel):
 
 def _draw_group_header(layout, *, key: str, prop: str, is_exp: bool, label: str, icon: str,
                        action=None, alert: bool = False, indent_factor: float = 0.0,
-                       status_icon: str = ""):
+                       status_icon: str = "", action_left: bool = False):
     """One collapsible group-header row: expand/collapse triangle + icon +
     label [+ an optional trailing action]. Extracted (docs/TODO.md Group 12
     Phase 1, 2026-06-27) from the ~10 sections that each hand-built the same
@@ -2576,11 +2628,24 @@ def _draw_group_header(layout, *, key: str, prop: str, is_exp: bool, label: str,
     tog = row.operator("filelink.row_toggle", text="",
                        icon="TRIA_DOWN" if is_exp else "TRIA_RIGHT", emboss=False)
     tog.key, tog.prop = key, prop
-    lab = row.row()
-    lab.alert = alert
-    lab.label(text=label, icon=icon)
-    if action is not None:
-        action(row)
+    if action_left:
+        # Pack label + action to the LEFT (leftover space stays on the right)
+        # instead of the default, where an expanding label sub-row shoves the
+        # action to the far right. User feedback 2026-07-15 item 4: the linked-
+        # texture fix-at-source links were floating centre/right; they should sit
+        # next to the file icon.
+        la = row.row(align=True)
+        la.alignment = "LEFT"
+        la.alert = alert
+        la.label(text=label, icon=icon)
+        if action is not None:
+            action(la)
+    else:
+        lab = row.row()
+        lab.alert = alert
+        lab.label(text=label, icon=icon)
+        if action is not None:
+            action(row)
     return row
 
 
@@ -3375,7 +3440,8 @@ def _draw_linked_missing_textures(tex, wm) -> None:
             label=(f"Fix {len(members)} texture(s) in" if known
                    else f"{len(members)} texture(s) — unknown library"),
             icon="LIBRARY_DATA_BROKEN",
-            action=(lambda r, lib=lib: _draw_file_link(r, lib)) if known else None)
+            action=(lambda r, lib=lib: _draw_file_link(r, lib)) if known else None,
+            action_left=True)
         if not is_exp:
             continue
         for item in members:

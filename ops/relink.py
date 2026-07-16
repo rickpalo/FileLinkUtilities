@@ -104,6 +104,14 @@ def _populate_broken_links(context) -> tuple[int, int]:
         # carry "direct"/"indirect" — see core.relink.LibDesc.is_direct.
         item.tag = "direct" if lib.is_direct else "indirect"
     wm.filelink_broken_index = 0
+    # Prune the "retargeted → reconnecting" set to libraries STILL broken (user
+    # feedback 2026-07-15 item 3): once a library is relinked/fully reconnected it
+    # drops out of `missing`, so its greyed row is gone anyway — don't keep a stale
+    # flag around that could re-grey a same-path library later.
+    from .datablock_reconnect import _norm_lib_path
+    still_broken = {_norm_lib_path(lib.stored) for lib in missing}
+    prev = set(filter(None, wm.filelink_retargeted_libs.split("\n")))
+    wm.filelink_retargeted_libs = "\n".join(sorted(prev & still_broken))
     return len(missing), len(candidates)
 
 

@@ -280,6 +280,11 @@ def register() -> None:
     bpy.types.WindowManager.filelink_missing_index = bpy.props.IntProperty(default=0)
     bpy.types.WindowManager.filelink_missing_scanned = bpy.props.BoolProperty(default=False)
     bpy.types.WindowManager.filelink_missing_expanded = bpy.props.StringProperty(default="")
+    # Broken library links the user chose to RETARGET (Relink→Datablock Reconnect)
+    # this session — newline-joined normalized paths. Their Broken Library Links row
+    # greys to "→ reconnecting below" until all their blocks are reconnected (user
+    # feedback 2026-07-15 item 3). Pruned to still-broken libs on every rescan.
+    bpy.types.WindowManager.filelink_retargeted_libs = bpy.props.StringProperty(default="")
     # Group 12 Phase 3 item 3: virtualized picker rows for Datablock Reconnect
     # (rebuilt by ops.datablock_reconnect.rebuild_reconnect_picker_rows after
     # scan/pick-source/reconnect-selected).
@@ -489,6 +494,7 @@ def unregister() -> None:
                 "filelink_dep_verdict", "filelink_dep_verdict_text",
                 "filelink_missing_blocks", "filelink_missing_index",
                 "filelink_missing_scanned", "filelink_missing_expanded",
+                "filelink_retargeted_libs",
                 "filelink_reconnect_picker_rows", "filelink_reconnect_picker_active",
                 "filelink_datablock_families", "filelink_datablock_index",
                 "filelink_datablock_scanned", "filelink_datablock_removable",

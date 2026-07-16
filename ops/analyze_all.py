@@ -69,8 +69,25 @@ class _AnalyzeSequencerMixin:
         defence) did NOT help, because the frame walk happens regardless of the
         filter. Trade-off: no progress bar / ESC-cancel during the run; restoring
         those needs a generator-free modal (pump one step per tick directly), a
-        later step. See reference_modal_warning_crash memory."""
-        return self.execute(context)
+        later step. See reference_modal_warning_crash memory.
+
+        Because the run is synchronous the UI freezes with NO live progress bar, so
+        (user feedback 2026-07-15 item 1) a heads-up confirm sets expectations
+        before the freeze — the only place a message can show, since nothing
+        repaints mid-run. Only the interactive button path (INVOKE) sees it; the
+        headless/scripting/test path uses EXEC_DEFAULT (execute) and never does."""
+        wm = context.window_manager
+        try:
+            return wm.invoke_confirm(
+                self, event,
+                title=self._run_label,
+                message=("This can take several minutes on a large file, and Blender "
+                         "will appear frozen until it finishes — there's no live "
+                         "progress bar. Run it now?"),
+                confirm_text=self._run_label, icon="INFO")
+        except TypeError:
+            # Older Blender without invoke_confirm's message kwargs — just run.
+            return self.execute(context)
 
     def run_steps(self, context):
         wm = context.window_manager

@@ -8,6 +8,50 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.26] — Retarget follow-through: reconnecting state, wider gate, clearer messaging
+
+### Added
+- **A retargeted broken library now shows its progress.** After you click Retarget, its Broken
+  Library Links row greys out to **"→ reconnecting below (N blocks)"** (Relink dropped, Retarget kept
+  as a re-jump). It disappears on its own once every one of its blocks is reconnected. Clarifies that
+  Retarget *stages* the fix — the link is replaced one block at a time via Reconnect Selected, not
+  severed on click.
+- **Fully-reconnected libraries are now purged** so they stop showing as broken instead of lingering
+  until Save. Reconnect Selected removes any library whose blocks were all reconnected away (0 users,
+  still missing on disk) and reports *"N libraries de-linked (fully reconnected)."*
+
+### Changed
+- **The Restructure phase is now gated with the rest** (Deduplicate / Purge / Measure) while libraries
+  are missing — Audit / Make Local / Flatten / Check Materials read and mutate linked & override data,
+  so they're incomplete or wrong until connectivity is fixed. The Connect fix tools (Relink / Retarget /
+  Datablock Reconnect) and the read-only Connect diagnostics stay live.
+- **The reconnect group's "⚠ MISSING LIBRARY — relink first" flag is now "⚠ Source library missing"** —
+  factual, not prescriptive. The old wording predated Retarget and contradicted the info line's own
+  "pick a source .blend manually" (you don't have to relink the original library to reconnect — picking
+  any source, the split-library case, is the whole point).
+- **Shortened the preflight note** to "Linked data from a missing library is skipped — relink in Connect
+  first" so it fits even a wide panel.
+
+## [0.3.25] — Second live-review pass: freeze warning, Relink Library button, clearer gating, left-aligned links
+
+### Added
+- **Analyze All (and Find Duplicates) now warn before they run:** because the run is
+  synchronous, the UI freezes with no live progress bar, so a confirm dialog first sets
+  expectations — *"This can take several minutes… Blender will appear frozen until it
+  finishes."* Only the button/INVOKE path shows it; headless/scripting (EXEC) is unaffected.
+
+### Changed
+- **Broken library links: the folder icon + "no match — pick a file" hint is now a full
+  "Relink Library" button,** equal-width with Retarget so the two remedies read as a matched
+  pair. Direct rows show the auto-matched target (if any) beside them; indirect rows keep just
+  Retarget.
+- **The gated Deduplicate / Purge / Measure phases now say so in alert red** — *"Disabled until
+  missing libraries are fixed"* — instead of relying on Blender's easy-to-miss disabled dim. The
+  gate is driven by `library_stats`, so it applies identically whether you ran Scan All or
+  Analyze All (the missing-library state is the same either way).
+- **The "fix at the source library" links now sit left-justified next to their file icon**
+  instead of floating centre/right (a new `action_left` option on the shared group-header).
+
 ## [0.3.24] — Retarget as the safe per-library remedy on broken links + link affordance
 
 ### Added
