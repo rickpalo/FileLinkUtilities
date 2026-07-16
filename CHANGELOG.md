@@ -8,6 +8,16 @@ bumps) — see `docs/TODO.md` for the detailed session-by-session build history 
 Entries below [0.2.106] are kept as originally written, under the old "AssetDoctor" name and
 `ASSETDOCTOR_*` identifiers, for historical accuracy — don't edit them to match the new naming.
 
+## [0.3.29] — Stop listing missing libraries as "reconnectable data-blocks"
+
+### Fixed
+- **A missing library no longer shows up inside Datablock Reconnect.** The missing-block scan walked all
+  of `bpy.data`, and a missing `Library` datablock has `is_missing = True` too — so each broken library
+  appeared as a `Library: foo.blend` row grouped under "(source unknown)", a dead end (a library can't be
+  reconnected via `user_remap` — it's fixed by Relink or Retarget). `_iter_missing_blocks` now skips
+  `bpy.data.libraries`. This also removes the double-counting where the 3 broken libraries appeared both
+  in Broken Library Links and again in the reconnect list.
+
 ## [0.3.28] — Declutter Connect + simpler reconnect messaging
 
 ### Changed

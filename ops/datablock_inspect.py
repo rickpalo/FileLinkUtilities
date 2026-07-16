@@ -56,8 +56,17 @@ def _iter_all_blocks():
 def _iter_missing_blocks():
     """Yield every ``is_missing`` (placeholder) ID across all of ``bpy.data``'s
     data-block collections. Walks generically so ANY linked type counts (not just
-    the audited dup-census set)."""
+    the audited dup-census set).
+
+    EXCLUDES ``bpy.data.libraries`` (user report 2026-07-15): a *missing Library*
+    has ``is_missing = True`` too, so it used to appear in Datablock Reconnect as a
+    "Library: foo.blend" row under "(source unknown)" — but a library isn't
+    reconnectable via the datablock (``user_remap``) mechanism; it's fixed by Relink
+    or Retarget in Broken Library Links. Listing it here was a dead end and made the
+    3 broken libraries look like they belonged in two places at once."""
     for attr, block in _iter_all_blocks():
+        if attr == "libraries":
+            continue  # a missing Library is a Relink/Retarget job, not a reconnect
         if getattr(block, "is_missing", False):
             lib = getattr(block, "library", None)
             yield MissingBlock(

@@ -33,3 +33,6 @@ Thumbs.db
 
 # Local Claude Code session/memory data — never commit (public repo)
 .claude/
+
+# Visual aids — local reference, synced via Synology not GitHub (user request 2026-07-15)
+docs/visual-aids/
